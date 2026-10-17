@@ -177,7 +177,7 @@ func (c *Client) dynamic(ctx context.Context, page int, cursor string) (BrowsePa
 	if data.Items == nil || len(data.Items) > 100 || len(data.Offset) > 256 {
 		return BrowsePage{}, discovery.ErrUnavailable
 	}
-	hasMore := string(data.HasMore) == "1" || string(data.HasMore) == "true"
+	hasMore := dynamicHasMore(data.HasMore)
 	result := BrowsePage{Items: []content.Item{}, Page: page, SourceTitle: "关注动态", HasMore: hasMore && data.Offset != "" && data.Offset != cursor, Next: data.Offset}
 	seen := map[string]bool{}
 	for _, raw := range data.Items {
@@ -187,6 +187,22 @@ func (c *Client) dynamic(ctx context.Context, page int, cursor string) (BrowsePa
 		}
 	}
 	return result, nil
+}
+
+func dynamicHasMore(raw json.RawMessage) bool {
+	var value bool
+	if json.Unmarshal(raw, &value) == nil {
+		return value
+	}
+	var number int
+	if json.Unmarshal(raw, &number) == nil {
+		return number != 0
+	}
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		return text == "1" || strings.EqualFold(text, "true")
+	}
+	return false
 }
 
 func dynamicVideo(raw json.RawMessage, depth int) (content.Item, bool) {

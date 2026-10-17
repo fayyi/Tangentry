@@ -57,7 +57,7 @@ func TestDynamicUsesSignedCursorAndMapsForwardedAndNestedVideos(t *testing.T) {
 		if r.URL.Path != "/x/polymer/web-dynamic/v1/feed/all" || r.URL.Query().Get("type") != "video" || r.URL.Query().Get("offset") != "previous" || r.URL.Query().Get("w_rid") == "" || r.Header.Get("Referer") != "https://t.bilibili.com/" {
 			t.Fatal("invalid dynamic cursor/signature")
 		}
-		w.Write([]byte(`{"code":0,"data":{"items":[{"type":"1","orig":{"type":8,"bvid":"BV17x411w7KC","title":"转发的视频","duration_text":"01:02","view_count":1234,"author":{"mid":42,"name":"原作者"}}},{"type":"DYNAMIC_TYPE_AV","modules":{"module_author":{"mid":43,"name":"关注的作者","pub_ts":1},"module_dynamic":{"major":{"archive":{"bvid":"BV1Pyta66EDh","title":"关注投稿","duration_text":"01:20","stat":{"view":5678}}}}}},{"type":"8","bvid":"BV1Q541167Qg","title":"播放数回退","duration_text":"00:10","stat":{"play":9012},"author":{"mid":44,"name":"播放作者"}},{"type":"DYNAMIC_TYPE_WORD","modules":{}}],"offset":"next-page","has_more":true}}`))
+		w.Write([]byte(`{"code":0,"data":{"items":[{"type":"1","orig":{"type":8,"bvid":"BV17x411w7KC","title":"转发的视频","duration_text":"01:02","view_count":1234,"author":{"mid":42,"name":"原作者"}}},{"type":"DYNAMIC_TYPE_AV","modules":{"module_author":{"mid":43,"name":"关注的作者","pub_ts":1},"module_dynamic":{"major":{"archive":{"bvid":"BV1Pyta66EDh","title":"关注投稿","duration_text":"01:20","stat":{"view":5678}}}}}},{"type":"8","bvid":"BV1Q541167Qg","title":"播放数回退","duration_text":"00:10","stat":{"play":9012},"author":{"mid":44,"name":"播放作者"}},{"type":"DYNAMIC_TYPE_WORD","modules":{}}],"offset":"next-page","has_more":"1"}}`))
 	}))
 	defer server.Close()
 	client := NewClient(server.Client(), "")
@@ -68,6 +68,26 @@ func TestDynamicUsesSignedCursorAndMapsForwardedAndNestedVideos(t *testing.T) {
 	}
 	if _, err := client.Browse(context.Background(), "dynamic", 2, "", 1); err == nil {
 		t.Fatal("missing cursor accepted")
+	}
+}
+
+func TestDynamicHasMoreAcceptsBooleanNumberAndStringForms(t *testing.T) {
+	for _, test := range []struct {
+		value string
+		want  bool
+	}{
+		{`true`, true},
+		{`1`, true},
+		{`"1"`, true},
+		{`"true"`, true},
+		{`false`, false},
+		{`0`, false},
+		{`"0"`, false},
+		{`null`, false},
+	} {
+		if got := dynamicHasMore(json.RawMessage(test.value)); got != test.want {
+			t.Errorf("dynamicHasMore(%s) = %t, want %t", test.value, got, test.want)
+		}
 	}
 }
 
