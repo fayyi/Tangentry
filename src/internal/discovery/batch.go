@@ -17,6 +17,13 @@ import (
 
 var ErrInvalidBatch = errors.New("invalid discovery batch")
 
+type BatchSourceStatus struct {
+	Status               string `json:"status"`
+	Message              string `json:"message,omitempty"`
+	Restricted           bool   `json:"restricted,omitempty"`
+	RequiresVerification bool   `json:"requiresVerification,omitempty"`
+}
+
 // BatchRequest describes a discovery stream request. Cursor is an opaque
 // offset into a persisted snapshot; seed makes the exploration order stable.
 type BatchRequest struct {
@@ -39,13 +46,13 @@ type BatchItem struct {
 }
 
 type BatchResponse struct {
-	BatchID      string            `json:"batchId"`
-	NextCursor   string            `json:"nextCursor,omitempty"`
-	Items        []BatchItem       `json:"items"`
-	Reason       string            `json:"reason"`
-	HasNextBatch bool              `json:"hasNextBatch"`
-	EndReason    string            `json:"endReason,omitempty"`
-	SourceStatus map[string]string `json:"sourceStatus"`
+	BatchID      string                       `json:"batchId"`
+	NextCursor   string                       `json:"nextCursor,omitempty"`
+	Items        []BatchItem                  `json:"items"`
+	Reason       string                       `json:"reason"`
+	HasNextBatch bool                         `json:"hasNextBatch"`
+	EndReason    string                       `json:"endReason,omitempty"`
+	SourceStatus map[string]BatchSourceStatus `json:"sourceStatus"`
 }
 
 // BatchCandidateProvider supplies one page from a source. Implementations may
@@ -84,8 +91,8 @@ type batchCandidate struct {
 }
 
 type batchSnapshot struct {
-	Candidates []batchCandidate  `json:"candidates"`
-	Status     map[string]string `json:"status"`
+	Candidates []batchCandidate             `json:"candidates"`
+	Status     map[string]BatchSourceStatus `json:"status"`
 	// NextPages keeps source pagination independent from the user-facing cursor.
 	// A zero value means that the source has not been fetched beyond page one.
 	NextPages map[string]int  `json:"nextPages,omitempty"`
@@ -137,7 +144,7 @@ func (s *BatchService) Create(ctx context.Context, request BatchRequest) (BatchR
 		if err != nil {
 			return BatchResponse{}, err
 		}
-		if json.Unmarshal(payload, &snapshot) != nil || cursor.Offset > len(snapshot.Candidates) {
+		if unmarshalBatchSnapshot(payload, &snapshot) != nil || cursor.Offset > len(snapshot.Candidates) {
 			return BatchResponse{}, ErrInvalidBatch
 		}
 		if snapshot.NextPages == nil {
@@ -158,7 +165,7 @@ func (s *BatchService) Create(ctx context.Context, request BatchRequest) (BatchR
 	}
 
 	all := make([]batchCandidate, 0, 128)
-	status := make(map[string]string, len(s.sources)+1)
+	status := make(map[string]BatchSourceStatus, len(s.sources)+1)
 	seen := make(map[string]struct{})
 	add := func(source, reason string, feed Feed, fresh bool) {
 		for _, item := range feed.Items {
@@ -181,7 +188,7 @@ func (s *BatchService) Create(ctx context.Context, request BatchRequest) (BatchR
 			status["subscriptions"] = sourceError(fetchErr)
 			exhausted["subscriptions"] = true
 		} else {
-			status["subscriptions"] = "ok"
+			status["subscriptions"] = BatchSourceStatus{Status: "ok"}
 			add("subscriptions", "订阅优先", feed, false)
 			// Subscription feeds are already complete snapshots, not page APIs.
 			exhausted["subscriptions"] = true
@@ -202,7 +209,7 @@ func (s *BatchService) Create(ctx context.Context, request BatchRequest) (BatchR
 				continue
 			}
 			if !on {
-				status[source] = "disabled"
+				status[source] = BatchSourceStatus{Status: "disabled"}
 				exhausted[source] = true
 				continue
 			}
@@ -213,7 +220,7 @@ func (s *BatchService) Create(ctx context.Context, request BatchRequest) (BatchR
 			exhausted[source] = true
 			continue
 		}
-		status[source] = "ok"
+		status[source] = BatchSourceStatus{Status: "ok"}
 		add(source, "来源更新", feed, true)
 		if len(feed.Items) == 0 || !feed.HasMore {
 			exhausted[source] = true
@@ -268,6 +275,27 @@ func (s *BatchService) Create(ctx context.Context, request BatchRequest) (BatchR
 	return s.page(request, requestKey, batchCursor{BatchID: batchID}, snapshot), nil
 }
 
+func unmarshalBatchSnapshot(payload []byte, snapshot *batchSnapshot) error {
+	if err := json.Unmarshal(payload, snapshot); err == nil {
+		return nil
+	}
+	var legacy struct {
+		Candidates []batchCandidate  `json:"candidates"`
+		Status     map[string]string `json:"status"`
+		NextPages  map[string]int    `json:"nextPages,omitempty"`
+		Exhausted  map[string]bool   `json:"exhausted,omitempty"`
+	}
+	if err := json.Unmarshal(payload, &legacy); err != nil {
+		return err
+	}
+	status := make(map[string]BatchSourceStatus, len(legacy.Status))
+	for source, value := range legacy.Status {
+		status[source] = BatchSourceStatus{Status: value}
+	}
+	*snapshot = batchSnapshot{Candidates: legacy.Candidates, Status: status, NextPages: legacy.NextPages, Exhausted: legacy.Exhausted}
+	return nil
+}
+
 func (s *BatchService) extendSnapshot(ctx context.Context, request BatchRequest, snapshot *batchSnapshot) error {
 	seen := make(map[string]struct{}, len(snapshot.Candidates))
 	for _, candidate := range snapshot.Candidates {
@@ -303,7 +331,7 @@ func (s *BatchService) extendSnapshot(ctx context.Context, request BatchRequest,
 				snapshot.Exhausted[source] = true
 				break
 			}
-			snapshot.Status[source] = "ok"
+			snapshot.Status[source] = BatchSourceStatus{Status: "ok"}
 			before := len(snapshot.Candidates)
 			add(source, "来源更新", feed)
 			if request.Topic != "" {
@@ -586,11 +614,24 @@ func countSource(values []batchCandidate, source string) int {
 	return count
 }
 
-func sourceError(err error) string {
-	if errors.Is(err, ErrUnavailable) {
-		return "unavailable"
+func sourceError(err error) BatchSourceStatus {
+	status := BatchSourceStatus{Status: "error", Message: "来源获取失败，请稍后重试。"}
+	var platform *PlatformError
+	if errors.As(err, &platform) {
+		status.Status = "unavailable"
+		status.Message = platform.Message
+		status.Restricted = platform.Restricted
+		status.RequiresVerification = platform.Restricted || requiresVerification(platform.Message)
+		return status
 	}
-	return "error"
+	if errors.Is(err, ErrUnavailable) {
+		status.Status = "unavailable"
+	}
+	return status
+}
+
+func requiresVerification(message string) bool {
+	return strings.Contains(strings.ToLower(message), "cookie") || strings.Contains(message, "登录") || strings.Contains(message, "验证") || strings.Contains(message, "cloudflare")
 }
 
 func batchReason(request BatchRequest) string {

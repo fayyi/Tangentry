@@ -69,7 +69,7 @@ func TestBatchIsDeterministicAndDeduplicatesWithSourceHealth(t *testing.T) {
 	if first.BatchID != second.BatchID || len(first.Items) != len(second.Items) {
 		t.Fatalf("batch is not deterministic: %#v %#v", first, second)
 	}
-	if first.SourceStatus["douyin"] != "unavailable" {
+	if first.SourceStatus["douyin"].Status != "unavailable" {
 		t.Fatalf("source failure was not preserved: %#v", first.SourceStatus)
 	}
 	seen := map[string]bool{}
@@ -78,6 +78,17 @@ func TestBatchIsDeterministicAndDeduplicatesWithSourceHealth(t *testing.T) {
 			t.Fatalf("duplicate item %s", item.Item.ID)
 		}
 		seen[item.Item.ID] = true
+	}
+}
+
+func TestBatchPreservesPlatformErrorDetails(t *testing.T) {
+	want := &PlatformError{Message: "Linux.do 触发 Cloudflare 验证，请重新验证。", Restricted: true}
+	service := NewBatchService(batchProvider{failures: map[string]error{"linuxdo": want}}, nil, []string{"linuxdo"})
+	response, err := service.Create(context.Background(), BatchRequest{})
+	if err != nil { t.Fatal(err) }
+	status := response.SourceStatus["linuxdo"]
+	if status.Status != "unavailable" || status.Message != want.Message || !status.Restricted || !status.RequiresVerification {
+		t.Fatalf("platform details were lost: %#v", status)
 	}
 }
 

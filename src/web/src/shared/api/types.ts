@@ -85,7 +85,13 @@ export interface DiscoveryBatchResponse {
   reason: string
   hasNextBatch: boolean
   endReason?: string
-  sourceStatus: Record<string, string>
+  sourceStatus: Record<string, DiscoverySourceStatus>
+}
+export interface DiscoverySourceStatus {
+  status: string
+  message?: string
+  restricted?: boolean
+  requiresVerification?: boolean
 }
 export interface DiscoveryTopicRule {
   id: string

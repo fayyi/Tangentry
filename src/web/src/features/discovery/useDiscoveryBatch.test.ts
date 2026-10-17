@@ -20,12 +20,12 @@ test('appends cursor items in order and removes duplicate content IDs', () => {
 })
 
 test('merges cursor response metadata while keeping accumulated items', () => {
-  const first = { batchId: 'batch', items: [entry('a')], hasNextBatch: true, nextCursor: 'cursor-2', reason: 'x', sourceStatus: { bilibili: 'ok' } }
-  const second = { batchId: 'batch', items: [entry('a'), entry('b')], hasNextBatch: false, reason: 'y', sourceStatus: { youtube: 'ok' } }
+  const first = { batchId: 'batch', items: [entry('a')], hasNextBatch: true, nextCursor: 'cursor-2', reason: 'x', sourceStatus: { bilibili: { status: 'ok' } } }
+  const second = { batchId: 'batch', items: [entry('a'), entry('b')], hasNextBatch: false, reason: 'y', sourceStatus: { youtube: { status: 'ok' } } }
   const merged = appendDiscoveryBatch(first, second)
   expect(merged.items.map(value => value.item.id)).toEqual(['a', 'b'])
   expect(merged.hasNextBatch).toBe(false)
-  expect(merged.sourceStatus).toEqual({ bilibili: 'ok', youtube: 'ok' })
+  expect(merged.sourceStatus).toEqual({ bilibili: { status: 'ok' }, youtube: { status: 'ok' } })
   expect(first.items).toHaveLength(1)
 })
 
