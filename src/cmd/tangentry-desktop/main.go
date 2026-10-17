@@ -160,43 +160,8 @@ func fileCredentialKey(dataDir string) ([]byte, error) {
 }
 
 func writeCredentialKey(dataDir string, key []byte) error {
-	if len(key) != 32 {
-		return errors.New("桌面凭据密钥长度无效")
-	}
-	directory := filepath.Join(dataDir, "credentials")
-	if err := os.MkdirAll(directory, 0700); err != nil {
-		return fmt.Errorf("无法创建本地凭据目录：%w", err)
-	}
-	if err := os.Chmod(directory, 0700); err != nil {
-		return fmt.Errorf("无法设置本地凭据目录权限：%w", err)
-	}
-	path := filepath.Join(directory, "desktop.key")
-	temp, err := os.CreateTemp(directory, ".desktop-key-*")
-	if err != nil {
-		return fmt.Errorf("无法创建本地凭据密钥：%w", err)
-	}
-	tempName := temp.Name()
-	defer os.Remove(tempName)
-	if err := temp.Chmod(0600); err != nil {
-		_ = temp.Close()
-		return fmt.Errorf("无法设置本地凭据密钥权限：%w", err)
-	}
-	if _, err := temp.Write(key); err != nil {
-		_ = temp.Close()
-		return fmt.Errorf("无法保存本地凭据密钥：%w", err)
-	}
-	if err := temp.Sync(); err != nil {
-		_ = temp.Close()
-		return fmt.Errorf("无法保存本地凭据密钥：%w", err)
-	}
-	if err := temp.Close(); err != nil {
-		return fmt.Errorf("无法保存本地凭据密钥：%w", err)
-	}
-	if err := os.Rename(tempName, path); err != nil {
-		return fmt.Errorf("无法保存本地凭据密钥：%w", err)
-	}
-	if err := os.Chmod(path, 0600); err != nil {
-		return fmt.Errorf("无法设置本地凭据密钥权限：%w", err)
+	if err := createCredentialKey(dataDir, key); err != nil && !errors.Is(err, os.ErrExist) {
+		return err
 	}
 	return nil
 }

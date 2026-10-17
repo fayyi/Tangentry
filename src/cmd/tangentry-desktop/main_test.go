@@ -46,8 +46,8 @@ func TestFileCredentialKeyCreatesPrivateKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(still, other) {
-		t.Fatal("signed key migration did not update the local key")
+	if !bytes.Equal(still, key) {
+		t.Fatal("signed key migration overwrote an existing local key")
 	}
 }
 
