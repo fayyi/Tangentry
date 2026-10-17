@@ -18,6 +18,10 @@ type SubscriptionService interface {
 	Delete(context.Context, string) error
 	Update(context.Context, string) (subscriptions.Detail, error)
 	ConfigureRefresh(context.Context, string, subscriptions.RefreshPolicy) (subscriptions.Source, error)
+	BatchDelete(context.Context, []string) ([]subscriptions.BatchResult, error)
+	BatchAssignGroup(context.Context, []string, string, string) ([]subscriptions.BatchResult, error)
+	BatchConfigureRefresh(context.Context, []string, subscriptions.RefreshPolicy) ([]subscriptions.BatchResult, error)
+	BatchUpdate(context.Context, []string) ([]subscriptions.BatchResult, error)
 	ResolveYouTube(context.Context, string) (discovery.YouTubeChannel, error)
 	Resolve(context.Context, string) (subscriptions.ResolvedSource, error)
 	ExportOPML(context.Context) ([]byte, error)

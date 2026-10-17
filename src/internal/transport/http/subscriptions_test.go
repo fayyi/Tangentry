@@ -239,6 +239,45 @@ func TestRSSRefreshPolicyHTTPRequiresExplicitChoice(t *testing.T) {
 	}
 }
 
+func TestSubscriptionBatchHTTPReportsPerSourceResults(t *testing.T) {
+	store, err := sqlite.Open(filepath.Join(t.TempDir(), "batch-http.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	service := subscriptions.NewService(store, nil, subscriptions.WithRSSFeeds(func(_ context.Context, source subscriptions.Source, _ subscriptions.Validators) (subscriptions.ConditionalResult, error) {
+		return subscriptions.ConditionalResult{NotModified: true}, nil
+	}))
+	defer service.Close()
+	ctx := context.Background()
+	first, _, err := service.Create(ctx, subscriptions.Input{Type: "rss", Query: "https://example.com/first"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, _, err := service.Create(ctx, subscriptions.Input{Type: "rss", Query: "https://example.com/second"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := New(content.NewService(store), nil, nil, Options{Subscriptions: service})
+	send := func(body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("POST", "http://127.0.0.1/api/subscriptions/batch", strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+	if w := send(`{"action":"refresh-policy","ids":["` + first.ID + `","` + second.ID + `"],"enabled":false,"intervalSeconds":900}`); w.Code != 200 || !strings.Contains(w.Body.String(), `"failed":0`) || strings.Count(w.Body.String(), `"ok":true`) != 2 {
+		t.Fatalf("batch policy: %d %s", w.Code, w.Body.String())
+	}
+	missing := "rss:feed:" + strings.Repeat("a", 64)
+	if w := send(`{"action":"delete","ids":["` + first.ID + `","` + missing + `"]}`); w.Code != 200 || !strings.Contains(w.Body.String(), `"failed":1`) || !strings.Contains(w.Body.String(), `"subscription not found"`) {
+		t.Fatalf("partial batch delete: %d %s", w.Code, w.Body.String())
+	}
+	if w := send(`{"action":"unknown","ids":["` + second.ID + `"]}`); w.Code != 400 {
+		t.Fatalf("invalid batch action accepted: %d %s", w.Code, w.Body.String())
+	}
+}
+
 func TestYouTubeChannelHTTPResolveAndLocalCreate(t *testing.T) {
 	store, err := sqlite.Open(filepath.Join(t.TempDir(), "youtube.db"))
 	if err != nil {

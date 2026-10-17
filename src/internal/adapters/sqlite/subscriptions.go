@@ -19,6 +19,17 @@ func (s *Store) CreateSubscription(ctx context.Context, source subscriptions.Sou
 	if err != nil {
 		return subscriptions.Source{}, false, err
 	}
+	if count == 1 && subscriptions.SupportsRefresh(source.ID) {
+		record := subscriptions.DefaultRefreshFor(source.ID)
+		record.State.NextCheckAt = source.CreatedAt + record.State.IntervalSeconds
+		payload, marshalErr := json.Marshal(record)
+		if marshalErr != nil {
+			return subscriptions.Source{}, false, marshalErr
+		}
+		if _, err = s.db.ExecContext(ctx, `INSERT INTO subscription_refresh(id,payload) VALUES(?,?)`, source.ID, string(payload)); err != nil {
+			return subscriptions.Source{}, false, err
+		}
+	}
 	var id string
 	err = s.db.QueryRowContext(ctx, `SELECT id FROM subscriptions WHERE creator_id=? OR id=? ORDER BY CASE WHEN creator_id=? THEN 0 ELSE 1 END LIMIT 1`, source.CreatorID, source.ID, source.CreatorID).Scan(&id)
 	if err != nil {
@@ -118,7 +129,7 @@ func (s *Store) EditSubscriptionAddress(ctx context.Context, id, expected, addre
 	if err = tx.QueryRowContext(ctx, `SELECT payload FROM subscription_refresh WHERE id=?`, id).Scan(&raw); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return subscriptions.Source{}, err
 	}
-	record := subscriptions.DefaultRefresh()
+	record := subscriptions.DefaultRefreshFor(id)
 	if raw.Valid {
 		if err = json.Unmarshal([]byte(raw.String), &record); err != nil {
 			return subscriptions.Source{}, err

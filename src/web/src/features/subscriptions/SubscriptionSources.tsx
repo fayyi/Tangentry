@@ -5,6 +5,7 @@ import { sourceLabel } from './sourcePresentation'
 import type { useSubscriptions } from './useSubscriptions'
 import type { useSubscriptionGroups } from './useSubscriptionGroups'
 import { SubscriptionSourceIcon } from './SubscriptionSourceIcon'
+import { toggleSelection } from './selectionRange'
 
 const collapseKey = 'tangentry-subscription-collapsed-groups'
 type Groups = ReturnType<typeof useSubscriptionGroups>
@@ -31,6 +32,8 @@ export function SubscriptionSources({state, groups, onSelect}: {state: ReturnTyp
   const [adding, setAdding] = useState(false)
   const [name, setName] = useState('')
   const [filter, setFilter] = useState('')
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const anchor = useRef<string | null>(null)
   const newName = useRef<HTMLInputElement>(null)
   const createTrigger = useRef<HTMLButtonElement>(null)
   const closeCreate = () => { setAdding(false); requestAnimationFrame(() => createTrigger.current?.focus({preventScroll:true})) }
@@ -38,19 +41,42 @@ export function SubscriptionSources({state, groups, onSelect}: {state: ReturnTyp
   useEffect(() => { try { sessionStorage.setItem(collapseKey, JSON.stringify([...collapsed])) } catch { /* Navigation works without session storage. */ } }, [collapsed])
   const selectedGroup = state.sources.find(source => source.id === state.selectedId)?.groupId
   useEffect(() => { if (selectedGroup) setCollapsed(current => { if (!current.has(selectedGroup)) return current; const next = new Set(current); next.delete(selectedGroup); return next }) }, [selectedGroup, state.selectedId])
+  useEffect(() => { setSelected(current => { const valid = new Set(state.sources.map(source => source.id)); const next = new Set([...current].filter(id => valid.has(id))); return next.size === current.size ? current : next }) }, [state.sources])
   useEffect(() => { if (adding) newName.current?.focus() }, [adding])
   const knownGroups = useMemo(() => new Set(groups.groups.map(group => group.id)), [groups.groups])
   const keyword = filter.trim().toLocaleLowerCase()
   const matches = (source: SubscriptionSource, groupName = '') => !keyword || `${source.name} ${sourceLabel(source)} ${groupName}`.toLocaleLowerCase().includes(keyword)
-  const sourceButton = (source: SubscriptionSource) => <button key={source.id} className={`subscription-source ${source.id === state.selectedId ? 'active' : ''}`} aria-current={source.id === state.selectedId ? 'true' : undefined} title={source.name} onClick={() => { state.select(source.id); onSelect?.() }}><SubscriptionSourceIcon source={source}/><strong>{source.name}</strong><span className="subscription-source-platform">{sourceLabel(source)}</span><small>{source.lastUpdatedAt ? `${source.itemCount} 条` : '未更新'}</small></button>
+  const sourceButton = (source: SubscriptionSource) => <div key={source.id} className={`subscription-source-row ${selected.has(source.id) ? 'selected' : ''}`}>
+    <input className="subscription-source-check" type="checkbox" checked={selected.has(source.id)} aria-label={`选择来源 ${source.name}`} onChange={event => { const next = toggleSelection(selected, visibleIds, source.id, (event.nativeEvent as MouseEvent).shiftKey, anchor.current); anchor.current = source.id; setSelected(next) }} />
+    <button className={`subscription-source ${source.id === state.selectedId ? 'active' : ''}`} aria-current={source.id === state.selectedId ? 'true' : undefined} title={source.name} onClick={() => { state.select(source.id); onSelect?.() }}><SubscriptionSourceIcon source={source}/><strong>{source.name}</strong><span className="subscription-source-platform">{sourceLabel(source)}</span><small>{source.lastUpdatedAt ? `${source.itemCount} 条` : '未更新'}</small></button>
+  </div>
   const ungrouped = state.sources.filter(source => !source.groupId)
   const unresolved = state.sources.filter(source => source.groupId && !knownGroups.has(source.groupId))
+  const visibleIds = useMemo(() => {
+    const ids: string[] = []
+    for (const group of groups.groups) for (const source of state.sources) if (source.groupId === group.id && matches(source, group.name)) ids.push(source.id)
+    for (const source of [...ungrouped, ...unresolved]) if (matches(source)) ids.push(source.id)
+    return ids
+  }, [groups.groups, state.sources, keyword])
+  const selectedVisible = visibleIds.filter(id => selected.has(id))
+  const allVisibleSelected = visibleIds.length > 0 && selectedVisible.length === visibleIds.length
   const groupBusy = groups.loading || Boolean(groups.listError) || Boolean(groups.pending)
+  const batchBusy = Boolean(state.batch?.running)
+  const actionBusy = groupBusy || batchBusy || Boolean(state.pending)
   const reload = () => { void state.reload(); void groups.reload() }
+  const clearSelection = () => { setSelected(new Set()); anchor.current = null }
+  const batchDelete = async () => { if (!selectedVisible.length || !window.confirm(`确认移除选中的 ${selectedVisible.length} 个来源？`)) return; if (await state.batchRemove(selectedVisible)) clearSelection() }
+  const batchUpdate = async () => { if (await state.batchUpdate(selectedVisible)) clearSelection() }
+  const batchMove = async (event: React.ChangeEvent<HTMLSelectElement>) => { const groupId = event.target.value; if (!groupId) return; if (await state.batchMove(selectedVisible, groupId === '__ungrouped' ? '' : groupId)) clearSelection(); event.target.value = '' }
+  const batchRefresh = async (event: React.ChangeEvent<HTMLSelectElement>) => { const interval = Number(event.target.value); if (!interval) return; if (await state.batchConfigureRefresh(selectedVisible, true, interval)) clearSelection(); event.target.value = '' }
   return <aside className="subscription-sources" aria-label="已保存来源">
     <div className="subscription-section-heading"><h2>我的来源 <span className="count">{state.sources.length}</span></h2><div className="subscription-source-tools"><button ref={createTrigger} className="icon-button" disabled={groupBusy} aria-label="新建来源分组" onClick={() => { if (adding) closeCreate(); else setAdding(true) }}><Plus size={16} aria-hidden="true" /></button><button className="icon-button" disabled={state.loading || Boolean(state.pending) || Boolean(groups.pending)} aria-label="重新加载来源" onClick={reload}><RefreshCw size={16} aria-hidden="true" /></button></div></div>
     {adding && <form className="subscription-group-create" onSubmit={event => { event.preventDefault(); void groups.create(name).then(ok => { if (ok) { setName(''); closeCreate() } }) }}><label className="subscription-field"><span>分组名称（最多 60 字）</span><div className="subscription-input"><input ref={newName} aria-label="新分组名称" value={name} maxLength={120} onChange={event => setName(event.target.value)} required placeholder="例如：科技、日常、播客" /></div></label><div className="subscription-group-form-actions"><button className="button button-secondary" disabled={groupBusy || !name.trim() || [...name.trim()].length > 60}>创建分组</button><button className="icon-button" type="button" aria-label="取消创建分组" disabled={Boolean(groups.pending)} onClick={closeCreate}><X size={15} aria-hidden="true" /></button></div>{groups.error?.kind === 'create' && <p className="subscription-group-feedback" role="alert">{groups.error.message}</p>}</form>}
     <label className="subscription-field subscription-source-search"><span className="sr-only">筛选订阅来源</span><div className="subscription-input"><Search size={14} aria-hidden="true"/><input type="search" aria-label="筛选订阅来源" placeholder="找来源或分组" value={filter} onChange={event => setFilter(event.target.value)} /></div></label>
+    {state.sources.length > 0 && <div className="subscription-batch-toolbar" aria-label="批量管理来源">
+      <label className="subscription-batch-select-all"><input type="checkbox" checked={allVisibleSelected} ref={input => { if (input) input.indeterminate = selectedVisible.length > 0 && !allVisibleSelected }} aria-label="全选当前来源" onChange={() => setSelected(allVisibleSelected ? new Set([...selected].filter(id => !visibleIds.includes(id))) : new Set([...selected, ...visibleIds]))} /><span>{selected.size ? `已选 ${selected.size}` : '选择来源'}</span></label>
+      {selected.size > 0 && <><button className="text-button" disabled={actionBusy} onClick={batchUpdate}><RefreshCw size={14} aria-hidden="true" />批量更新</button><button className="text-button danger" disabled={actionBusy} onClick={() => void batchDelete()}><Trash2 size={14} aria-hidden="true" />批量移除</button><label className="subscription-batch-select"><span className="sr-only">批量移动分组</span><select disabled={actionBusy} defaultValue="" onChange={event => void batchMove(event)} aria-label="批量移动分组"><option value="">移动到分组</option><option value="__ungrouped">未分组</option>{groups.groups.map(group => <option key={group.id} value={group.id}>{group.name}</option>)}</select></label><label className="subscription-batch-select"><span className="sr-only">批量修改刷新间隔</span><select disabled={actionBusy} defaultValue="" onChange={event => void batchRefresh(event)} aria-label="批量修改刷新间隔"><option value="">修改刷新间隔</option><option value="900">15 分钟</option><option value="3600">1 小时</option><option value="7200">2 小时</option><option value="21600">6 小时</option><option value="86400">1 天</option></select></label><button className="icon-button" disabled={actionBusy} aria-label="清除选择" title="清除选择" onClick={clearSelection}><X size={14} aria-hidden="true" /></button></>}
+    </div>}
     {state.loading && <p role="status" className="field-hint">正在加载来源…</p>}
     {groups.loading && <p className="field-hint" role="status">正在读取分组…</p>}
     {groups.listError && <p className="subscription-group-feedback" role="alert">{groups.listError}<button className="text-button" onClick={reload}>重新加载分组</button></p>}

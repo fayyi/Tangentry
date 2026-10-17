@@ -24,7 +24,7 @@ func (h *feedsHandler) subscriptionRefreshPolicy(w http.ResponseWriter, r *http.
 	source, err := h.feeds.Subscriptions.ConfigureRefresh(r.Context(), r.PathValue("id"), subscriptions.RefreshPolicy{Enabled: *input.Enabled, IntervalSeconds: input.IntervalSeconds})
 	if err != nil {
 		if err == subscriptions.ErrInvalid {
-			write(w, 400, apiError{"invalid_refresh_policy", "RSS 与 YouTube 频道支持自动刷新，间隔为 15 分钟至 7 天。"})
+			write(w, 400, apiError{"invalid_refresh_policy", "订阅来源支持自动刷新，间隔为 15 分钟至 7 天。"})
 		} else {
 			fail(w, err)
 		}

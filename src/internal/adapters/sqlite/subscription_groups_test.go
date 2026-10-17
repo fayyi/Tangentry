@@ -230,6 +230,7 @@ func TestGroupMigrationPreservesVersion12RowsAndAddsNoMemberships(t *testing.T) 
 		`CREATE TABLE schema_version(version INTEGER PRIMARY KEY)`, `INSERT INTO schema_version VALUES(12)`,
 		`CREATE TABLE subscriptions(id TEXT PRIMARY KEY,creator_id TEXT NOT NULL UNIQUE,name TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,snapshot TEXT NOT NULL)`,
 		`INSERT INTO subscriptions VALUES('bilibili:creator:12345','12345','我的来源',12,20,'')`,
+		`INSERT INTO subscriptions VALUES('rss:feed:` + strings.Repeat("a", 64) + `','https://example.com/feed','RSS 来源',12,20,'')`,
 		`CREATE TABLE subscription_refresh(id TEXT PRIMARY KEY,payload TEXT NOT NULL)`,
 		`INSERT INTO subscription_refresh VALUES('bilibili:creator:12345','{"state":{"enabled":true,"intervalSeconds":3600}}')`,
 	} {
@@ -237,7 +238,7 @@ func TestGroupMigrationPreservesVersion12RowsAndAddsNoMemberships(t *testing.T) 
 			t.Fatal(err)
 		}
 	}
-	const query = `SELECT json_array(s.id,s.creator_id,s.name,s.created_at,s.updated_at,s.snapshot,r.payload) FROM subscriptions s JOIN subscription_refresh r ON r.id=s.id`
+	const query = `SELECT json_array(s.id,s.creator_id,s.name,s.created_at,s.updated_at,s.snapshot,r.payload) FROM subscriptions s JOIN subscription_refresh r ON r.id=s.id WHERE s.id='bilibili:creator:12345'`
 	var before string
 	if err = db.QueryRow(query).Scan(&before); err != nil {
 		t.Fatal(err)
@@ -251,6 +252,10 @@ func TestGroupMigrationPreservesVersion12RowsAndAddsNoMemberships(t *testing.T) 
 		var after string
 		if err = s.db.QueryRow(query).Scan(&after); err != nil || before != after {
 			t.Fatal("migration changed rows", after, err)
+		}
+		var rssPayload string
+		if err = s.db.QueryRow(`SELECT payload FROM subscription_refresh WHERE id=?`, "rss:feed:"+strings.Repeat("a", 64)).Scan(&rssPayload); err != nil || !strings.Contains(rssPayload, "7200") || !strings.Contains(rssPayload, "nextCheckAt") {
+			t.Fatal("migration did not add default polling policy", rssPayload, err)
 		}
 		var count int
 		if err = s.db.QueryRow(`SELECT (SELECT COUNT(*) FROM subscription_groups)+(SELECT COUNT(*) FROM subscription_group_members)`).Scan(&count); err != nil || count != 0 {

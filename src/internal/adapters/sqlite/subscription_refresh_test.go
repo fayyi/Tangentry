@@ -24,8 +24,8 @@ func TestRefreshCommitRollbackAndMetadataOnlyKeepsExactSnapshot(t *testing.T) {
 	}
 	var n int
 	s.db.QueryRow(`SELECT COUNT(*) FROM subscription_refresh`).Scan(&n)
-	if n != 0 {
-		t.Fatal("default read created metadata")
+	if n != 1 {
+		t.Fatal("new polling source did not persist default metadata")
 	}
 	snapshot := subscriptions.Snapshot{Items: []content.Item{}, Total: 0, Title: "old"}
 	_, err = s.UpdateSubscription(ctx, id, snapshot, 10)

@@ -2,6 +2,15 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { APIError, request } from '../../shared/api/client'
 import type { SubscriptionDetail, SubscriptionSource } from '../../shared/api/types'
 
+export type SubscriptionBatchProgress = {
+  kind: 'update' | 'delete' | 'move' | 'refresh-policy'
+  total: number
+  completed: number
+  failed: number
+  failures: Record<string, string>
+  running: boolean
+}
+
 const selectionKey = 'tangentry-subscription-selection'
 const message = (cause: unknown) => cause instanceof Error ? cause.message : '操作没有完成，请重试。'
 
@@ -18,9 +27,11 @@ export function useSubscriptions(active = false) {
   const [updateErrors, setUpdateErrors] = useState<Record<string, string>>({})
   const [notice, setNotice] = useState('')
   const [pending, setPending] = useState<{ kind: string; id: string } | null>(null)
+  const [batch, setBatch] = useState<SubscriptionBatchProgress | null>(null)
   const listRequest = useRef<AbortController | null>(null)
   const detailRequest = useRef<AbortController | null>(null)
   const mutation = useRef<AbortController | null>(null)
+  const batchRequest = useRef<AbortController | null>(null)
   const activeId = useRef(selectedId)
   const isActive = useRef(active)
   isActive.current = active
@@ -87,7 +98,7 @@ export function useSubscriptions(active = false) {
     }
   }, [])
 
-  useEffect(() => { void reload(false, true); return () => { listRequest.current?.abort(); detailRequest.current?.abort(); mutation.current?.abort() } }, [reload])
+  useEffect(() => { void reload(false, true); return () => { listRequest.current?.abort(); detailRequest.current?.abort(); mutation.current?.abort(); batchRequest.current?.abort() } }, [reload])
   useEffect(() => { void loadDetail(selectedId) }, [selectedId, detailVersion, loadDetail])
 
   useEffect(() => {
@@ -183,5 +194,76 @@ export function useSubscriptions(active = false) {
     setNotice('来源已移除，收藏、下载和笔记仍保留。')
   })
 
-  return { sources, selectedId, detail: detail?.source.id === selectedId ? detail : null, loading, reading, pending, listError, detailError, actionError, updateError: updateErrors[selectedId] ?? '', notice, select, reload, reloadDetail: () => loadDetail(selectedId), create, rename, editAddress, update, remove, configureRefresh, setMembership, dissolveGroup }
+  async function runBatch<T>(kind: SubscriptionBatchProgress['kind'], ids: string[], run: (id: string, signal: AbortSignal) => Promise<T>, accept: (id: string, result: T) => void): Promise<Set<string>> {
+    const unique = [...new Set(ids)].filter(Boolean)
+    if (!unique.length || loading || listError || mutation.current || batchRequest.current || batch?.running) return new Set()
+    const controller = new AbortController()
+    batchRequest.current = controller
+    const succeeded = new Set<string>()
+    setBatch({ kind, total: unique.length, completed: 0, failed: 0, failures: {}, running: true })
+    let cursor = 0
+    const worker = async () => {
+      while (!controller.signal.aborted) {
+        const index = cursor++
+        if (index >= unique.length) return
+        const id = unique[index]
+        try {
+          const result = await run(id, controller.signal)
+          if (controller.signal.aborted) return
+          succeeded.add(id)
+          accept(id, result)
+          setBatch(current => current ? { ...current, completed: current.completed + 1 } : current)
+        } catch (cause) {
+          if (controller.signal.aborted) return
+          const text = message(cause)
+          setBatch(current => current ? { ...current, completed: current.completed + 1, failed: current.failed + 1, failures: { ...current.failures, [id]: text } } : current)
+        }
+      }
+    }
+    // Keep batch refreshes within the backend's two-source update gate so a
+    // third concurrent request is not rejected as busy.
+    await Promise.all(Array.from({ length: Math.min(2, unique.length) }, worker))
+    if (!controller.signal.aborted) setBatch(current => current ? { ...current, running: false } : current)
+    if (batchRequest.current === controller) batchRequest.current = null
+    return succeeded
+  }
+
+  const batchUpdate = async (ids: string[]) => {
+    const succeeded = await runBatch('update', ids, (id, signal) => request<SubscriptionDetail>(`/subscriptions/${encodeURIComponent(id)}/update`, { method: 'POST', signal }), (id, result) => {
+      replaceSource(result.source)
+      if (activeId.current === id) { setDetail(result); setDetailError('') }
+    })
+    if (succeeded.size) setNotice(`已更新 ${succeeded.size} 个来源${succeeded.size < new Set(ids).size ? '，失败项已保留旧内容。' : '。'}`)
+    return succeeded.size > 0
+  }
+  const batchRemove = async (ids: string[]) => {
+    const succeeded = await runBatch('delete', ids, (id, signal) => request<void>(`/subscriptions/${encodeURIComponent(id)}`, { method: 'DELETE', signal }), (_id, _result) => undefined)
+    if (succeeded.size) {
+      setSources(current => current.filter(source => !succeeded.has(source.id)))
+      if (succeeded.has(activeId.current)) select(sources.find(source => !succeeded.has(source.id))?.id ?? '')
+      setUpdateErrors(current => { const next = { ...current }; succeeded.forEach(id => delete next[id]); return next })
+      setNotice(`已移除 ${succeeded.size} 个来源。`)
+    }
+    return succeeded.size > 0
+  }
+  const batchMove = async (ids: string[], groupId: string) => {
+    const succeeded = await runBatch('move', ids, (id, signal) => request<{sourceId: string; groupId: string}>(`/subscriptions/${encodeURIComponent(id)}/group`, { method: 'PUT', body: JSON.stringify({ groupId, expectedGroupId: sources.find(source => source.id === id)?.groupId ?? '' }), signal }), (id, result) => {
+      setSources(current => current.map(source => source.id === id ? { ...source, groupId: result.groupId } : source))
+      setDetail(current => current?.source.id === id ? { ...current, source: { ...current.source, groupId: result.groupId } } : current)
+    })
+    if (succeeded.size) setNotice(`已移动 ${succeeded.size} 个来源。`)
+    return succeeded.size > 0
+  }
+  const batchConfigureRefresh = async (ids: string[], enabled: boolean, intervalSeconds: number) => {
+    const succeeded = await runBatch('refresh-policy', ids, (id, signal) => request<SubscriptionSource>(`/subscriptions/${encodeURIComponent(id)}/refresh-policy`, { method: 'PUT', body: JSON.stringify({ enabled, intervalSeconds }), signal }), (_id, result) => replaceSource(result))
+    if (succeeded.size) setNotice(`已修改 ${succeeded.size} 个来源的自动更新设置。`)
+    return succeeded.size > 0
+  }
+  const retryBatchFailed = () => {
+    if (!batch || batch.running) return Promise.resolve(false)
+    const ids = Object.keys(batch.failures)
+    return batch.kind === 'update' ? batchUpdate(ids) : Promise.resolve(false)
+  }
+
+  return { sources, selectedId, detail: detail?.source.id === selectedId ? detail : null, loading, reading, pending, batch, listError, detailError, actionError, updateError: updateErrors[selectedId] ?? '', notice, select, reload, reloadDetail: () => loadDetail(selectedId), create, rename, editAddress, update, remove, configureRefresh, batchUpdate, batchRemove, batchMove, batchConfigureRefresh, retryBatchFailed, setMembership, dissolveGroup }
 }

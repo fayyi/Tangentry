@@ -29,7 +29,7 @@ func scanSubscription(row interface{ Scan(...any) error }, joined ...bool) (subs
 	if err != nil {
 		return detail, err
 	}
-	record := subscriptions.DefaultRefresh()
+	record := subscriptions.DefaultRefreshFor(detail.Source.ID)
 	if metadata.Valid {
 		if err = json.Unmarshal([]byte(metadata.String), &record); err != nil {
 			return detail, err
@@ -76,7 +76,7 @@ func (s *Store) ListSubscriptions(ctx context.Context) ([]subscriptions.Source, 
 			&title, &total, &hasMore, &source.ItemCount, &metadata, &source.GroupID, &source.IdentityURL); err != nil {
 			return nil, err
 		}
-		record := subscriptions.DefaultRefresh()
+		record := subscriptions.DefaultRefreshFor(source.ID)
 		if metadata.Valid {
 			if err := json.Unmarshal([]byte(metadata.String), &record); err != nil {
 				return nil, err

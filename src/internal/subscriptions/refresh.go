@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const DefaultInterval = int64(3600)
+const DefaultInterval = int64(7200)
 
 // Public state contains no feed validators or network credentials.
 type RefreshState struct {
@@ -36,6 +36,15 @@ type RefreshRecord struct {
 
 func DefaultRefresh() RefreshRecord {
 	return RefreshRecord{State: RefreshState{IntervalSeconds: DefaultInterval}}
+}
+
+// DefaultRefreshFor applies the product default to every saved source. The
+// scheduler uses conditional validators where a source kind supports them and
+// falls back to its regular snapshot fetcher otherwise.
+func DefaultRefreshFor(id string) RefreshRecord {
+	record := DefaultRefresh()
+	record.State.Enabled = validID(id)
+	return record
 }
 
 type ConditionalResult struct {
@@ -120,7 +129,11 @@ func (s *Service) updateFeed(ctx context.Context, detail Detail) (Detail, error)
 	var result ConditionalResult
 	if strings.HasPrefix(id, "rss:feed:") && s.rss != nil {
 		result, err = s.rss(ctx, detail.Source, validators)
-	} else if s.conditional != nil {
+	} else if strings.HasPrefix(id, "rss:feed:") && s.conditional != nil {
+		// Keep the lightweight conditional fetch hook usable for tests and
+		// compositions that do not provide the identity-aware RSS adapter.
+		result, err = s.conditional(ctx, detail.Source.CreatorID, validators)
+	} else if strings.HasPrefix(id, "youtube:channel:") && s.conditional != nil {
 		result, err = s.conditional(ctx, detail.Source.CreatorID, validators)
 	} else {
 		result.Snapshot, err = s.fetch(ctx, detail.Source.CreatorID)
@@ -274,7 +287,8 @@ func (s *Service) StartRefresh() {
 }
 func (s *Service) Close() { s.mu.Lock(); s.closed = true; s.cancel(); s.mu.Unlock(); s.wg.Wait() }
 
-// Both channel Atom and generic RSS sources support bounded conditional checks.
+// Every saved source can be scheduled. RSS and YouTube additionally support
+// conditional validators; other source kinds use their regular fetcher.
 func SupportsRefresh(id string) bool {
-	return strings.HasPrefix(id, "rss:feed:") || strings.HasPrefix(id, "youtube:channel:")
+	return strings.HasPrefix(id, "rss:feed:") || strings.HasPrefix(id, "youtube:channel:") || strings.HasPrefix(id, "bilibili:creator:")
 }

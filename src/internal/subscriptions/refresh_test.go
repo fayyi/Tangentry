@@ -43,7 +43,7 @@ func TestRSSChecksPersistValidatorsAndOnlyChangeSnapshotWhenChanged(t *testing.T
 	}
 	service := subscriptions.NewService(store, nil, subscriptions.WithClock(func() time.Time { return now }), subscriptions.WithConditionalFeeds(fetch))
 	source, created, err := service.Create(ctx, subscriptions.Input{Type: "rss", Query: validators.ResourceURL})
-	if err != nil || !created || calls != 0 || source.Refresh.Enabled || source.Refresh.IntervalSeconds != 3600 {
+	if err != nil || !created || calls != 0 || !source.Refresh.Enabled || source.Refresh.IntervalSeconds != subscriptions.DefaultInterval {
 		t.Fatal(source, err, calls)
 	}
 	first, err := service.Update(ctx, source.ID)
@@ -152,27 +152,31 @@ func TestRSSOptInSchedulerDueTimingAndShutdown(t *testing.T) {
 	ctx := context.Background()
 	now := time.Unix(1800000000, 0)
 	var calls int32
-	service := subscriptions.NewService(store, func(context.Context, string) (subscriptions.Snapshot, error) {
+	service := subscriptions.NewService(store, func(_ context.Context, uid string) (subscriptions.Snapshot, error) {
 		atomic.AddInt32(&calls, 1)
+		if uid == "12345" {
+			return subscriptions.Snapshot{Items: []content.Item{video()}, Total: 1}, nil
+		}
 		return rssSnapshot("scheduled"), nil
 	}, subscriptions.WithClock(func() time.Time { return now }))
 	defer service.Close()
 	first, _, _ := service.Create(ctx, subscriptions.Input{Type: "rss", Query: "https://example.com/a"})
 	second, _, _ := service.Create(ctx, subscriptions.Input{Type: "rss", Query: "https://example.com/b"})
 	bili, _, _ := service.Create(ctx, subscriptions.Input{Query: "12345"})
-	if err = service.RefreshDue(ctx, now.Add(100*time.Hour)); err != nil || calls != 0 {
-		t.Fatal("disabled source fetched")
+	if err = service.RefreshDue(ctx, now.Add(100*time.Hour)); err != nil || calls != 3 {
+		t.Fatal("default-enabled sources did not refresh", calls)
 	}
+	atomic.StoreInt32(&calls, 0)
 	for _, policy := range []subscriptions.RefreshPolicy{{Enabled: true, IntervalSeconds: 0}, {Enabled: true, IntervalSeconds: 899}, {Enabled: true, IntervalSeconds: 604801}} {
 		if _, err = service.ConfigureRefresh(ctx, first.ID, policy); !errors.Is(err, subscriptions.ErrInvalid) {
 			t.Fatal("invalid policy")
 		}
 	}
-	if _, err = service.ConfigureRefresh(ctx, bili.ID, subscriptions.RefreshPolicy{Enabled: true, IntervalSeconds: 900}); !errors.Is(err, subscriptions.ErrInvalid) {
-		t.Fatal("B站 polling enabled")
+	if _, err = service.ConfigureRefresh(ctx, bili.ID, subscriptions.RefreshPolicy{Enabled: false, IntervalSeconds: 900}); err != nil {
+		t.Fatal("B站 refresh policy should be configurable", err)
 	}
 	enabled, err := service.ConfigureRefresh(ctx, first.ID, subscriptions.RefreshPolicy{Enabled: true, IntervalSeconds: 900})
-	if err != nil || calls != 0 || enabled.Refresh.NextCheckAt != now.Unix()+900 {
+	if err != nil || enabled.Refresh.NextCheckAt != now.Unix()+900 {
 		t.Fatal("enable fetched early", enabled, err)
 	}
 	_, _ = service.ConfigureRefresh(ctx, second.ID, subscriptions.RefreshPolicy{Enabled: true, IntervalSeconds: 900})
