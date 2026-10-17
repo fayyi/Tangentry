@@ -11,6 +11,7 @@ import (
 
 	"tangentry/internal/ai"
 	"tangentry/internal/config"
+	"tangentry/internal/credentials"
 	"tangentry/internal/discovery"
 	"tangentry/internal/downloads"
 	"tangentry/internal/favoritesync"
@@ -74,6 +75,7 @@ func New(dataDir string, assets fs.FS, options ...Options) (application *Applica
 		handler:       newHTTPHandler(newHTTPWiring(services), assets),
 		downloads:     services.features.downloads,
 		transcription: services.features.transcription,
+		cookies:       services.runtime.cookies,
 		closers:       started,
 	}
 	shell := &shellState{
@@ -95,6 +97,7 @@ type runtimeState struct {
 	handler       http.Handler
 	downloads     *downloads.Service
 	transcription *transcription.Service
+	cookies       *credentials.Store
 	closers       closers
 	closeOnce     sync.Once
 	closeErr      error

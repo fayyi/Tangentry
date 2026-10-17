@@ -12,10 +12,11 @@ import (
 	"tangentry/internal/discovery"
 )
 
-// This is the website's feed, not an Open Platform API. The desktop shell's
-// WebView currently has no authenticated network bridge into the Go process,
-// so the supported fallback is an explicitly imported browser Cookie. Rejections
-// are final: no signature emulation, credential forwarding, or automatic retries.
+// This is the website's feed, not an Open Platform API. MyGo can provide a
+// platform WebView for login, but it does not expose response interception for
+// the page's signed feed calls. The supported server-side fallback therefore
+// reuses an explicitly imported browser Cookie and its matching User-Agent;
+// signatures are never emulated.
 func (c *Client) Recommendations(ctx context.Context, page int) (discovery.Feed, error) {
 	if page < 1 || page > 10000 {
 		return discovery.Feed{}, discovery.ErrInvalidQuery
@@ -54,6 +55,11 @@ func (c *Client) Recommendations(ctx context.Context, page int) (discovery.Feed,
 		return discovery.Feed{}, err
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0")
+	if c.UserAgent != nil {
+		if userAgent := c.UserAgent(endpoint); userAgent != "" {
+			req.Header.Set("User-Agent", userAgent)
+		}
+	}
 	req.Header.Set("Referer", "https://www.douyin.com/")
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json, text/plain, */*")

@@ -46,11 +46,14 @@ func run() (runErr error) {
 	if err != nil {
 		return err
 	}
+	platformLogin := newPlatformLoginBridge(application.PlatformCredentialsPort())
+	mygo.BindAs("PlatformLogin", platformLoginService{bridge: platformLogin})
 	runtime := application.RuntimePort()
 	activity := application.ActivityPort()
 	backend := server.New(runtime, application.ShellStatePort(), server.ShellOptions{
-		PickPath:     pickPath,
-		Capabilities: server.Capabilities{WindowCapture: true, Notifications: true, KeepAwake: true},
+		PickPath:      pickPath,
+		PlatformLogin: platformLogin.Open,
+		Capabilities:  server.Capabilities{WindowCapture: true, Notifications: true, KeepAwake: true},
 	})
 	defer func() {
 		if err := backend.Close(); err != nil {

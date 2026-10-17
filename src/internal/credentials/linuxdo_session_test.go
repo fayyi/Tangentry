@@ -1,6 +1,7 @@
 package credentials
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"path/filepath"
@@ -109,5 +110,63 @@ func TestLinuxdoBrowserLoginRejectsExpiredOrScopedCookies(t *testing.T) {
 	}
 	if s.Header("linuxdo", "https://linux.do/") != "" {
 		t.Fatal("invalid login persisted")
+	}
+}
+
+func TestLinuxdoBrowserLoginPersistsUserAgentWithoutLeakingState(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "credentials")
+	s, err := Open(dir, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	save := s.PrepareLinuxdoBrowserLogin()
+	ua := "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/136.0.0.0 Safari/537.36"
+	cookies := []*http.Cookie{
+		{Name: "_t", Value: "browser-token", Domain: ".linux.do", Path: "/", Secure: true, HttpOnly: true},
+		{Name: "cf_clearance", Value: "clearance", Domain: ".linux.do", Path: "/", Secure: true},
+		{Name: "tracking", Value: "must-not-copy", Domain: ".linux.do", Path: "/", Secure: true},
+	}
+	if err := save(cookies, ua); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.UserAgent("linuxdo"); got != ua {
+		t.Fatalf("user agent mismatch: %q", got)
+	}
+	if got := s.Header("linuxdo", "https://linux.do/"); !strings.Contains(got, "_t=browser-token") || !strings.Contains(got, "cf_clearance=clearance") || strings.Contains(got, "tracking") {
+		t.Fatalf("cookie filtering failed: %q", got)
+	}
+	state := s.States()
+	rawState, _ := json.Marshal(state)
+	if strings.Contains(string(rawState), ua) {
+		t.Fatal("browser UA leaked through serialized state")
+	}
+	for _, value := range state {
+		if strings.Contains(value.Source, "Mozilla") || strings.Contains(value.Platform, ua) {
+			t.Fatal("browser UA leaked through state")
+		}
+	}
+	reopened, err := Open(dir, "", "")
+	if err != nil || reopened.UserAgent("linuxdo") != ua {
+		t.Fatalf("user agent was not persisted: %v", err)
+	}
+}
+
+func TestBrowserLoginRejectsInvalidUserAgentAndStaleCompletion(t *testing.T) {
+	s, err := Open(t.TempDir(), "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookies := []*http.Cookie{{Name: "_t", Value: "token", Domain: ".linux.do", Path: "/", Secure: true}}
+	for _, ua := range []string{"", "bad\r\nInjected: yes", strings.Repeat("x", 2049)} {
+		if err := s.PrepareLinuxdoBrowserLogin()(cookies, ua); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("invalid UA accepted: %q (%v)", ua, err)
+		}
+	}
+	late := s.PrepareLinuxdoBrowserLogin()
+	if err := s.Clear("linuxdo"); err != nil {
+		t.Fatal(err)
+	}
+	if err := late(cookies, "Mozilla/5.0"); !errors.Is(err, ErrChanged) {
+		t.Fatalf("stale browser completion accepted: %v", err)
 	}
 }

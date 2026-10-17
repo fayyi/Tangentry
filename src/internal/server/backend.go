@@ -13,10 +13,11 @@ import (
 // Capabilities lists the features only a desktop shell provides. The web UI
 // reads them from GET /api/capabilities and hides controls that need them.
 type Capabilities struct {
-	PathPicker    bool `json:"pathPicker"`
-	WindowCapture bool `json:"windowCapture"`
-	Notifications bool `json:"notifications"`
-	KeepAwake     bool `json:"keepAwake"`
+	PathPicker           bool `json:"pathPicker"`
+	WindowCapture        bool `json:"windowCapture"`
+	Notifications        bool `json:"notifications"`
+	KeepAwake            bool `json:"keepAwake"`
+	PlatformWebViewLogin bool `json:"platformWebViewLogin"`
 }
 
 // Runtime is the shell-neutral application port. The server only needs the
@@ -43,8 +44,9 @@ type ShellState interface {
 // headless server uses the zero value. Keeping these options immutable after
 // construction makes the backend safe to reason about while requests run.
 type ShellOptions struct {
-	PickPath     func(context.Context, string, string) (string, error)
-	Capabilities Capabilities
+	PickPath      func(context.Context, string, string) (string, error)
+	PlatformLogin func(context.Context, string) error
+	Capabilities  Capabilities
 }
 
 type Backend struct {
@@ -84,6 +86,7 @@ func New(runtime Runtime, state ShellState, shell ShellOptions) *Backend {
 func (b *Backend) Capabilities() Capabilities {
 	capabilities := b.shell.Capabilities
 	capabilities.PathPicker = b.shell.PickPath != nil
+	capabilities.PlatformWebViewLogin = b.shell.PlatformLogin != nil
 	return capabilities
 }
 

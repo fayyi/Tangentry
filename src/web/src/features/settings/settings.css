@@ -98,6 +98,9 @@
 .cookie-recommendation-row { display: flex; align-items: center; }
 .cookie-recommendation-row .field-hint { margin: 0; }
 .cookie-platform-note { margin: -8px 0 12px 48px; }
+.platform-webview-actions { display: flex; align-items: center; gap: 10px; margin: -4px 0 8px 48px; min-height: 28px; }
+.platform-webview-actions .text-button { font-size: 12px; }
+.platform-webview-actions .field-hint { margin: 0; }
 .recommendation-switch { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; color: var(--muted); font-size: 12px; cursor: pointer; }
 .recommendation-switch input { appearance: none; width: 36px; height: 22px; border-radius: 11px; border: 0; background: var(--raised); position: relative; cursor: pointer; margin: 0; transition: background-color 160ms var(--ease-out); }
 .recommendation-switch input::after { content: ''; position: absolute; width: 18px; height: 18px; left: 2px; top: 2px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgb(0 0 0 / .2); transition: left 160ms var(--ease-out); }
@@ -161,6 +164,7 @@
   .cookie-editor-actions { flex-wrap: wrap; }
   .cookie-visibility { flex-basis: 100%; margin-bottom: 4px; }
   .bilibili-login > .cookie-editor { right: -64px; }
+  .platform-webview-actions { margin-left: 0; flex-wrap: wrap; }
   .settings-location-row { gap: 10px; grid-template-columns: 20px minmax(0, 1fr) auto; }
   .settings-workspace .setting-row { flex-wrap: wrap; }
   .settings-workspace .tool-value { justify-items: start; }

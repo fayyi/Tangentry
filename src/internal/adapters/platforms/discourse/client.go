@@ -17,10 +17,11 @@ import (
 )
 
 type Client struct {
-	HTTP    *http.Client
-	Cookie  func(string) string
-	Session func() (string, func([]*http.Cookie) error)
-	UserKey func() (string, string)
+	HTTP      *http.Client
+	Cookie    func(string) string
+	UserAgent func(string) string
+	Session   func() (string, func([]*http.Cookie) error)
+	UserKey   func() (string, string)
 }
 
 type SessionState struct {
@@ -53,6 +54,11 @@ func (c *Client) read(ctx context.Context, path string) ([]byte, int, error) {
 	}
 	req.Header.Set("Accept", "application/json, text/javascript, */*; q=0.01")
 	setDiscourseBrowserHeaders(req, true)
+	if c.UserAgent != nil {
+		if userAgent := c.UserAgent(origin); userAgent != "" {
+			req.Header.Set("User-Agent", userAgent)
+		}
+	}
 	var save func([]*http.Cookie) error
 	cookieHeader := ""
 	if c.Session != nil {

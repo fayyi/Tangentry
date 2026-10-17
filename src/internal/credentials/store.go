@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -23,12 +24,19 @@ type State struct {
 	Configured bool   `json:"configured"`
 	Source     string `json:"source"`
 	UpdatedAt  int64  `json:"updatedAt"`
+	ExpiresAt  int64  `json:"expiresAt,omitempty"`
+	Username   string `json:"username,omitempty"`
 }
 type entry struct {
 	APIKey    string `json:"apiKey,omitempty"`
 	ClientID  string `json:"clientId,omitempty"`
 	ExpiresAt int64  `json:"expiresAt,omitempty"`
 	Jar       string `json:"jar"`
+	// UserAgent is the browser UA that minted Jar. It is kept beside the
+	// cookies so Cloudflare-bound sessions are never replayed with a different
+	// client fingerprint. It is intentionally omitted from State/transport
+	// responses; callers use UserAgent only when constructing platform requests.
+	UserAgent string `json:"userAgent,omitempty"`
 	UpdatedAt int64  `json:"updatedAt"`
 	Token     string `json:"token,omitempty"`
 	Refresh   string `json:"refresh,omitempty"`
@@ -73,6 +81,9 @@ func Open(directory, header, file string) (*Store, error) {
 				return nil, ErrStorage
 			}
 		}
+		if e.UserAgent != "" && (e.Jar == "" || !validUserAgent(e.UserAgent)) {
+			return nil, ErrStorage
+		}
 		if e.Token != "" && (platform != "xiaoyuzhou" || !validToken(e.Token)) {
 			return nil, ErrStorage
 		}
@@ -107,6 +118,10 @@ func (s *Store) States() []State {
 				v.Source = "authorization"
 			}
 			v.UpdatedAt = e.UpdatedAt
+			v.ExpiresAt = jarExpiry(e.Jar)
+			if e.ExpiresAt > v.ExpiresAt {
+				v.ExpiresAt = e.ExpiresAt
+			}
 		} else if p == "bilibili" && (s.fallbackHeader != "" || s.fallbackFile != "") {
 			v.Configured = true
 			v.Source = "environment"
@@ -128,6 +143,18 @@ func (s *Store) Save(platform, format, raw string) error {
 		return err
 	}
 	return s.persistCredential(platform, entry{Jar: jar, UpdatedAt: time.Now().Unix()})
+}
+
+// UserAgent returns the browser User-Agent stored with the platform cookies.
+// The empty string means the credentials were manually imported or no browser
+// login has been completed; callers should then use their platform default.
+func (s *Store) UserAgent(platform string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if e, ok := s.entries[platform]; ok {
+		return e.UserAgent
+	}
+	return ""
 }
 
 // persistCredential keeps the local platform identity stable across cookie
@@ -165,6 +192,13 @@ func (s *Store) persistEntry(platform string, value entry) error {
 	return s.persistEntryLocked(platform, value)
 }
 func (s *Store) persistEntryLocked(platform string, value entry) error {
+	previous := s.entries[platform]
+	// Settings clients use UpdatedAt as a safe, non-secret change marker while
+	// a WebView login is completing. Keep it strictly increasing even when two
+	// writes happen within the same second.
+	if value.UpdatedAt <= previous.UpdatedAt {
+		value.UpdatedAt = previous.UpdatedAt + 1
+	}
 	next := make(map[string]entry, len(s.entries)+1)
 	for k, v := range s.entries {
 		next[k] = v
@@ -205,6 +239,20 @@ func validToken(raw string) bool {
 	}
 	for _, r := range raw {
 		if r <= 32 || r >= 127 || r == ';' {
+			return false
+		}
+	}
+	return true
+}
+
+func validUserAgent(raw string) bool {
+	if len(raw) == 0 || len(raw) > 2048 || strings.TrimSpace(raw) == "" {
+		return false
+	}
+	for _, r := range raw {
+		// Keep controls/newlines and non-ASCII out so the value can never become
+		// header injection or an ambiguous browser fingerprint.
+		if r < 0x20 || r == 0x7f || r > 0x7e {
 			return false
 		}
 	}

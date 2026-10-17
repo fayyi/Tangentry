@@ -1,6 +1,7 @@
-import { BookOpen, Check, ChevronDown, CirclePlay, Headphones, LoaderCircle, MessagesSquare, Music2, Trash2, TvMinimal, Upload } from 'lucide-react'
+import { BookOpen, Check, ChevronDown, CirclePlay, Headphones, LoaderCircle, LogIn, MessagesSquare, Music2, Trash2, TvMinimal, Upload } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { request } from '../../shared/api/client'
+import { openDesktopPlatformLogin, useCapabilities, type PlatformWebView } from '../../shared/api/desktop'
 import './settings.css'
 import { BilibiliLogin } from './BilibiliLogin'
 import { XiaoyuzhouLogin } from './XiaoyuzhouLogin'
@@ -8,7 +9,7 @@ import { LinuxdoSession } from './LinuxdoSession'
 import { LinuxdoLogin } from './LinuxdoLogin'
 import { useRecommendationPreferences, type RecommendationPlatform } from './useRecommendationPreferences'
 
-interface CookieState { platform: string; configured: boolean; source: string; updatedAt: number }
+interface CookieState { platform: string; configured: boolean; source: string; updatedAt: number; username?: string; expiresAt?: number }
 const platforms = [
   { id: 'bilibili', label: 'B站', description: '视频、字幕与下载', Icon: TvMinimal },
   { id: 'youtube', label: 'YouTube', description: '推荐、字幕与下载', Icon: CirclePlay },
@@ -18,6 +19,7 @@ const platforms = [
   { id: 'xiaohongshu', label: '小红书', description: '图文与视频', Icon: BookOpen },
 ]
 export function PlatformCookies({ onChanged }: { onChanged: (platform: string) => void }) {
+  const capabilities = useCapabilities()
   const recommendations = useRecommendationPreferences()
   function recommendationSwitch(id: string, label: string) {
     const platform = id as RecommendationPlatform
@@ -31,6 +33,7 @@ export function PlatformCookies({ onChanged }: { onChanged: (platform: string) =
   const [show, setShow] = useState(false)
   const [clearing, setClearing] = useState('')
   const [pending, setPending] = useState(false)
+  const [webViewPending, setWebViewPending] = useState<PlatformWebView | ''>('')
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const read = useRef<AbortController | null>(null)
@@ -59,6 +62,41 @@ export function PlatformCookies({ onChanged }: { onChanged: (platform: string) =
     } catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : '保存失败，请重试。') }
     finally { if (write.current === controller) write.current = null; if (!controller.signal.aborted) setPending(false) }
   }
+  async function openWebViewLogin(platform: PlatformWebView) {
+    if (webViewPending) return
+    const before = states?.find(state => state.platform === platform)
+    const beforeUpdatedAt = before?.updatedAt ?? 0
+    setWebViewPending(platform); setError(''); setNotice('')
+    try {
+      await openDesktopPlatformLogin(platform)
+      setNotice(`已打开${platform === 'linuxdo' ? 'Linux.do' : '抖音'}登录窗口。完成登录后，设置状态会自动更新。`)
+      // The native window persists credentials only after login finishes. Poll
+      // the safe state endpoint while it is open, never exposing cookie values.
+      let attempts = 0
+      const refresh = async () => {
+        if (attempts++ >= 120) return
+        try {
+          const result = await request<{ platforms: CookieState[] }>('/settings/cookies')
+          setStates(result.platforms)
+          const state = result.platforms.find(value => value.platform === platform)
+          // A re-validation starts with an already configured account. Wait
+          // for its persisted revision to move instead of treating that old
+          // state as a successful login immediately.
+          if (state?.configured && (!before?.configured || state.updatedAt > beforeUpdatedAt)) {
+            setWebViewPending('')
+            onChanged(platform)
+            return
+          }
+        } catch { /* Keep waiting; the platform window may still be open. */ }
+        if (attempts < 120) window.setTimeout(() => void refresh(), 1500)
+        else setWebViewPending('')
+      }
+      window.setTimeout(() => void refresh(), 1500)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '无法打开应用内登录窗口。')
+      setWebViewPending('')
+    }
+  }
   async function importFile(file?: File) {
     const current = ++generation.current
     if (!file) return
@@ -79,9 +117,11 @@ export function PlatformCookies({ onChanged }: { onChanged: (platform: string) =
       const state = states?.find(value => value.platform === platform.id), open = editing === platform.id
       const statusLabel = platform.id === 'xiaoyuzhou'
         ? state?.source === 'token' ? '已保存访问令牌' : state?.configured ? '旧 Cookie，请更换令牌' : '未配置令牌'
-        : !state ? '状态未知' : state.configured ? state.source === 'environment' ? '使用启动配置' : state.source === 'authorization' ? '已授权登录' : '已保存 Cookie' : '匿名访问'
+        : !state ? '状态未知' : state.configured ? state.source === 'environment' ? '使用启动配置' : state.username ? `已连接 · ${state.username}` : state.source === 'authorization' ? '已授权登录' : '已连接' : '未连接'
       const identity = <div className="cookie-identity"><span className="cookie-platform-icon" aria-hidden="true"><platform.Icon size={19} strokeWidth={1.7}/></span><div><strong>{platform.label}</strong><p>{platform.description}</p><span className="cookie-account-state" data-configured={state?.configured ?? false}>{statusLabel}</span></div></div>
-      const clearButton = state?.configured && <button type="button" className="icon-button cookie-clear" aria-label="清除" title={`清除${platform.label}登录信息`} disabled={pending} onClick={() => { setClearing(platform.id); setError(''); setNotice('') }}><Trash2 size={15}/></button>
+      const clearButton = state?.configured && (platform.id === 'linuxdo' || platform.id === 'douyin'
+        ? <button type="button" className="text-button cookie-clear" aria-label={`断开${platform.label}登录`} title={`断开${platform.label}登录`} disabled={pending || Boolean(webViewPending)} onClick={() => { setClearing(platform.id); setError(''); setNotice('') }}><Trash2 size={14}/><span>断开</span></button>
+        : <button type="button" className="icon-button cookie-clear" aria-label="清除" title={`清除${platform.label}登录信息`} disabled={pending} onClick={() => { setClearing(platform.id); setError(''); setNotice('') }}><Trash2 size={15}/></button>)
       if (platform.id === 'xiaoyuzhou') return <div className="cookie-platform" key={platform.id} data-platform={platform.id}>
         <div className="cookie-account-row">{identity}<div className="cookie-recommendation-row">{recommendationSwitch(platform.id, platform.label)}</div><div className="cookie-summary"><XiaoyuzhouLogin onSuccess={() => { void reload(); onChanged('xiaoyuzhou') }}/><button type="button" className="text-button" disabled={!states || pending} aria-expanded={open} onClick={() => { reset(); setError(''); if (!open) { setEditing(platform.id); setFormat('token') } }}>{open ? '收起' : '配置'}<ChevronDown size={14} aria-hidden="true" className={open ? 'chevron-open' : ''}/></button>{clearButton}</div></div>
         {open && <form className="cookie-editor" onSubmit={event => { event.preventDefault(); void mutate(platform.id) }}><label className="cookie-value-label">小宇宙 Cookie 或 App 访问令牌<input className="settings-input" type="password" autoComplete="off" spellCheck={false} maxLength={256 * 1024} value={value} disabled={pending} placeholder="x-jike-access-token=…; x-jike-refresh-token=…" onChange={event => setValue(event.target.value)}/></label><div className="cookie-editor-actions"><button type="button" className="button button-secondary" onClick={reset} disabled={pending}>取消</button><button className="button button-primary" disabled={pending || !value.trim()}>保存登录信息</button></div><p className="field-hint">自动提取 access 和 refresh token，忽略其他 Cookie。refresh token 私密保存，暂不自动续期；访问令牌过期后请重新导入。</p></form>}
@@ -89,8 +129,25 @@ export function PlatformCookies({ onChanged }: { onChanged: (platform: string) =
       </div>
       return <div className="cookie-platform" key={platform.id} data-platform={platform.id}>
         <div className="cookie-account-row">{identity}<div className="cookie-recommendation-row">{recommendationSwitch(platform.id, platform.label)}</div><div className="cookie-summary">{platform.id === 'bilibili' && <BilibiliLogin onSuccess={() => { void reload(); onChanged('bilibili') }}/>}<button className="text-button" disabled={!states || pending} aria-expanded={open} aria-controls={open ? 'cookie-editor-' + platform.id : undefined} onClick={() => { reset(); setError(''); setNotice(''); if (!open) { setEditing(platform.id); setFormat('header') } }}>{open ? '收起' : state?.configured ? '更换' : '配置'}<ChevronDown size={14} aria-hidden="true" className={open ? 'chevron-open' : ''} /></button>{clearButton}</div></div>
-        {platform.id === 'douyin' && <p className="field-hint cookie-platform-note">网页推荐可能受限。</p>}
+        {(platform.id === 'linuxdo' || platform.id === 'douyin') && capabilities.platformWebViewLogin && <div className="platform-webview-actions">
+          <button type="button" className="text-button" disabled={Boolean(webViewPending) || pending} onClick={() => void openWebViewLogin(platform.id as PlatformWebView)}>
+            {webViewPending === platform.id ? <LoaderCircle size={14} className="spin" aria-hidden="true"/> : <LogIn size={14} aria-hidden="true"/>}
+            {state?.configured ? '重新验证' : '在应用内登录'}
+          </button>
+          {state?.expiresAt && <span className="field-hint">到期时间：{new Date(state.expiresAt * 1000).toLocaleString('zh-CN')}</span>}
+        </div>}
+        {platform.id === 'douyin' && <p className="field-hint cookie-platform-note">{capabilities.platformWebViewLogin ? '应用内登录会使用同一浏览器会话处理推荐请求。' : '网页推荐可能受限；服务端版请手动导入浏览器 Cookie。'}</p>}
         {platform.id === 'linuxdo' && <div className="linuxdo-actions"><LinuxdoLogin onSuccess={() => { void reload(); onChanged('linuxdo') }} onImportCookie={() => { reset(); setError(''); setNotice(''); setEditing('linuxdo'); setFormat('header') }}/><LinuxdoSession configured={state?.configured ?? false} updatedAt={state?.updatedAt ?? 0}/></div>}
+        {platform.id === 'douyin' && !capabilities.platformWebViewLogin && <details className="settings-details cookie-platform-help" open>
+          <summary>从浏览器复制抖音 Cookie</summary>
+          <ol>
+            <li>在电脑浏览器打开 douyin.com 并登录。</li>
+            <li>打开开发者工具的「网络」，刷新页面。</li>
+            <li>选中 douyin.com 页面请求，在「请求标头」中复制 Cookie 的完整值。</li>
+            <li>回到这里选择「配置」，粘贴到「Cookie 请求头」并保存。</li>
+          </ol>
+          <p>Cookie 等同登录凭证，只复制 douyin.com 域的值并保存在运行 Tangentry 的服务器上。抖音可能要求页面验证或动态签名，手动 Cookie 不保证推荐接口可用。</p>
+        </details>}
         {open && <form id={'cookie-editor-' + platform.id} className="cookie-editor" onInput={event => {
           const target = event.target
           if (target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement && (target.type === 'text' || target.type === 'password')) {

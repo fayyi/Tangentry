@@ -65,6 +65,25 @@ func headerFromJar(jar string) string {
 	return strings.Join(values, "; ")
 }
 
+// jarExpiry returns the earliest explicit cookie expiry. Session cookies return
+// zero; the value is safe for settings UI and never includes a cookie value.
+func jarExpiry(jar string) int64 {
+	var earliest int64
+	for _, line := range strings.Split(jar, "\n") {
+		if strings.HasPrefix(line, "#") || line == "" {
+			continue
+		}
+		fields := strings.Split(line, "\t")
+		if len(fields) != 7 {
+			continue
+		}
+		if expiry, err := strconv.ParseInt(fields[4], 10, 64); err == nil && expiry > 0 && (earliest == 0 || expiry < earliest) {
+			earliest = expiry
+		}
+	}
+	return earliest
+}
+
 // Snapshot is a private, disposable jar per CLI invocation. yt-dlp may mutate it.
 func (s *Store) Snapshot(platform string) (string, func(), error) {
 	s.mu.RLock()
