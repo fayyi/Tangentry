@@ -205,6 +205,7 @@ func dynamicVideo(raw json.RawMessage, depth int) (content.Item, bool) {
 		ViewCount int64           `json:"view_count"`
 		Stat      struct {
 			View int64 `json:"view"`
+			Play int64 `json:"play"`
 		} `json:"stat"`
 		Author struct {
 			MID  int64  `json:"mid"`
@@ -230,6 +231,7 @@ func dynamicVideo(raw json.RawMessage, depth int) (content.Item, bool) {
 						ViewCount   int64  `json:"view_count"`
 						Stat        struct {
 							View int64 `json:"view"`
+							Play int64 `json:"play"`
 						} `json:"stat"`
 					} `json:"archive"`
 				} `json:"major"`
@@ -260,6 +262,9 @@ func dynamicVideo(raw json.RawMessage, depth int) (content.Item, bool) {
 		if v.ViewCount == 0 {
 			v.ViewCount = data.Stat.View
 		}
+		if v.ViewCount == 0 {
+			v.ViewCount = data.Stat.Play
+		}
 		v.Owner.MID, v.Owner.Name, v.Owner.Face = data.Author.MID, data.Author.Name, data.Author.Face
 		if v.Owner.MID <= 0 {
 			v.Owner.MID = data.UID
@@ -270,6 +275,9 @@ func dynamicVideo(raw json.RawMessage, depth int) (content.Item, bool) {
 		v.ViewCount = a.ViewCount
 		if v.ViewCount == 0 {
 			v.ViewCount = a.Stat.View
+		}
+		if v.ViewCount == 0 {
+			v.ViewCount = a.Stat.Play
 		}
 		v.Published = data.Modules.Author.Published
 		v.Owner.MID, v.Owner.Name, v.Owner.Face = data.Modules.Author.MID, data.Modules.Author.Name, data.Modules.Author.Face
