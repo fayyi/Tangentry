@@ -1,4 +1,4 @@
-import { AlertCircle, LoaderCircle, RefreshCw, TvMinimal } from 'lucide-react'
+import { AlertCircle, LoaderCircle, LogIn, RefreshCw, TvMinimal } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { ContentItem } from '../../shared/api/types'
 import { ModernGalleryCard } from '../../shared/ui/ModernGalleryCard'
@@ -11,6 +11,7 @@ import { request } from '../../shared/api/client'
 import { useRecommendationExposure } from './useRecommendationExposure'
 import { MediaFilters } from '../../shared/ui/MediaFilters'
 import { SkeletonGallery } from '../../shared/ui/SkeletonLoading'
+import { openDesktopPlatformLogin, useCapabilities, type PlatformWebView } from '../../shared/api/desktop'
 
 const labels:Record<GallerySource,string>={subscriptions:'订阅来源',bilibili:'B站推荐',youtube:'YouTube 推荐',xiaohongshu:'小红书推荐',linuxdo:'Linux.do 话题',xiaoyuzhou:'小宇宙发现',douyin:'抖音推荐'}
 const sourceKinds: Record<GallerySource, readonly string[]> = {
@@ -22,7 +23,10 @@ export function DiscoveryGallery({kind,onKind,origin,onOrigin,query,onClearQuery
   gallery:ReturnType<typeof useGallery>;savedIDs:Set<string>;pending:Set<string>;savingUnavailable:boolean
   onSave:(item:ContentItem)=>void;onRead:(item:ContentItem)=>void;onDownload:(item:ContentItem)=>void;onSearch:()=>void;onSubscriptions:()=>void;onBilibili:()=>void
 }) {
+  const capabilities = useCapabilities()
   const [platform, setPlatform] = useState('all')
+  const [webViewPlatform, setWebViewPlatform] = useState<PlatformWebView | ''>('')
+  const [webViewError, setWebViewError] = useState('')
   const matchesKind = (mediaKind: string) => kind === 'all' || mediaKind === kind
   const selectedSources = gallerySources.filter(source => (origin === 'subscriptions' ? source === 'subscriptions' : source !== 'subscriptions' && gallery.enabled?.[source]) &&
     (origin === 'subscriptions' || platform === 'all' || source === platform) &&
@@ -64,6 +68,40 @@ export function DiscoveryGallery({kind,onKind,origin,onOrigin,query,onClearQuery
   // Count sources with errors
   const errorSources = selectedSources.filter(source => gallery.sources[source].error)
   const hasErrors = errorSources.length > 0
+  const needsVerification = (source: GallerySource) => (source === 'linuxdo' || source === 'douyin') && /重新验证|重新保存|重新导入|登录已失效|Cloudflare|验证页面|登录 Cookie|需要验证/i.test(gallery.sources[source].error)
+  async function verifyPlatform(source: PlatformWebView) {
+    if (webViewPlatform) return
+    setWebViewPlatform(source); setWebViewError('')
+    try {
+      const before = await request<{ platforms: Array<{ platform: string; configured: boolean; updatedAt: number }> }>('/settings/cookies')
+      const previous = before.platforms.find(value => value.platform === source)
+      const previousUpdatedAt = previous?.updatedAt ?? 0
+      await openDesktopPlatformLogin(source)
+      // The native shell owns the completion lifecycle. Poll only the safe
+      // status marker, then refresh recommendations after the WebView saves.
+      let attempts = 0
+      const poll = async () => {
+        if (attempts++ >= 120) {
+          setWebViewPlatform('')
+          return
+        }
+        try {
+          const result = await request<{ platforms: Array<{ platform: string; configured: boolean; updatedAt: number }> }>('/settings/cookies')
+          const state = result.platforms.find(value => value.platform === source)
+          if (state?.configured && (!previous?.configured || state.updatedAt > previousUpdatedAt)) {
+            setWebViewPlatform('')
+            await gallery.retry(source)
+            return
+          }
+        } catch { /* The window may still be completing its challenge. */ }
+        window.setTimeout(() => void poll(), 1500)
+      }
+      window.setTimeout(() => void poll(), 1500)
+    } catch (cause) {
+      setWebViewError(cause instanceof Error ? cause.message : '无法打开应用内登录窗口。')
+      setWebViewPlatform('')
+    }
+  }
   const pausedSources = continuationSources.filter(source => gallery.enabled?.[source] && gallery.sources[source].feed?.hasMore &&
     (gallery.sources[source].error || gallery.sources[source].exhausted))
   const openRecommendation = (item: ContentItem) => {
@@ -80,7 +118,7 @@ export function DiscoveryGallery({kind,onKind,origin,onOrigin,query,onClearQuery
         <div className="gallery-source-switch" role="group" aria-label="内容来源"><button type="button" aria-label="平台推荐" aria-pressed={origin !== 'subscriptions'} onClick={() => onOrigin('platforms')}>推荐</button><button type="button" aria-label="订阅来源" aria-pressed={origin === 'subscriptions'} onClick={() => onOrigin('subscriptions')}>订阅来源</button></div>
       </div>
       <div className="discovery-toolbar-actions">
-        {hasErrors && <details className="gallery-errors-summary"><summary aria-label={`${errorSources.length} 个来源异常`} title={`${errorSources.length} 个来源异常`}><AlertCircle size={14} /><span>{errorSources.length} 个来源异常</span></summary><div className="gallery-errors-popover">{errorSources.map(source => <div key={source}><strong>{labels[source]}</strong><p role="alert">{gallery.sources[source].error}</p><button className="text-button" disabled={gallery.sources[source].loading} onClick={() => void gallery.retry(source)}>重试</button></div>)}</div></details>}
+        {hasErrors && <details className="gallery-errors-summary"><summary aria-label={`${errorSources.length} 个来源异常`} title={`${errorSources.length} 个来源异常`}><AlertCircle size={14} /><span>{errorSources.length} 个来源异常</span></summary><div className="gallery-errors-popover">{errorSources.map(source => <div key={source}><strong>{labels[source]}</strong><p role="alert">{gallery.sources[source].error}</p><div className="gallery-error-actions"><button className="text-button" disabled={gallery.sources[source].loading} onClick={() => void gallery.retry(source)}>重试</button>{capabilities.platformWebViewLogin && needsVerification(source) && <button className="text-button" disabled={Boolean(webViewPlatform)} onClick={() => void verifyPlatform(source as PlatformWebView)}>{webViewPlatform === source ? <LoaderCircle size={14} className="spin" aria-hidden="true"/> : <LogIn size={14} aria-hidden="true"/>}{webViewPlatform === source ? '正在打开' : '重新验证'}</button>}</div></div>)}{webViewError && <p className="gallery-errors-feedback" role="alert">{webViewError}</p>}</div></details>}
         <button type="button" className="icon-button" aria-label="打开B站专区" title="打开B站专区" onClick={onBilibili}><TvMinimal size={18}/></button><button type="button" className="icon-button" aria-label="刷新画廊内容" title="刷新画廊内容" disabled={loading || selectedSources.length === 0} onClick={() => gallery.refresh(selectedSources)}>{loading ? <LoaderCircle size={18} className="spin"/> : <RefreshCw size={18}/>}</button>
       </div>
       <div className="discovery-filter-rail" role="group" aria-label="筛选发现内容" tabIndex={0}>

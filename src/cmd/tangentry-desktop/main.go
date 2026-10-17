@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -42,15 +44,22 @@ func run() (runErr error) {
 	if err != nil {
 		return err
 	}
-	application, err := app.New(dataDir, web.Assets())
+	credentialKey, err := desktopCredentialKey()
 	if err != nil {
 		return err
 	}
+	application, err := app.New(dataDir, web.Assets(), app.Options{CredentialKey: credentialKey})
+	if err != nil {
+		return err
+	}
+	platformLogin := newPlatformLoginBridge(application.PlatformCredentialsPort())
+	mygo.BindAs("PlatformLogin", platformLoginService{bridge: platformLogin})
 	runtime := application.RuntimePort()
 	activity := application.ActivityPort()
 	backend := server.New(runtime, application.ShellStatePort(), server.ShellOptions{
-		PickPath:     pickPath,
-		Capabilities: server.Capabilities{WindowCapture: true, Notifications: true, KeepAwake: true},
+		PickPath:      pickPath,
+		PlatformLogin: platformLogin.Open,
+		Capabilities:  server.Capabilities{WindowCapture: true, Notifications: true, KeepAwake: true},
 	})
 	defer func() {
 		if err := backend.Close(); err != nil {
@@ -69,4 +78,35 @@ func run() (runErr error) {
 		return fmt.Errorf("desktop event loop: %w", err)
 	}
 	return nil
+}
+
+func desktopCredentialKey() ([]byte, error) {
+	const keyName = "tangentry-credential-key"
+	key, err := mygo.Secrets.Get(keyName)
+	if err == nil {
+		if len(key) != 32 {
+			return nil, errors.New("桌面凭据密钥长度无效")
+		}
+		return key, nil
+	}
+	if !errors.Is(err, mygo.ErrSecretNotFound) {
+		if errors.Is(err, errors.ErrUnsupported) {
+			// Minimal Linux desktops may not run Secret Service. Keep the
+			// existing 0600 credential file path so the app remains usable;
+			// packaged desktops use the keyring-backed encrypted path above.
+			return nil, nil
+		}
+		return nil, fmt.Errorf("无法访问系统凭据存储：%w", err)
+	}
+	key = make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return nil, fmt.Errorf("无法生成桌面凭据密钥：%w", err)
+	}
+	if err := mygo.Secrets.Set(keyName, key); err != nil {
+		if errors.Is(err, errors.ErrUnsupported) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("无法保存系统凭据密钥：%w", err)
+	}
+	return key, nil
 }

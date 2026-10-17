@@ -29,7 +29,13 @@ func openRuntimeResources(dataDir string, configuration config.Config, option Op
 		return nil, err
 	}
 	started.addErr(store.Close)
-	cookies, err := credentials.Open(filepath.Join(dataDir, "credentials"), configuration.BilibiliCookie, configuration.CookieFile)
+	credentialDir := filepath.Join(dataDir, "credentials")
+	var cookies *credentials.Store
+	if len(option.CredentialKey) > 0 {
+		cookies, err = credentials.OpenWithKey(credentialDir, configuration.BilibiliCookie, configuration.CookieFile, option.CredentialKey)
+	} else {
+		cookies, err = credentials.Open(credentialDir, configuration.BilibiliCookie, configuration.CookieFile)
+	}
 	if err != nil {
 		return nil, err
 	}

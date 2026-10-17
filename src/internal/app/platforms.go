@@ -93,9 +93,9 @@ func newPlatforms(dataDir string, configuration config.Config, toolkit *tools.To
 	}, Save: cookies.SaveTokensIfCurrent}
 	feedClient := &feeds.Client{HTTP: public}
 	youtubeClient := youtube.New(public)
-	douyinClient := &douyin.Client{HTTP: public, Cookie: cookieFor(cookies, "douyin")}
+	douyinClient := &douyin.Client{HTTP: public, Cookie: cookieFor(cookies, "douyin"), UserAgent: userAgentFor(cookies, "douyin")}
 	notesClient := &xiaohongshu.Client{HTTP: public, Cookie: cookieFor(cookies, "xiaohongshu")}
-	forumClient := &discourse.Client{HTTP: public, Session: cookies.PrepareLinuxdoSession, UserKey: cookies.LinuxdoUserKey}
+	forumClient := &discourse.Client{HTTP: public, UserAgent: userAgentFor(cookies, "linuxdo"), Session: cookies.PrepareLinuxdoSession, UserKey: cookies.LinuxdoUserKey}
 	return &platforms{
 		network:       platformNetwork{public: public, cookies: cookies, toolkit: toolkit},
 		discovery:     platformDiscovery{creators: creators, bilibili: client, douyin: douyinClient, notes: notesClient, forum: forumClient, podcasts: podcasts},
@@ -107,6 +107,10 @@ func newPlatforms(dataDir string, configuration config.Config, toolkit *tools.To
 
 func cookieFor(cookies *credentials.Store, platform string) func(string) string {
 	return func(raw string) string { return cookies.Header(platform, raw) }
+}
+
+func userAgentFor(cookies *credentials.Store, platform string) func(string) string {
+	return func(string) string { return cookies.UserAgent(platform) }
 }
 
 func (p *platforms) podcastToken() string { return p.network.cookies.AccessToken("xiaoyuzhou") }

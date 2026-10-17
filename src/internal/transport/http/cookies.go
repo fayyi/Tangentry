@@ -74,7 +74,26 @@ func (h *accountsHandler) cookieList(w http.ResponseWriter, r *http.Request) {
 		fail(w, credentials.ErrStorage)
 		return
 	}
-	write(w, 200, map[string]any{"platforms": h.accounts.Cookies.States()})
+	states := h.accounts.Cookies.States()
+	// Username is fetched only as a non-secret status hint. Cookie values and
+	// browser User-Agent strings remain inside the credential store.
+	linuxConfigured := false
+	for _, state := range states {
+		if state.Platform == "linuxdo" {
+			linuxConfigured = state.Configured
+			break
+		}
+	}
+	if linuxConfigured && h.accounts.LinuxdoSession != nil {
+		if session, err := h.accounts.LinuxdoSession(r.Context()); err == nil && session.LoggedIn {
+			for i := range states {
+				if states[i].Platform == "linuxdo" {
+					states[i].Username = session.Username
+				}
+			}
+		}
+	}
+	write(w, 200, map[string]any{"platforms": states})
 }
 func (h *accountsHandler) cookieSave(w http.ResponseWriter, r *http.Request) {
 	if h.accounts.Cookies == nil {

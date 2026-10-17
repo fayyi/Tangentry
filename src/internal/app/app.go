@@ -11,6 +11,7 @@ import (
 
 	"tangentry/internal/ai"
 	"tangentry/internal/config"
+	"tangentry/internal/credentials"
 	"tangentry/internal/discovery"
 	"tangentry/internal/downloads"
 	"tangentry/internal/favoritesync"
@@ -35,6 +36,9 @@ type Options struct {
 	Recommendations     func(context.Context, string) (discovery.Feed, error)
 	Platform            discovery.Provider
 	PublicHTTP          *http.Client
+	// CredentialKey is supplied by a native shell from its system credential
+	// store. A nil key keeps headless/server storage compatible with older data.
+	CredentialKey []byte
 }
 
 // closers releases services in reverse start order.
@@ -74,6 +78,7 @@ func New(dataDir string, assets fs.FS, options ...Options) (application *Applica
 		handler:       newHTTPHandler(newHTTPWiring(services), assets),
 		downloads:     services.features.downloads,
 		transcription: services.features.transcription,
+		cookies:       services.runtime.cookies,
 		closers:       started,
 	}
 	shell := &shellState{
@@ -95,6 +100,7 @@ type runtimeState struct {
 	handler       http.Handler
 	downloads     *downloads.Service
 	transcription *transcription.Service
+	cookies       *credentials.Store
 	closers       closers
 	closeOnce     sync.Once
 	closeErr      error

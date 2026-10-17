@@ -11,8 +11,9 @@ import (
 )
 
 type Client struct {
-	HTTP   *http.Client
-	Cookie func(string) string
+	HTTP      *http.Client
+	Cookie    func(string) string
+	UserAgent func(string) string
 }
 
 func (c *Client) Resolve(ctx context.Context, raw string) (discovery.DouyinReference, error) {
@@ -45,6 +46,11 @@ func (c *Client) Resolve(ctx context.Context, raw string) (discovery.DouyinRefer
 		return discovery.DouyinReference{}, discovery.ErrInvalidQuery
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0")
+	if c.UserAgent != nil {
+		if userAgent := c.UserAgent(ref.URL); userAgent != "" {
+			req.Header.Set("User-Agent", userAgent)
+		}
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {

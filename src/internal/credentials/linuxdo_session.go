@@ -64,7 +64,7 @@ func (s *Store) PrepareLinuxdoSession() (string, func([]*http.Cookie) error) {
 		if s.revisions["linuxdo"] != revision {
 			return ErrChanged
 		}
-		return s.persistCredentialLocked("linuxdo", entry{Jar: jar, UpdatedAt: time.Now().Unix()})
+		return s.persistCredentialLocked("linuxdo", entry{Jar: jar, UserAgent: previous.UserAgent, UpdatedAt: time.Now().Unix()})
 	}
 }
 
@@ -125,6 +125,30 @@ func (s *Store) PrepareLinuxdoCookieLogin() func([]*http.Cookie) error {
 			return ErrChanged
 		}
 		return s.persistCredentialLocked("linuxdo", entry{Jar: jar, UpdatedAt: time.Now().Unix()})
+	}
+}
+
+// PrepareLinuxdoBrowserLogin binds an in-app browser login to the credential
+// revision present when the window was opened. Cookie values and the matching
+// browser UA are committed together and never returned to transport callers.
+func (s *Store) PrepareLinuxdoBrowserLogin() func([]*http.Cookie, string) error {
+	s.mu.RLock()
+	revision := s.revisions["linuxdo"]
+	s.mu.RUnlock()
+	return func(cookies []*http.Cookie, userAgent string) error {
+		jar, err := browserJar("linuxdo", cookies, userAgent)
+		if err != nil {
+			return err
+		}
+		if !browserJarHas(jar, "_t") {
+			return ErrInvalid
+		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.revisions["linuxdo"] != revision {
+			return ErrChanged
+		}
+		return s.persistCredentialLocked("linuxdo", entry{Jar: jar, UserAgent: userAgent, UpdatedAt: time.Now().Unix()})
 	}
 }
 

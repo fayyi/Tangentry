@@ -45,7 +45,9 @@
 .gallery-errors-popover > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; padding: 10px; border-radius: var(--radius); }
 .gallery-errors-popover strong { font-size: 13px; }
 .gallery-errors-popover p { grid-column: 1; margin: 0; color: var(--muted); font-size: 12.5px; }
-.gallery-errors-popover .text-button { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
+.gallery-error-actions { grid-column: 2; grid-row: 1 / span 2; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; align-self: center; }
+.gallery-errors-popover .text-button { white-space: nowrap; }
+.gallery-errors-feedback { grid-column: 1 / -1 !important; color: var(--danger) !important; }
 .discovery-search-result { display: flex; align-items: center; gap: 8px; margin: -6px 0 14px; color: var(--muted); font-size: 13px; }
 
 @media (max-width: 760px) {

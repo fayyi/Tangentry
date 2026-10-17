@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"tangentry/internal/credentials"
 	"tangentry/internal/jobs"
 )
 
@@ -57,3 +58,66 @@ func (a *Application) ActivityPort() ActivityPort { return ActivityPort{runtime:
 // ShellStatePort returns the optional persisted directory view of the
 // application. The returned value contains no feature-service methods.
 func (a *Application) ShellStatePort() ShellStatePort { return ShellStatePort{state: a.shell} }
+
+// PlatformCredentialState is the shell-facing, non-secret view of a platform
+// credential. Cookie values and browser User-Agent strings are intentionally
+// absent so native shells can render status without receiving credentials.
+type PlatformCredentialState struct {
+	Platform   string
+	Configured bool
+	Source     string
+	UpdatedAt  int64
+	ExpiresAt  int64
+}
+
+// PlatformCredentialsPort is the only credential surface exposed to a native
+// shell. The shell uses PrepareBrowserLogin to commit cookies collected by its
+// private WebView; HTTP never receives those values.
+type PlatformCredentialsPort struct{ store *credentials.Store }
+
+func (p PlatformCredentialsPort) States() []PlatformCredentialState {
+	if p.store == nil {
+		return nil
+	}
+	states := p.store.States()
+	out := make([]PlatformCredentialState, 0, len(states))
+	for _, state := range states {
+		out = append(out, PlatformCredentialState{
+			Platform: state.Platform, Configured: state.Configured,
+			Source: state.Source, UpdatedAt: state.UpdatedAt, ExpiresAt: state.ExpiresAt,
+		})
+	}
+	return out
+}
+
+func (p PlatformCredentialsPort) Clear(platform string) error {
+	if p.store == nil {
+		return credentials.ErrStorage
+	}
+	return p.store.Clear(platform)
+}
+
+// PrepareBrowserLogin returns a revision-bound saver for an in-app WebView.
+// Only the platform-specific cookie allowlist in credentials is persisted.
+func (p PlatformCredentialsPort) PrepareBrowserLogin(platform string) func([]*http.Cookie, string) error {
+	if p.store == nil {
+		return func([]*http.Cookie, string) error { return credentials.ErrStorage }
+	}
+	switch platform {
+	case "linuxdo":
+		return p.store.PrepareLinuxdoBrowserLogin()
+	case "douyin":
+		return p.store.PrepareDouyinBrowserLogin()
+	default:
+		return func([]*http.Cookie, string) error { return credentials.ErrInvalid }
+	}
+}
+
+// PlatformCredentialsPort returns the native-shell credential bridge. It does
+// not expose the concrete store or any cookie values to server packages.
+func (a *Application) PlatformCredentialsPort() PlatformCredentialsPort {
+	if a == nil || a.runtime == nil {
+		return PlatformCredentialsPort{}
+	}
+	return PlatformCredentialsPort{store: a.runtime.cookies}
+}

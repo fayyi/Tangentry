@@ -6,6 +6,9 @@ func (b *Backend) route(w http.ResponseWriter, r *http.Request) {
 	if b.routeCapabilities(w, r) {
 		return
 	}
+	if b.routePlatformLogin(w, r) {
+		return
+	}
 	if b.routeModelDirectory(w, r) {
 		return
 	}

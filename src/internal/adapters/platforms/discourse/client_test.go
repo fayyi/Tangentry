@@ -43,3 +43,18 @@ func TestTopicIncludesFirstPostAndReplies(t *testing.T) {
 		t.Fatalf("topic detail not mapped: %+v %v", item, err)
 	}
 }
+
+func TestReadUsesStoredBrowserUserAgent(t *testing.T) {
+	c := &Client{
+		HTTP: &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+			if got := r.Header.Get("User-Agent"); got != "Mozilla/5.0 (fixture)" {
+				t.Fatalf("User-Agent = %q", got)
+			}
+			return response(r, 200, `{"user":null}`), nil
+		})},
+		UserAgent: func(string) string { return "Mozilla/5.0 (fixture)" },
+	}
+	if _, err := c.CurrentSession(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -23,9 +23,9 @@ func TestRecommendationMappingAndCookieIsolation(t *testing.T) {
 			t.Fatal(raw)
 		}
 		return "sessionid=fixture"
-	}, HTTP: &http.Client{Transport: trip(func(r *http.Request) (*http.Response, error) {
+	}, UserAgent: func(string) string { return "Mozilla/5.0 (fixture)" }, HTTP: &http.Client{Transport: trip(func(r *http.Request) (*http.Response, error) {
 		calls++
-		if r.Method != "POST" || r.URL.Hostname() != "www.douyin.com" || r.Header.Get("Cookie") != "sessionid=fixture" || r.URL.Query().Get("refresh_index") != "2" || r.URL.Query().Get("pull_type") != "2" {
+		if r.Method != "POST" || r.URL.Hostname() != "www.douyin.com" || r.Header.Get("Cookie") != "sessionid=fixture" || r.Header.Get("User-Agent") != "Mozilla/5.0 (fixture)" || r.URL.Query().Get("refresh_index") != "2" || r.URL.Query().Get("pull_type") != "2" {
 			t.Fatal("invalid request")
 		}
 		return &http.Response{StatusCode: 200, Request: r, Body: io.NopCloser(strings.NewReader(`{"status_code":0,"has_more":1,"aweme_list":[{"aweme_id":"6961737553342991651","desc":"推荐测试","create_time":123,"author":{"uid":"12345","nickname":"测试作者"},"video":{"duration":12345,"cover":{"url_list":["javascript:bad","https://p3.douyinpic.com/cover.jpg"]}}},{"aweme_id":"6961737553342991651","desc":"重复"},{"aweme_id":"invalid","desc":"错误"}]}`))}, nil
@@ -60,6 +60,22 @@ func TestRecommendationRejectionsNeverRetryOrFollowRedirects(t *testing.T) {
 	c.Cookie = nil
 	if _, err := c.Recommendations(context.Background(), 1); err == nil || calls != 1 {
 		t.Fatal("anonymous request attempted", err)
+	}
+}
+
+func TestRecommendationCloudflareChallengeRequestsRevalidation(t *testing.T) {
+	for _, body := range []string{
+		`<!doctype html><title>Just a moment...</title><script src="/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1"></script>`,
+		`<html><body>cf-chl-xxxxxxxx cloudflare</body></html>`,
+	} {
+		c := &Client{Cookie: func(string) string { return "sessionid=fixture" }, HTTP: &http.Client{Transport: trip(func(r *http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: http.StatusOK, Request: r, Body: io.NopCloser(strings.NewReader(body))}, nil
+		})}}
+		_, err := c.Recommendations(context.Background(), 1)
+		var platform *discovery.PlatformError
+		if !errors.As(err, &platform) || !platform.Restricted || !strings.Contains(platform.Message, "重新导入浏览器 Cookie") {
+			t.Fatalf("challenge was not mapped to revalidation: %v", err)
+		}
 	}
 }
 

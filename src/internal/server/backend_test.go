@@ -3,9 +3,11 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"testing/fstest"
@@ -57,12 +59,58 @@ func TestCapabilitiesReportOnlyWiredDesktopFeatures(t *testing.T) {
 		t.Fatal(err)
 	}
 	desktop := New(application.RuntimePort(), application.ShellStatePort(), ShellOptions{
-		PickPath:     func(context.Context, string, string) (string, error) { return "", nil },
-		Capabilities: Capabilities{WindowCapture: true, KeepAwake: true},
+		PickPath:      func(context.Context, string, string) (string, error) { return "", nil },
+		PlatformLogin: func(context.Context, string) error { return nil },
+		Capabilities:  Capabilities{WindowCapture: true, KeepAwake: true},
 	})
 	defer desktop.Close()
-	if got := read(desktop); got != (Capabilities{PathPicker: true, WindowCapture: true, KeepAwake: true}) {
+	if got := read(desktop); got != (Capabilities{PathPicker: true, WindowCapture: true, KeepAwake: true, PlatformWebViewLogin: true}) {
 		t.Fatalf("capabilities = %+v", got)
+	}
+}
+
+func TestPlatformLoginRouteStartsOnlySupportedDesktopPlatform(t *testing.T) {
+	backend := newTestBackend(t)
+	defer backend.Close()
+	var gotPlatform string
+	backend.shell.PlatformLogin = func(_ context.Context, platform string) error {
+		gotPlatform = platform
+		return nil
+	}
+	request := func(body string) *httptest.ResponseRecorder {
+		response := httptest.NewRecorder()
+		backend.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "http://localhost/api/desktop/platform-login", strings.NewReader(body)))
+		return response
+	}
+	response := request(`{"platform":"douyin"}`)
+	if response.Code != http.StatusOK || response.Body.String() != `{"started":true}
+` || gotPlatform != "douyin" {
+		t.Fatalf("successful platform login: code=%d body=%q platform=%q", response.Code, response.Body.String(), gotPlatform)
+	}
+	response = request(`{"platform":"bilibili"}`)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("unsupported platform status = %d, want %d", response.Code, http.StatusBadRequest)
+	}
+	response = request(`{"platform":"linuxdo","extra":true}`)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("unknown field status = %d, want %d", response.Code, http.StatusBadRequest)
+	}
+}
+
+func TestPlatformLoginRouteReportsUnavailableAndCallbackFailure(t *testing.T) {
+	backend := newTestBackend(t)
+	defer backend.Close()
+	request := func(backend *Backend) *httptest.ResponseRecorder {
+		response := httptest.NewRecorder()
+		backend.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "http://localhost/api/desktop/platform-login", strings.NewReader(`{"platform":"linuxdo"}`)))
+		return response
+	}
+	if response := request(backend); response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("unavailable status = %d, want %d", response.Code, http.StatusServiceUnavailable)
+	}
+	backend.shell.PlatformLogin = func(context.Context, string) error { return errors.New("window failed") }
+	if response := request(backend); response.Code != http.StatusBadGateway {
+		t.Fatalf("callback failure status = %d, want %d", response.Code, http.StatusBadGateway)
 	}
 }
 
