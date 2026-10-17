@@ -36,31 +36,37 @@ var (
 )
 
 type Config struct {
-	Protocol     string `json:"protocol"`
-	BaseURL      string `json:"baseUrl"`
-	Model        string `json:"model"`
-	SummaryModel string `json:"summaryModel,omitempty"`
-	Key          string `json:"key"`
-	Revision     int64  `json:"revision"`
+	Protocol             string `json:"protocol"`
+	BaseURL              string `json:"baseUrl"`
+	Model                string `json:"model"`
+	SummaryModel         string `json:"summaryModel,omitempty"`
+	SummaryPrompt        string `json:"summaryPrompt,omitempty"`
+	SummaryContextBudget int    `json:"summaryContextBudget,omitempty"`
+	Key                  string `json:"key"`
+	Revision             int64  `json:"revision"`
 }
 type Status struct {
-	Protocol     string `json:"protocol"`
-	Translating  bool   `json:"translating"`
-	BaseURL      string `json:"baseUrl"`
-	Model        string `json:"model"`
-	SummaryModel string `json:"summaryModel"`
-	SummaryReady bool   `json:"summaryReady"`
-	HasKey       bool   `json:"hasKey"`
-	Ready        bool   `json:"ready"`
-	Revision     int64  `json:"revision"`
+	Protocol             string `json:"protocol"`
+	Translating          bool   `json:"translating"`
+	BaseURL              string `json:"baseUrl"`
+	Model                string `json:"model"`
+	SummaryModel         string `json:"summaryModel"`
+	SummaryPrompt        string `json:"summaryPrompt"`
+	SummaryContextBudget int    `json:"summaryContextBudget"`
+	SummaryReady         bool   `json:"summaryReady"`
+	HasKey               bool   `json:"hasKey"`
+	Ready                bool   `json:"ready"`
+	Revision             int64  `json:"revision"`
 }
 type ConfigureInput struct {
-	Protocol     string  `json:"protocol"`
-	BaseURL      string  `json:"baseUrl"`
-	Model        string  `json:"model"`
-	SummaryModel *string `json:"summaryModel,omitempty"`
-	Key          *string `json:"key,omitempty"`
-	Revision     int64   `json:"revision"`
+	Protocol             string  `json:"protocol"`
+	BaseURL              string  `json:"baseUrl"`
+	Model                string  `json:"model"`
+	SummaryModel         *string `json:"summaryModel,omitempty"`
+	SummaryPrompt        *string `json:"summaryPrompt,omitempty"`
+	SummaryContextBudget *int    `json:"summaryContextBudget,omitempty"`
+	Key                  *string `json:"key,omitempty"`
+	Revision             int64   `json:"revision"`
 }
 
 func ValidEndpoint(raw string) bool {
@@ -78,10 +84,30 @@ func validModel(model string) bool {
 	return utf8.ValidString(model) && len(model) <= 200 && !strings.ContainsAny(model, "\r\n\x00")
 }
 func validConfig(c Config) bool {
-	return (c.Protocol == "" || c.Protocol == "openai" || c.Protocol == "compatible") && ValidEndpoint(c.BaseURL) && validModel(c.Model) && validModel(c.SummaryModel) && utf8.ValidString(c.Key) && len(c.Key) <= 4096 && !strings.ContainsAny(c.Key, "\r\n\x00") && c.Revision > 0 && c.Revision < 9007199254740991
+	return (c.Protocol == "" || c.Protocol == "openai" || c.Protocol == "compatible") && ValidEndpoint(c.BaseURL) && validModel(c.Model) && validModel(c.SummaryModel) && validPrompt(c.SummaryPrompt) && validContextBudget(c.SummaryContextBudget) && utf8.ValidString(c.Key) && len(c.Key) <= 4096 && !strings.ContainsAny(c.Key, "\r\n\x00") && c.Revision > 0 && c.Revision < 9007199254740991
 }
 func public(c Config) Status {
-	return Status{Protocol: c.Protocol, BaseURL: c.BaseURL, Model: c.Model, SummaryModel: c.SummaryModel, HasKey: c.Key != "", Ready: c.Model != "", Revision: c.Revision}
+	return Status{Protocol: c.Protocol, BaseURL: c.BaseURL, Model: c.Model, SummaryModel: c.SummaryModel, SummaryPrompt: summaryPrompt(c.SummaryPrompt), SummaryContextBudget: summaryContextBudget(c.SummaryContextBudget), HasKey: c.Key != "", Ready: c.Model != "", Revision: c.Revision}
+}
+
+func validPrompt(prompt string) bool {
+	return utf8.ValidString(prompt) && len(prompt) <= 12000 && !strings.ContainsAny(prompt, "\r\x00")
+}
+
+func summaryPrompt(prompt string) string {
+	if strings.TrimSpace(prompt) == "" {
+		return defaultSummaryPrompt
+	}
+	return strings.TrimSpace(prompt)
+}
+
+func validContextBudget(budget int) bool { return budget == 0 || budget >= 2000 && budget <= 64000 }
+
+func summaryContextBudget(budget int) int {
+	if budget < 2000 {
+		return 28000
+	}
+	return budget
 }
 func summaryConfig(c Config) Config {
 	if c.SummaryModel != "" {
@@ -121,9 +147,15 @@ func (s *Service) Configure(in ConfigureInput) (Status, error) {
 	if protocol == "" {
 		protocol = "openai"
 	}
-	c := Config{Protocol: protocol, BaseURL: strings.TrimRight(strings.TrimSpace(in.BaseURL), "/"), Model: strings.TrimSpace(in.Model), SummaryModel: s.config.SummaryModel, Key: s.config.Key, Revision: s.config.Revision + 1}
+	c := Config{Protocol: protocol, BaseURL: strings.TrimRight(strings.TrimSpace(in.BaseURL), "/"), Model: strings.TrimSpace(in.Model), SummaryModel: s.config.SummaryModel, SummaryPrompt: s.config.SummaryPrompt, SummaryContextBudget: s.config.SummaryContextBudget, Key: s.config.Key, Revision: s.config.Revision + 1}
 	if in.SummaryModel != nil {
 		c.SummaryModel = strings.TrimSpace(*in.SummaryModel)
+	}
+	if in.SummaryPrompt != nil {
+		c.SummaryPrompt = strings.TrimSpace(*in.SummaryPrompt)
+	}
+	if in.SummaryContextBudget != nil {
+		c.SummaryContextBudget = *in.SummaryContextBudget
 	}
 	// A saved key may only be retained for the exact same endpoint. An endpoint
 	// change requires an explicitly supplied replacement (or empty local key).

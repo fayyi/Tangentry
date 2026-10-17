@@ -4,10 +4,14 @@ import { request } from '../../shared/api/client'
 import type { AICheckResult, AITask, AISettings as Settings } from './types'
 import './ai.css'
 
+const DEFAULT_SUMMARY_PROMPT = '请用简体中文总结提供的内容，同时输出一句话总结、关键要点和层级大纲。大纲保留原文段落锚点；有时间戳时请关联时间戳。只引用输入中的索引，不要编造事实。'
+
 export function AISettings() {
   const [saved, setSaved] = useState<Settings | null>(null)
   const [baseUrl, setBaseUrl] = useState(''), [model, setModel] = useState(''), [key, setKey] = useState(''), [noKey, setNoKey] = useState(false)
   const [summaryModel, setSummaryModel] = useState('')
+  const [summaryPrompt, setSummaryPrompt] = useState('')
+  const [summaryContextBudget, setSummaryContextBudget] = useState(28000)
   const [protocol, setProtocol] = useState<Settings['protocol']>('openai')
   const [pending, setPending] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('')
   const [checking, setChecking] = useState<AITask | null>(null)
@@ -18,7 +22,7 @@ export function AISettings() {
     setPending(true); setError(''); setNotice(''); setConfirmReload(false)
     try {
       const result = await request<Settings>('/ai/settings', { signal: current.signal })
-      if (!current.signal.aborted) { setSaved(result); setProtocol(result.protocol); setBaseUrl(result.baseUrl); setModel(result.model); setSummaryModel(result.summaryModel ?? ''); setKey(''); setNoKey(false) }
+      if (!current.signal.aborted) { setSaved(result); setProtocol(result.protocol); setBaseUrl(result.baseUrl); setModel(result.model); setSummaryModel(result.summaryModel ?? ''); setSummaryPrompt(result.summaryPrompt || DEFAULT_SUMMARY_PROMPT); setSummaryContextBudget(result.summaryContextBudget ?? 28000); setKey(''); setNoKey(false) }
     } catch (cause) { if (!current.signal.aborted) setError(cause instanceof Error ? cause.message : 'AI 设置暂不可用。') }
     finally { if (!current.signal.aborted) setPending(false) }
   }
@@ -28,14 +32,14 @@ export function AISettings() {
     const current = new AbortController(); operation.current = current
     setPending(true); setError(''); setNotice(''); setConfirmReload(false)
     try {
-      const result = await request<Settings>('/ai/settings', { method: 'PUT', signal: current.signal, body: JSON.stringify({ protocol, baseUrl, model, summaryModel, revision: saved.revision, ...(noKey ? { key: '' } : key.trim() ? { key } : {}) }) })
-      if (!current.signal.aborted) { setSaved(result); setProtocol(result.protocol); setBaseUrl(result.baseUrl); setModel(result.model); setSummaryModel(result.summaryModel ?? ''); setKey(''); setNoKey(false); setNotice(result.ready || result.summaryReady ? '设置已保存。' : '设置已保存；未选择模型，翻译尚未启用。') }
+      const result = await request<Settings>('/ai/settings', { method: 'PUT', signal: current.signal, body: JSON.stringify({ protocol, baseUrl, model, summaryModel, summaryPrompt, summaryContextBudget, revision: saved.revision, ...(noKey ? { key: '' } : key.trim() ? { key } : {}) }) })
+      if (!current.signal.aborted) { setSaved(result); setProtocol(result.protocol); setBaseUrl(result.baseUrl); setModel(result.model); setSummaryModel(result.summaryModel ?? ''); setSummaryPrompt(result.summaryPrompt || DEFAULT_SUMMARY_PROMPT); setSummaryContextBudget(result.summaryContextBudget ?? 28000); setKey(''); setNoKey(false); setNotice(result.ready || result.summaryReady ? '设置已保存。' : '设置已保存；未选择模型，翻译尚未启用。') }
     } catch (cause) { if (!current.signal.aborted) setError(cause instanceof Error ? cause.message : 'AI 设置未保存。') }
     finally { if (!current.signal.aborted) setPending(false) }
   }
   const changedEndpoint = saved?.hasKey && baseUrl.trim().replace(/\/+$/, '') !== saved.baseUrl
   const requiresKey = changedEndpoint && !key.trim() && !noKey
-  const dirty = saved && (baseUrl.trim().replace(/\/+$/, '') !== saved.baseUrl || model.trim() !== saved.model || summaryModel.trim() !== (saved.summaryModel ?? '') || protocol !== saved.protocol || key !== '' || noKey && saved.hasKey)
+  const dirty = saved && (baseUrl.trim().replace(/\/+$/, '') !== saved.baseUrl || model.trim() !== saved.model || summaryModel.trim() !== (saved.summaryModel ?? '') || summaryPrompt.trim() !== (saved.summaryPrompt || DEFAULT_SUMMARY_PROMPT) || summaryContextBudget !== (saved.summaryContextBudget ?? 28000) || protocol !== saved.protocol || key !== '' || noKey && saved.hasKey)
   async function check(task: AITask) {
     if (!saved || pending || dirty) return
     const current = new AbortController(); operation.current = current
@@ -65,6 +69,8 @@ export function AISettings() {
       <fieldset className="settings-form-section"><legend>使用模型</legend><div className="settings-form-fields settings-model-fields">
       <label>翻译模型<input aria-label="模型名称" value={model} onChange={event => setModel(event.target.value)} placeholder="填写服务提供的模型名称" maxLength={200} autoComplete="off" disabled={pending} /></label>
       <label>摘要模型<input aria-label="摘要模型（可选）" value={summaryModel} onChange={event => setSummaryModel(event.target.value)} placeholder="留空使用翻译模型" maxLength={200} autoComplete="off" disabled={pending} /></label>
+      <label className="ai-config-wide ai-prompt-field">摘要提示词<textarea aria-label="摘要提示词" value={summaryPrompt} onChange={event => setSummaryPrompt(event.target.value)} placeholder="留空使用默认提示词" maxLength={12000} rows={5} disabled={pending}/><span className="field-hint">可按你的阅读习惯调整摘要重点。</span><button type="button" className="text-button" onClick={() => setSummaryPrompt(DEFAULT_SUMMARY_PROMPT)} disabled={pending || summaryPrompt === DEFAULT_SUMMARY_PROMPT}>恢复默认</button></label>
+      <label>摘要上下文预算<input type="number" min={2000} max={64000} step={1000} value={summaryContextBudget} onChange={event => setSummaryContextBudget(Number(event.target.value) || 28000)} disabled={pending}/><span className="field-hint">默认 28000 字节，内容超出后才会分段。</span></label>
       {saved.ready && saved.summaryReady === false && <p className="field-hint ai-config-wide">当前模型可用于翻译；生成摘要需填写通用摘要模型。</p>}
       </div></fieldset>
       <div className="settings-savebar"><span className="settings-state" data-dirty={Boolean(dirty)}>{dirty ? '未保存更改' : saved.ready ? <><Check size={14}/>已选模型</> : '未选模型'}</span><button aria-label="保存 AI 设置" className="button button-primary" type="submit" disabled={pending || !dirty || !!requiresKey}>{pending && !checking ? <LoaderCircle size={15} className="spin"/> : <Save size={15}/>} {pending && !checking ? '保存中' : '保存设置'}</button></div>

@@ -39,8 +39,8 @@ func (s *Service) SummaryGenerate(parent context.Context, in SummaryInput) (Summ
 		return SummaryResult{}, ErrBusy
 	}
 	c = summaryConfig(c)
-	key := summaryKey(in, segments)
-	groups, totalCalls := summaryPlan(segments)
+	key := summaryKey(in, segments, c.SummaryPrompt, summaryBudgetKey(c.SummaryContextBudget))
+	groups, totalCalls := summaryPlan(segments, summaryContextBudget(c.SummaryContextBudget))
 	ctx, cancel := context.WithTimeout(parent, 45*time.Minute)
 	s.active = "summary:" + key
 	s.cancel = cancel
@@ -98,8 +98,15 @@ func (s *Service) SummaryGenerate(parent context.Context, in SummaryInput) (Summ
 	cache.Result.Overview = final.Overview
 	cache.Result.Points = final.Points
 	cache.Result.Citations = buildCitations(final, segments)
+	cache.Result.Outline = normalizeOutline(final.Outline, segments)
 	if err := save(cache); err != nil {
 		return SummaryResult{}, ErrStorage
+	}
+	s.mu.Lock()
+	writer := s.saveSummaryNote
+	s.mu.Unlock()
+	if writer != nil {
+		_ = writer(ctx, cache.Result)
 	}
 	return cache.Result, nil
 }
@@ -140,6 +147,7 @@ func validateSummaryCheckpoint(cache summaryCache, groups [][]SummarySegment, al
 					allowed[index] = true
 				}
 			}
+			collectOutlineIndices(previous.Outline, allowed)
 		}
 		if !validateDraft(draft, allowed) {
 			return ErrStorage
@@ -172,7 +180,7 @@ func (s *Service) generateSummaryLeaves(ctx context.Context, provider Summarizer
 			allowed[segment.Index] = true
 		}
 		batchCtx, batchCancel := context.WithTimeout(ctx, 90*time.Second)
-		draft, callErr := provider.Summarize(batchCtx, config, SummaryRequest{Mode: "leaf", Segments: group})
+		draft, callErr := provider.Summarize(batchCtx, config, SummaryRequest{Mode: "leaf", Prompt: summaryPrompt(config.SummaryPrompt), Segments: group})
 		batchCancel()
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -214,9 +222,10 @@ func (s *Service) reduceSummaryDrafts(ctx context.Context, provider Summarizer, 
 						allowed[index] = true
 					}
 				}
+				collectOutlineIndices(d.Outline, allowed)
 			}
 			batchCtx, batchCancel := context.WithTimeout(ctx, 90*time.Second)
-			draft, callErr := provider.Summarize(batchCtx, config, SummaryRequest{Mode: "reduce", Drafts: drafts})
+			draft, callErr := provider.Summarize(batchCtx, config, SummaryRequest{Mode: "reduce", Prompt: summaryPrompt(config.SummaryPrompt), Drafts: drafts})
 			batchCancel()
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -246,6 +255,15 @@ func (s *Service) reduceSummaryDrafts(ctx context.Context, provider Summarizer, 
 	return nil
 }
 
+func collectOutlineIndices(nodes []SummaryOutline, allowed map[int]bool) {
+	for _, node := range nodes {
+		for _, index := range node.Indices {
+			allowed[index] = true
+		}
+		collectOutlineIndices(node.Children, allowed)
+	}
+}
+
 func convertSummaryDraft(converter *opencc.OpenCC, draft *SummaryDraft) error {
 	var err error
 	draft.Overview, err = converter.Convert(strings.TrimSpace(draft.Overview))
@@ -256,4 +274,42 @@ func convertSummaryDraft(converter *opencc.OpenCC, draft *SummaryDraft) error {
 		draft.Points[i].Text, _ = converter.Convert(strings.TrimSpace(draft.Points[i].Text))
 	}
 	return nil
+}
+
+func normalizeOutline(outline []SummaryOutline, segments []SummarySegment) []SummaryOutline {
+	if len(outline) == 0 {
+		return nil
+	}
+	byIndex := make(map[int]SummarySegment, len(segments))
+	for _, segment := range segments {
+		byIndex[segment.Index] = segment
+	}
+	var walk func([]SummaryOutline, int) []SummaryOutline
+	walk = func(nodes []SummaryOutline, parent int) []SummaryOutline {
+		result := make([]SummaryOutline, 0, len(nodes))
+		for _, node := range nodes {
+			node.Title = strings.TrimSpace(node.Title)
+			if node.Title == "" || len(node.Title) > 400 || node.Level < 0 || node.Level > 8 || len(node.Indices) > summaryPointIndexLimit {
+				continue
+			}
+			valid := true
+			for _, index := range node.Indices {
+				if _, ok := byIndex[index]; !ok {
+					valid = false
+					break
+				}
+			}
+			if !valid {
+				continue
+			}
+			if len(node.Indices) > 0 {
+				first, last := byIndex[node.Indices[0]], byIndex[node.Indices[len(node.Indices)-1]]
+				node.Start, node.End = first.Start, last.End
+			}
+			node.Children = walk(node.Children, node.Level)
+			result = append(result, node)
+		}
+		return result
+	}
+	return walk(outline, -1)
 }

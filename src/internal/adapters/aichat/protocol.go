@@ -39,6 +39,19 @@ func rejectedRequest(body io.Reader) error {
 	return ai.ErrRequestRejected
 }
 
+func (c *Client) Chat(ctx context.Context, config ai.Config, source string, messages []ai.ChatMessage) (string, error) {
+	if !ai.ValidEndpoint(config.BaseURL) || strings.TrimSpace(config.Model) == "" {
+		return "", ai.ErrInvalid
+	}
+	chat := make([]map[string]string, 0, len(messages)+1)
+	chat = append(chat, map[string]string{"role": "system", "content": "你是 Tangentry 阅读助手。根据给定内容回答问题，无法确定时明确说明。" + source})
+	for _, message := range messages {
+		chat = append(chat, map[string]string{"role": message.Role, "content": message.Content})
+	}
+	payload := map[string]any{"model": config.Model, "stream": false, "messages": chat}
+	return c.complete(ctx, config, payload)
+}
+
 func New() *Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.ResponseHeaderTimeout = 30 * time.Second

@@ -65,5 +65,16 @@ export function summaryMarkdown(result: SummaryResult, source: SummarySource, re
     if (link) lines.push(`[打开原内容](<${link}>)`, '')
     lines.push(...text(citation.quote).split('\n').map(line => `> ${line}`), '')
   }
+  if (result.outline?.length) {
+    lines.push('## 大纲', '')
+    const outline = (nodes: NonNullable<SummaryResult['outline']>, depth: number) => {
+      for (const node of nodes) {
+        lines.push(`${'  '.repeat(depth)}- ${text(node.title)}${node.start !== undefined ? ` · ${node.start} 秒` : ''}`)
+        if (node.children?.length) outline(node.children, depth + 1)
+      }
+    }
+    outline(result.outline, 0)
+    lines.push('')
+  }
   return lines.join('\n')
 }

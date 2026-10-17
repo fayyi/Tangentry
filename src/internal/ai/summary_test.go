@@ -499,3 +499,40 @@ func TestSummaryArticleChunkingDoesNotDropTail(t *testing.T) {
 	// The canonical article path is accepted and always remains explicit; no
 	// implicit article fetch occurs in the AI service.
 }
+
+func TestSummaryPlanUsesOneCallWithinBudget(t *testing.T) {
+	segments := []SummarySegment{{Index: 0, Text: "第一段"}, {Index: 1, Text: "第二段"}}
+	groups, calls := summaryPlan(segments, 28000)
+	if len(groups) != 1 || calls != 1 || len(groups[0]) != 2 {
+		t.Fatalf("unexpected one-call plan: %#v %d", groups, calls)
+	}
+}
+
+func TestSummaryKeyIncludesPromptAndBudget(t *testing.T) {
+	in := SummaryInput{ContentID: "rss:key-test", Source: "article", Text: "正文"}
+	segments, err := normalizeSummaryInput(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := summaryKey(in, segments, "提示词", "28000")
+	if base == summaryKey(in, segments, "另一套提示词", "28000") || base == summaryKey(in, segments, "提示词", "4000") {
+		t.Fatal("summary cache key ignored prompt or budget")
+	}
+}
+
+func TestSummaryOutlineValidationAndNormalization(t *testing.T) {
+	segments := []SummarySegment{{Index: 0, Start: 3, End: 5, Text: "段落"}}
+	draft := SummaryDraft{Overview: "概述", Points: []SummaryPoint{{Text: "要点", Indices: []int{0}}}, Outline: []SummaryOutline{{Title: "章节", Level: 0, Indices: []int{0}, Children: []SummaryOutline{{Title: "小节", Level: 1, Indices: []int{0}}}}}}
+	if !validateDraft(draft, map[int]bool{0: true}) {
+		t.Fatal("valid outline rejected")
+	}
+	outline := normalizeOutline(draft.Outline, segments)
+	if len(outline) != 1 || outline[0].Start != 3 || len(outline[0].Children) != 1 {
+		t.Fatalf("outline was not normalized: %#v", outline)
+	}
+	invalid := draft
+	invalid.Outline = []SummaryOutline{{Title: "越级", Level: 2, Indices: []int{0}}}
+	if validateDraft(invalid, map[int]bool{0: true}) {
+		t.Fatal("invalid outline accepted")
+	}
+}
