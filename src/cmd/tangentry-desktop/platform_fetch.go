@@ -239,9 +239,9 @@ func platformPageURLAllowed(raw, platform string) bool {
 	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
 	switch platform {
 	case "linuxdo":
-		return host == "linux.do" || host == "www.linux.do"
+		return host == "linux.do"
 	case "douyin":
-		return host == "douyin.com" || host == "www.douyin.com"
+		return host == "www.douyin.com"
 	default:
 		return false
 	}

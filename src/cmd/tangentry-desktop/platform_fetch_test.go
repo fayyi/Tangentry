@@ -93,9 +93,10 @@ func TestPlatformPageURLAllowed(t *testing.T) {
 		allowed       bool
 	}{
 		{"linuxdo", "https://linux.do/", true},
-		{"linuxdo", "https://www.linux.do/login", true},
+		{"linuxdo", "https://www.linux.do/login", false},
 		{"linuxdo", "https://challenges.cloudflare.com/", false},
 		{"douyin", "https://www.douyin.com/", true},
+		{"douyin", "https://douyin.com/", false},
 		{"douyin", "https://passport.douyin.com/", false},
 		{"douyin", "https://www.douyin.com.evil.example/", false},
 	} {
