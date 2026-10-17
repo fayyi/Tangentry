@@ -32,7 +32,7 @@ import { ContentCard } from '../shared/ui/ContentCard'
 import { CardCollection } from '../shared/ui/CardCollection'
 import { ExperienceShell } from './ExperienceShell'
 import { MediaFilters } from '../shared/ui/MediaFilters'
-import { readerPath } from './navigation'
+import { readerPath, readerPathForItem } from './navigation'
 import { BackToTop } from '../shared/ui/BackToTop'
 import { Toast } from '../shared/ui/Toast'
 import { useToast } from '../shared/hooks/useToast'
@@ -123,7 +123,7 @@ export function App() {
     readerSourceID.current = item.id
     scrollPositions.current.reader = 0
     setReadingItem(item)
-    navigate('reader', true, item.platform === "bilibili" ? `/reader?video=${encodeURIComponent(item.platformId)}` : `/reader?contentId=${encodeURIComponent(item.id)}`)
+    navigate('reader', true, readerPathForItem(item))
     requestAnimationFrame(() => document.getElementById('main')?.focus({ preventScroll: true }))
   }
 

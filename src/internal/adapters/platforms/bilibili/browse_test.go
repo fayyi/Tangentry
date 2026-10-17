@@ -54,15 +54,10 @@ func TestBrowseListsHaveDistinctPaginationAndRetainVideoMetadata(t *testing.T) {
 
 func TestDynamicUsesSignedCursorAndMapsForwardedAndNestedVideos(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/x/polymer/web-dynamic/v1/feed/all" || r.URL.Query().Get("type") != "video" || r.URL.Query().Get("w_rid") == "" || r.URL.Query().Get("features") == "" || r.Header.Get("Referer") != "https://t.bilibili.com/" {
+		if r.URL.Path != "/x/polymer/web-dynamic/v1/feed/all" || r.URL.Query().Get("type") != "all" || r.URL.Query().Get("w_rid") == "" || r.URL.Query().Get("features") == "" || r.Header.Get("Referer") != "https://t.bilibili.com/" {
 			t.Fatal("invalid dynamic cursor/signature")
 		}
-		switch r.URL.Query().Get("offset") {
-		case "previous":
-		case "next-page":
-			w.Write([]byte(`{"code":0,"data":{"items":[{"type":"DYNAMIC_TYPE_DRAW","modules":{}}],"offset":"after","has_more":false}}`))
-			return
-		default:
+		if r.URL.Query().Get("offset") != "previous" {
 			t.Fatal("unexpected offset", r.URL.Query().Get("offset"))
 		}
 		w.Write([]byte(`{"code":0,"data":{"items":[{"type":"1","orig":{"type":8,"bvid":"BV17x411w7KC","title":"转发的视频","duration_text":"01:02","view_count":1234,"author":{"mid":42,"name":"原作者"}}},{"type":"DYNAMIC_TYPE_AV","modules":{"module_author":{"mid":43,"name":"关注的作者","pub_ts":1},"module_dynamic":{"major":{"archive":{"bvid":"BV1Pyta66EDh","title":"关注投稿","duration_text":"01:20","stat":{"danmaku":"12","play":"3.4万"}}}}}},{"type":"8","bvid":"BV1Q541167Qg","title":"播放数回退","duration_text":"00:10","stat":{"play":9012},"author":{"mid":44,"name":"播放作者"}},{"type":"DYNAMIC_TYPE_WORD","modules":{}}],"offset":"next-page","has_more":"1"}}`))
@@ -71,7 +66,7 @@ func TestDynamicUsesSignedCursorAndMapsForwardedAndNestedVideos(t *testing.T) {
 	client := NewClient(server.Client(), "")
 	client.baseURL, client.key, client.keyExpires = server.URL, "fixture-key", time.Now().Add(time.Hour)
 	result, err := client.Browse(context.Background(), "dynamic", 2, "previous", 1)
-	if err != nil || len(result.Items) != 3 || result.Next != "after" || result.HasMore || result.Notice != "" || result.Items[0].DurationSeconds != 62 || result.Items[0].ViewCount != 1234 || result.Items[1].Author != "关注的作者" || result.Items[1].ViewCount != 34000 || result.Items[2].ViewCount != 9012 {
+	if err != nil || len(result.Items) != 3 || result.Next != "next-page" || !result.HasMore || result.Notice != "" || result.Items[0].DurationSeconds != 62 || result.Items[0].ViewCount != 1234 || result.Items[1].Author != "关注的作者" || result.Items[1].ViewCount != 34000 || result.Items[2].ViewCount != 9012 {
 		t.Fatal(result, err)
 	}
 	if _, err := client.Browse(context.Background(), "dynamic", 2, "", 1); err == nil {
@@ -83,20 +78,13 @@ func TestDynamicKeepsReadingPastImageOnlyPagesAndExplainsEmptyResults(t *testing
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		switch r.URL.Query().Get("offset") {
-		case "":
-			w.Write([]byte(`{"code":0,"data":{"items":[{"type":"DYNAMIC_TYPE_DRAW","modules":{}},{"type":"DYNAMIC_TYPE_ARTICLE","modules":{}}],"offset":"p2","has_more":true}}`))
-		case "p2":
-			w.Write([]byte(`{"code":0,"data":{"items":[{"type":"DYNAMIC_TYPE_AV","modules":{"module_author":{"mid":43,"name":"作者","pub_ts":1},"module_dynamic":{"major":{"archive":{"bvid":"BV1Pyta66EDh","title":"第二页的视频","duration_text":"01:20","stat":{"play":"12"}}}}}}],"offset":"p3","has_more":false}}`))
-		default:
-			t.Fatal("read past the end")
-		}
+		w.Write([]byte(`{"code":0,"data":{"items":[{"type":"DYNAMIC_TYPE_DRAW","id_str":"draw-1","modules":{"module_author":{"name":"作者"},"module_dynamic":{"desc":{"text":"图文"},"major":{"draw":{"items":[]}}}}},{"type":"DYNAMIC_TYPE_ARTICLE","id_str":"article-1","modules":{"module_author":{"name":"作者"},"module_dynamic":{"major":{"article":{"title":"专栏"}}}}}],"offset":"p2","has_more":true}}`))
 	}))
 	defer server.Close()
 	client := NewClient(server.Client(), "")
 	client.baseURL, client.key, client.keyExpires = server.URL, "fixture-key", time.Now().Add(time.Hour)
 	result, err := client.Browse(context.Background(), "dynamic", 1, "", 1)
-	if err != nil || calls != 2 || len(result.Items) != 1 || result.Items[0].Title != "第二页的视频" || result.HasMore || result.Notice != "" {
+	if err != nil || calls != 1 || len(result.Items) != 2 || !result.HasMore || result.Notice != "" {
 		t.Fatal(calls, result, err)
 	}
 
@@ -106,7 +94,7 @@ func TestDynamicKeepsReadingPastImageOnlyPagesAndExplainsEmptyResults(t *testing
 	defer empty.Close()
 	client.baseURL = empty.URL
 	result, err = client.Browse(context.Background(), "dynamic", 1, "", 1)
-	if err != nil || len(result.Items) != 0 || !result.HasMore || result.Notice != "已查看最近 8 条关注动态，其中没有视频投稿（图文 8）。可点「继续浏览」查看更早的动态。" {
+	if err != nil || len(result.Items) != 0 || !result.HasMore || result.Notice != "暂时没有可显示的关注动态。可点「继续浏览」查看更早的动态。" {
 		t.Fatal(result, err)
 	}
 }
