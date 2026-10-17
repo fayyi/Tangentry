@@ -1,0 +1,10 @@
+package httptransport
+
+import "net/http"
+
+// registerCoreRoutes contains protocol-wide health checks only.
+func (h *Handler) registerCoreRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
+		write(w, http.StatusOK, map[string]string{"status": "ok"})
+	})
+}

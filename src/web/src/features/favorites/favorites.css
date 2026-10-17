@@ -1,0 +1,57 @@
+/* Library sources: local saves and synced B站 folders share one tab strip. */
+.library-sources { display: flex; align-items: center; gap: 6px; margin: 0 0 18px; padding-bottom: 14px; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
+.library-sources::-webkit-scrollbar { display: none; }
+.library-sources > button { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; min-height: 32px; padding: 4px 12px; border: 1px solid var(--line); border-radius: var(--radius-full); color: var(--muted); font-size: 13px; font-weight: 500; white-space: nowrap; transition: background-color 140ms var(--ease-out), border-color 140ms var(--ease-out), color 140ms var(--ease-out); }
+.library-sources > button .count { background: transparent; padding: 0; min-width: 0; color: inherit; opacity: .7; }
+.library-sources > button[aria-pressed='true'] { border-color: var(--ink); background: var(--ink); color: var(--inverse); }
+.library-sources > .library-source-add { border-style: dashed; }
+.library-sources > .library-source-add[aria-pressed='true'] { border-style: solid; }
+@media (hover: hover) and (pointer: fine) { .library-sources > button:not([aria-pressed='true']):hover { border-color: var(--control-line); color: var(--ink); } }
+
+/* Setup: a short list of the account's folders, one action per row. */
+.favorite-setup { display: flex; flex-direction: column; gap: 14px; max-width: 760px; }
+.favorite-setup-heading, .favorite-detail-heading { display: flex; align-items: flex-start; gap: 12px 16px; flex-wrap: wrap; }
+.favorite-setup-heading > div, .favorite-detail-heading > div:first-child { flex: 1; min-width: 220px; }
+.favorite-setup h2, .favorite-folder h2 { margin: 0; font-size: 17px; font-weight: 600; }
+.favorite-setup .field-hint, .favorite-folder .field-hint { margin-top: 4px; }
+.favorite-folder-list { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--line); }
+.favorite-folder-list > li { display: flex; align-items: center; gap: 14px; min-height: 60px; padding: 10px 2px; border-bottom: 1px solid var(--line); }
+.favorite-folder-name { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.favorite-folder-name strong { font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.favorite-folder-name span { color: var(--faint); font-size: 12px; font-variant-numeric: tabular-nums; }
+.favorite-folder-download { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; color: var(--muted); font-size: 12.5px; cursor: pointer; white-space: nowrap; }
+.favorite-folder-download input, .favorite-switches input { width: 16px; height: 16px; accent-color: var(--ink); }
+.favorite-manual > summary { display: inline-flex; align-items: center; min-height: 32px; color: var(--muted); font-size: 13px; }
+.favorite-manual[open] > summary { margin-bottom: 8px; }
+.favorite-add { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 10px; }
+.favorite-add > label:first-child { flex: 1; min-width: 220px; display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 12px; }
+.favorite-add .favorite-folder-download { min-height: 36px; }
+.favorite-setup input:not([type='checkbox']), .favorite-policy input:not([type='checkbox']) { min-height: 36px; min-width: 0; padding: 0 11px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--card); color: var(--ink); }
+.favorite-setup input:not([type='checkbox']):focus-visible, .favorite-policy input:not([type='checkbox']):focus-visible { outline: none; border-color: var(--control-line); box-shadow: 0 0 0 3px var(--accent-soft); }
+
+/* Folder view: status line, quiet actions, then the cards. */
+.favorite-folder { display: flex; flex-direction: column; gap: 14px; }
+.favorite-detail-actions { display: flex; align-items: center; gap: 4px; }
+.favorite-detail-actions .icon-button[aria-expanded='true'] { background: var(--selected); color: var(--ink); }
+.favorite-policy { display: flex; flex-direction: column; gap: 14px; padding: 16px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--card); }
+.favorite-switches { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+.favorite-switches label { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius); cursor: pointer; }
+.favorite-switches label:has(input:checked) { border-color: var(--ink); }
+.favorite-switches input { margin-top: 2px; flex-shrink: 0; }
+.favorite-switches span { display: flex; flex-direction: column; gap: 2px; }
+.favorite-switches strong { font-size: 13px; font-weight: 600; }
+.favorite-switches small { color: var(--muted); font-size: 12px; }
+.favorite-policy-fields, .favorite-download-filters { display: flex; flex-wrap: wrap; gap: 10px; }
+.favorite-policy-fields label, .favorite-download-filters label { display: flex; flex-direction: column; gap: 6px; min-width: 150px; color: var(--muted); font-size: 12px; font-weight: 500; }
+.favorite-download-filters label { flex: 1; }
+.favorite-policy .field-hint { margin: 0; }
+.favorite-policy-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.favorite-policy-actions .inline-feedback { margin: 0; }
+.favorite-remove { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 12px 14px; border-radius: var(--radius); background: var(--surface); }
+.favorite-remove p { flex: 1; margin: 0; font-size: 13px; }
+.favorite-folder .inline-feedback { margin: 0; }
+@media (max-width: 760px) {
+  .favorite-folder-list > li { flex-wrap: wrap; }
+  .favorite-folder-name { flex-basis: 100%; }
+  .library-sources > button, .favorite-folder-download, .favorite-setup input:not([type='checkbox']), .favorite-policy input:not([type='checkbox']), .favorite-switches label, .favorite-manual > summary { min-height: 44px; }
+}

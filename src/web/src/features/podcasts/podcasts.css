@@ -1,0 +1,15 @@
+/* ---------- 播客 ---------- */
+.podcasts-page { display: flex; flex-direction: column; gap: 30px; }
+.podcasts-page > .page-heading { margin-bottom: -6px; }
+.podcast-section { min-width: 0; }
+.podcast-section .section-heading { padding-bottom: 10px; margin-bottom: 14px; border-bottom: 1px solid var(--line); }
+.podcast-episodes { row-gap: 14px; }
+.podcast-section .skeleton-gallery { grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr)); }
+.podcast-section .skeleton-thumbnail { display: none; }
+.podcast-empty { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px 20px; padding: 18px 20px; border: 1px dashed var(--line-strong); border-radius: var(--radius-lg); }
+.podcast-empty p { flex: 1 1 280px; margin: 0; color: var(--muted); font-size: 13px; }
+.podcast-empty strong { display: block; margin-bottom: 2px; color: var(--ink); font-size: 14px; font-weight: 600; }
+.podcast-section .card-progress { margin-top: 0; }
+@media (max-width: 760px) {
+  .podcasts-page { gap: 24px; }
+}

@@ -1,0 +1,138 @@
+package aichat
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+
+	"tangentry/internal/ai"
+)
+
+// Client owns only the provider transport. Prompt construction and response
+// decoding live in the task-specific files next to it.
+type Client struct{ HTTP *http.Client }
+
+// rejectedRequest classifies only known validation messages. Provider bodies
+// may contain credentials or private source text and are never surfaced.
+func rejectedRequest(body io.Reader) error {
+	var envelope struct {
+		Error struct {
+			Message string `json:"message"`
+			Param   string `json:"param"`
+			Code    string `json:"code"`
+		} `json:"error"`
+	}
+	if json.NewDecoder(io.LimitReader(body, 4096)).Decode(&envelope) == nil {
+		message := strings.ToLower(envelope.Error.Message)
+		if strings.Contains(message, "unable to determine target translation language") {
+			return ai.ErrTranslationLanguage
+		}
+		if envelope.Error.Param == "response_format" && (envelope.Error.Code == "unsupported_parameter" || envelope.Error.Code == "unsupported_value") {
+			return ai.ErrJSONModeUnsupported
+		}
+	}
+	return ai.ErrRequestRejected
+}
+
+func New() *Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = 30 * time.Second
+	return &Client{HTTP: &http.Client{Transport: transport, Timeout: 90 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+}
+
+func (c *Client) complete(ctx context.Context, config ai.Config, payload map[string]any) (string, error) {
+	body, _ := json.Marshal(payload)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(config.BaseURL, "/")+"/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return "", ai.ErrProvider
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	if config.Key != "" {
+		req.Header.Set("Authorization", "Bearer "+config.Key)
+	}
+	// Copy the configured client so a supplied cookie jar or redirect policy
+	// cannot send unrelated sessions or forward keys to another destination.
+	client := c.HTTP
+	if client == nil {
+		client = New().HTTP
+	}
+	safe := *client
+	safe.Jar = nil
+	safe.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	response, err := safe.Do(req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			return "", context.DeadlineExceeded
+		}
+		return "", ai.ErrProvider
+	}
+	defer response.Body.Close()
+	switch response.StatusCode {
+	case http.StatusBadRequest, http.StatusUnprocessableEntity:
+		return "", rejectedRequest(response.Body)
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return "", ai.ErrAuth
+	case http.StatusTooManyRequests:
+		return "", ai.ErrRate
+	case http.StatusGatewayTimeout:
+		return "", ai.ErrGatewayTimeout
+	}
+	if response.StatusCode != http.StatusOK {
+		return "", ai.ErrProvider
+	}
+	data, err := io.ReadAll(io.LimitReader(response.Body, (256<<10)+1))
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			return "", context.DeadlineExceeded
+		}
+		return "", ai.ErrProvider
+	}
+	if len(data) > 256<<10 {
+		return "", ai.ErrFormat
+	}
+	var envelope struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+				Refusal string `json:"refusal"`
+			} `json:"message"`
+			FinishReason string `json:"finish_reason"`
+		} `json:"choices"`
+	}
+	if json.Unmarshal(data, &envelope) != nil || len(envelope.Choices) != 1 {
+		return "", ai.ErrFormat
+	}
+	choice := envelope.Choices[0]
+	if choice.Message.Refusal != "" || choice.FinishReason == "content_filter" {
+		return "", ai.ErrRefused
+	}
+	if choice.FinishReason == "length" {
+		return "", ai.ErrTruncated
+	}
+	if choice.FinishReason != "stop" {
+		return "", ai.ErrFormat
+	}
+	return choice.Message.Content, nil
+}
+
+func structuredJSON(content string) string {
+	text := strings.TrimSpace(content)
+	for _, prefix := range []string{"```json\n", "```\n", "```json\r\n", "```\r\n"} {
+		if strings.HasPrefix(text, prefix) && strings.HasSuffix(text, "\n```") {
+			return strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(text, prefix), "\n```"))
+		}
+	}
+	return text
+}

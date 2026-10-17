@@ -1,0 +1,191 @@
+package tools
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"math"
+	"strings"
+	"time"
+
+	"tangentry/internal/content"
+	"tangentry/internal/discovery"
+	"tangentry/internal/playback"
+)
+
+// Video runs only metadata extraction. It never downloads media, subtitles, or models.
+func (t *Toolkit) Video(ctx context.Context, bvid string) (content.Item, error) {
+	kind, id, err := discovery.ParseQuery(bvid)
+	if err != nil || kind != "video" {
+		return content.Item{}, discovery.ErrInvalidQuery
+	}
+	return t.extractVideo(ctx, "bilibili", id, "https://www.bilibili.com/video/"+id+"/")
+}
+func (t *Toolkit) YouTube(ctx context.Context, raw string) (content.Item, error) {
+	id, url, err := discovery.ParseYouTube(raw)
+	if err != nil {
+		return content.Item{}, err
+	}
+	return t.extractVideo(ctx, "youtube", id, url)
+}
+
+// Playback resolves a single HTTPS audio/video representation for online
+// playback fallback. It never downloads a file and never returns separate DASH
+// tracks, because the browser playback service expects one combined stream.
+func (t *Toolkit) Playback(ctx context.Context, bvid string) (playback.Source, error) {
+	kind, id, err := discovery.ParseQuery(bvid)
+	if err != nil || kind != "video" {
+		return playback.Source{}, discovery.ErrInvalidQuery
+	}
+	if !t.ytdlpReady() {
+		return playback.Source{}, discovery.ErrUnavailable
+	}
+	rawURL := "https://www.bilibili.com/video/" + id + "/"
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	cookieArgs, clean, err := t.cookieArguments(rawURL)
+	if err != nil {
+		return playback.Source{}, discovery.ErrUnavailable
+	}
+	defer clean()
+	args := []string{"--ignore-config", "--no-plugin-dirs", "--no-playlist", "--no-cache-dir", "--no-warnings", "--skip-download", "--dump-single-json", "--format", "b[protocol=https][height=1080][vcodec!=none][acodec!=none]/b[protocol=https][height<=1080][vcodec!=none][acodec!=none]/b[protocol=https][vcodec!=none][acodec!=none]", "--socket-timeout", "12", "--retries", "1"}
+	args = append(args, cookieArgs...)
+	args = append(args, "--", rawURL)
+	cmd, err := t.ytdlpCommand(ctx, args...)
+	if err != nil {
+		return playback.Source{}, discovery.ErrUnavailable
+	}
+	stdout, stderr := &metadataBuffer{}, &boundedBuffer{}
+	cmd.Stdout, cmd.Stderr = stdout, stderr
+	if err := cmd.Run(); err != nil || stdout.exceeded {
+		if ctx.Err() != nil {
+			return playback.Source{}, ctx.Err()
+		}
+		return playback.Source{}, discovery.ErrUnavailable
+	}
+	var data struct {
+		ID       string  `json:"id"`
+		URL      string  `json:"url"`
+		Protocol string  `json:"protocol"`
+		Format   string  `json:"format"`
+		Height   int     `json:"height"`
+		Duration float64 `json:"duration"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &data); err != nil || data.ID != id || data.URL == "" || data.Protocol != "https" || data.Format == "" || math.IsNaN(data.Duration) || math.IsInf(data.Duration, 0) || data.Duration < 0 || data.Duration > 21600 || !playback.ValidSource(playback.Source{URL: data.URL}) {
+		return playback.Source{}, playback.ErrUnavailable
+	}
+	return playback.Source{URL: data.URL, Quality: data.Height, Duration: int(data.Duration)}, nil
+}
+func (t *Toolkit) Douyin(ctx context.Context, raw string) (content.Item, error) {
+	ref, err := discovery.ParseDouyin(raw)
+	if err != nil || ref.ID == "" {
+		return content.Item{}, discovery.ErrInvalidQuery
+	}
+	return t.extractVideo(ctx, "douyin", ref.ID, ref.URL)
+}
+func (t *Toolkit) extractVideo(ctx context.Context, platform, id, url string) (content.Item, error) {
+	if !t.ytdlpReady() {
+		return content.Item{}, discovery.ErrUnavailable
+	}
+	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	defer cancel()
+	args := []string{"--ignore-config", "--no-playlist", "--no-cache-dir", "--no-warnings", "--skip-download", "--dump-single-json", "--socket-timeout", "10", "--retries", "0"}
+	cookieArgs, clean, err := t.cookieArguments(url)
+	if err != nil {
+		return content.Item{}, err
+	}
+	defer clean()
+	args = append(args, cookieArgs...)
+	args = append(args, "--", url)
+	cmd, err := t.ytdlpCommand(ctx, args...)
+	if err != nil {
+		return content.Item{}, discovery.ErrUnavailable
+	}
+	stdout, stderr := &metadataBuffer{}, &boundedBuffer{}
+	cmd.Stdout, cmd.Stderr = stdout, stderr
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return content.Item{}, ctx.Err()
+		}
+		if platform == "douyin" {
+			message := "抖音视频暂时无法获取，请检查链接、网络和工具设置中的抖音 Cookie。"
+			if strings.Contains(strings.ToLower(stderr.String()), "cookie") {
+				message = "抖音需要有效 Cookie，请在工具设置配置自己的抖音 Cookie 后重试。"
+			}
+			return content.Item{}, &discovery.PlatformError{Message: message}
+		}
+		return content.Item{}, &discovery.PlatformError{Message: classify(stderr.String()).Error()}
+	}
+	if stdout.exceeded {
+		return content.Item{}, errors.New("media metadata exceeded limit")
+	}
+	var data struct {
+		ID          string  `json:"id"`
+		Title       string  `json:"title"`
+		Uploader    string  `json:"uploader"`
+		UploaderID  string  `json:"uploader_id"`
+		Channel     string  `json:"channel"`
+		ChannelID   string  `json:"channel_id"`
+		Thumbnail   string  `json:"thumbnail"`
+		Description string  `json:"description"`
+		Duration    float64 `json:"duration"`
+		Timestamp   int64   `json:"timestamp"`
+		UploadDate  string  `json:"upload_date"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &data); err != nil {
+		return content.Item{}, &discovery.PlatformError{Message: "视频解析工具返回了无法识别的数据。"}
+	}
+	if data.ID != id && !(platform == "bilibili" && data.ID == id+"_p1") {
+		return content.Item{}, &discovery.PlatformError{Message: "视频解析结果与请求不一致。"}
+	}
+	if math.IsNaN(data.Duration) || math.IsInf(data.Duration, 0) || data.Duration < 0 || data.Duration >= float64(^uint(0)>>1) {
+		return content.Item{}, &discovery.PlatformError{Message: "视频时长无效。"}
+	}
+	if data.Timestamp == 0 {
+		if date, err := time.Parse("20060102", data.UploadDate); err == nil {
+			data.Timestamp = date.Unix()
+		}
+	}
+	item := content.Item{ID: platform + ":" + id, Platform: platform, PlatformID: id, Kind: "video", Title: data.Title, Author: data.Uploader, AuthorID: data.UploaderID, URL: url, ThumbnailURL: data.Thumbnail, Description: data.Description, DurationSeconds: int(data.Duration), PublishedAt: data.Timestamp}
+	if platform == "youtube" {
+		if strings.TrimSpace(item.Author) == "" {
+			item.Author = strings.TrimSpace(data.Channel)
+		}
+		// Extractor uploader IDs are handles, not stable YouTube channel identities.
+		item.AuthorID = ""
+		if discovery.YouTubeChannelID(data.ChannelID) {
+			item.AuthorID = data.ChannelID
+		} else if discovery.YouTubeChannelID(data.UploaderID) {
+			item.AuthorID = data.UploaderID
+		}
+	}
+	if err := content.Validate(item); err != nil {
+		return content.Item{}, &discovery.PlatformError{Message: "视频解析结果缺少必要的信息。"}
+	}
+	if platform == "youtube" {
+		item.AuthorAvatarURL = t.youtubeAvatar(ctx, item.AuthorID)
+	}
+	return item, nil
+}
+
+type metadataBuffer struct {
+	bytes.Buffer
+	exceeded bool
+	limit    int
+}
+
+func (b *metadataBuffer) Write(p []byte) (int, error) {
+	n := len(p)
+	limit := b.limit
+	if limit == 0 {
+		limit = 4 << 20
+	}
+	remaining := max(0, limit-b.Len())
+	if n > remaining {
+		p = p[:remaining]
+		b.exceeded = true
+	}
+	_, _ = b.Buffer.Write(p)
+	return n, nil
+}

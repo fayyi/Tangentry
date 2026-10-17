@@ -1,0 +1,19 @@
+# docker compose up -d, then sign in with the password from `docker compose logs`
+# (or set TANGENTRY_PASSWORD below). Put a TLS reverse proxy in front before
+# exposing it beyond your own network.
+services:
+  tangentry:
+    # Replace the username with the Docker Hub account used by the release action.
+    image: docker.io/${DOCKERHUB_USERNAME:-your-dockerhub-username}/tangentry:latest
+    # build: .
+    restart: unless-stopped
+    ports:
+      - "7380:7380"
+    volumes:
+      - tangentry-data:/data
+    environment:
+      TZ: Asia/Shanghai
+      # TANGENTRY_PASSWORD: change-me
+
+volumes:
+  tangentry-data:

@@ -1,0 +1,102 @@
+package discourse
+
+import (
+	"context"
+	"errors"
+	"io"
+	"net/http"
+	"strings"
+	"testing"
+
+	"tangentry/internal/discovery"
+)
+
+type transportFunc func(*http.Request) (*http.Response, error)
+
+func (f transportFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+func response(r *http.Request, status int, raw string) *http.Response {
+	return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(raw)), Header: http.Header{}, Request: r}
+}
+
+func TestRankedFeedPagingFallbackAndRestrictedRequests(t *testing.T) {
+	for _, status := range []int{200, 404, 401, 403, 429} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			calls := []string{}
+			c := &Client{Cookie: func(string) string { return "_t=test-owned-session" }, HTTP: &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+				calls = append(calls, r.URL.Path)
+				if r.URL.Host != "linux.do" || r.Header.Get("Cookie") != "_t=test-owned-session" || r.URL.Query().Get("page") != "1" {
+					t.Fatal("unexpected request", r.URL)
+				}
+				if r.URL.Path == "/hot.json" && status != 200 {
+					return response(r, status, `{}`), nil
+				}
+				return response(r, 200, `{"topic_list":{"more_topics_url":"/hot.json?page=2","topics":[{"id":42,"title":"话题"}]}}`), nil
+			})}}
+			feed, err := c.Recommendations(context.Background(), 2)
+			if status == 200 || status == 404 {
+				if err != nil || len(feed.Items) != 1 || feed.Page != 2 || !feed.HasMore {
+					t.Fatal(feed, err)
+				}
+				want := 1
+				if status == 404 {
+					want = 2
+				}
+				if len(calls) != want {
+					t.Fatal(calls)
+				}
+			} else {
+				var blocked *discovery.PlatformError
+				if !errors.As(err, &blocked) || !blocked.Restricted || len(calls) != 1 {
+					t.Fatal(feed, calls, err)
+				}
+			}
+		})
+	}
+}
+
+func TestSessionCheckAndUserAuthorization(t *testing.T) {
+	for _, raw := range []string{`{"current_user":{"id":3,"username":"reader"}}`, `{"current_user":null}`} {
+		c := &Client{HTTP: &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+			if r.Header.Get("User-Api-Key") != "private-key-fixture" || r.Header.Get("User-Api-Client-Id") != "fixture-client" || r.Header.Get("Cookie") != "" {
+				t.Fatal("bad authorization")
+			}
+			return response(r, 200, raw), nil
+		})}, Cookie: func(string) string { return "_t=old" }, UserKey: func() (string, string) { return "private-key-fixture", "fixture-client" }}
+		state, err := c.CurrentSession(context.Background())
+		if err != nil || state.LoggedIn != strings.Contains(raw, "reader") {
+			t.Fatal(state, err)
+		}
+	}
+}
+
+func TestMalformedAndRedirectedDataNeverRotateSession(t *testing.T) {
+	for _, status := range []int{200, 302} {
+		calls := 0
+		c := &Client{HTTP: &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+			calls++
+			res := response(r, status, "<html>verification</html>")
+			res.Header.Set("Set-Cookie", "_t=must-not-save; Secure; Path=/")
+			res.Header.Set("Location", "https://other.example/")
+			return res, nil
+		})}, Session: func() (string, func([]*http.Cookie) error) {
+			return "_t=fixture", func([]*http.Cookie) error { t.Fatal("invalid data rotated credentials"); return nil }
+		}}
+		if _, err := c.Recommendations(context.Background(), 1); err == nil || calls != 1 {
+			t.Fatal(err, calls)
+		}
+	}
+}
+
+func TestTopicLinksKeepTopicIDInsteadOfReplyNumber(t *testing.T) {
+	for _, raw := range []string{"https://linux.do/t/42", "https://linux.do/t/example/42/19", "https://linux.do/t/example/42.json"} {
+		id, err := ParseTopicURL(raw)
+		if err != nil || id != "42" {
+			t.Fatal(raw, id, err)
+		}
+	}
+	for _, raw := range []string{"https://linux.do/t/example", "https://linux.do/t/-1", "https://evil.example/t/42", "https://linux.do:8443/t/42", "http://linux.do/t/42"} {
+		if _, err := ParseTopicURL(raw); err == nil {
+			t.Fatal(raw)
+		}
+	}
+}

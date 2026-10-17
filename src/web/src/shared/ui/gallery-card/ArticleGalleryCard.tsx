@@ -1,0 +1,30 @@
+import { GalleryCardFrame } from './GalleryCardFrame'
+import { GalleryCardTitle } from './GalleryCardText'
+import { SaveCardAction } from './GalleryCardActions'
+import { useCardCover } from './useCardCover'
+import type { GalleryCardContentProps } from './types'
+import { retryThroughProxy, sourceImageURL } from '../../media/sourceImage'
+import { AuthorAvatar, AuthorName, AuthorPublication } from '../CardAuthor'
+
+export function ArticleGalleryCard({ item, origin, saved, pending, onRead, onSave, status, excerpt }: GalleryCardContentProps) {
+  const { failed: coverFailed, setFailed: setCoverFailed } = useCardCover(item.thumbnailUrl)
+  return (
+    <GalleryCardFrame item={item} origin={origin} className="card-article" onRead={onRead} status={status}>
+      {item.thumbnailUrl && !coverFailed && <button className="modern-card-thumbnail" onClick={() => onRead(item)} aria-label={`阅读文章 ${item.title}`}>
+        <img src={sourceImageURL(item, item.thumbnailUrl)} alt="" loading="lazy" referrerPolicy="no-referrer" onError={event => retryThroughProxy(event, item, item.thumbnailUrl) || setCoverFailed(true)} />
+      </button>}
+      <div className="modern-card-content">
+        <GalleryCardTitle item={item} onRead={onRead} />
+        {excerpt}
+        <div className="modern-card-author">
+          {(item.authorAvatarUrl || item.platform === 'xiaohongshu') && <AuthorAvatar item={item} />}
+          <div className="author-info" style={{ flex: 1 }}>
+            <AuthorName item={item} />
+            <AuthorPublication item={item} />
+          </div>
+          <div className="modern-card-actions"><SaveCardAction item={item} saved={saved} pending={pending} onSave={onSave} /></div>
+        </div>
+      </div>
+    </GalleryCardFrame>
+  )
+}

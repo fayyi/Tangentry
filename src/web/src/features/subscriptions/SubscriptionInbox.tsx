@@ -1,0 +1,45 @@
+import { Check, CheckCheck, Circle, ChevronLeft, ChevronRight, RefreshCw, Search } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import type { ContentItem, SubscriptionGroup, SubscriptionSource } from '../../shared/api/types'
+import { ContentCard } from '../../shared/ui/ContentCard'
+import { CardCollection } from '../../shared/ui/CardCollection'
+import type { useReadState } from '../readstate/useReadState'
+import type { useSubscriptionInbox } from './useSubscriptionInbox'
+
+type Inbox = ReturnType<typeof useSubscriptionInbox>
+function InboxOptions({label,name,value,options,onChange}:{label:string;name:string;value:string;options:[string,string][];onChange:(value:string)=>void}) {
+  return <div className="inbox-options" role="radiogroup" aria-label={label}>{options.map(([id,text])=><label key={id}><input type="radio" name={name} value={id} checked={value===id} onChange={()=>onChange(id)}/><span>{text}</span></label>)}</div>
+}
+export function SubscriptionInbox({inbox,sources,groups,readStates,savedIDs,savingIDs,savingUnavailable,onRead,onSave,saveNotice,saveError}:{inbox:Inbox;sources:SubscriptionSource[];groups:SubscriptionGroup[];readStates:ReturnType<typeof useReadState>;savedIDs:Set<string>;savingIDs:Set<string>;savingUnavailable:boolean;onRead:(item:ContentItem)=>void;onSave:(item:ContentItem)=>void;saveNotice:string;saveError:boolean}){
+  const [draft,setDraft]=useState(inbox.filters)
+  useEffect(()=>setDraft(inbox.filters),[inbox.filters])
+  const busy=inbox.loading||!inbox.confirmed||!readStates.ready||Boolean(readStates.pending.size)
+  const sourceOptions=[...sources.map(source=>({id:source.id,name:source.name})),...inbox.page.sources.filter(source=>source.removed && !sources.some(value=>value.id===source.id))].filter((source,index,list)=>list.findIndex(value=>value.id===source.id)===index)
+  return <section className="subscription-inbox" aria-label="历史收件箱">
+    <h2 className="visually-hidden">历史收件箱</h2>
+    <form className="inbox-filters" onSubmit={event=>{event.preventDefault();void inbox.apply(draft)}}>
+      <div className="inbox-search-row">
+        <label className="subscription-field inbox-search"><span className="visually-hidden">搜索历史内容</span><div className="subscription-input"><Search size={16} aria-hidden="true"/><input type="search" value={draft.query} maxLength={400} placeholder="搜索标题或作者" onChange={event=>setDraft({...draft,query:event.target.value})}/></div></label>
+        <button className="button button-primary" disabled={inbox.loading}>应用筛选</button>
+        <button type="button" className="icon-button" aria-label="重新读取收件箱" title="重新读取收件箱" disabled={inbox.loading} onClick={()=>void inbox.reload()}><RefreshCw size={16} className={inbox.loading?'spin':undefined}/></button>
+      </div>
+      <div className="inbox-filter-strip">
+        <label className="subscription-field"><span className="visually-hidden">来源</span><select value={draft.sourceId} onChange={event=>setDraft({...draft,sourceId:event.target.value})}><option value="">全部来源</option>{sourceOptions.map(source=><option key={source.id} value={source.id}>{source.name}{sources.some(value=>value.id===source.id)?'':'（已移除）'}</option>)}{draft.sourceId&&!sourceOptions.some(source=>source.id===draft.sourceId)&&<option value={draft.sourceId}>已移除的来源</option>}</select></label>
+        <label className="subscription-field"><span className="visually-hidden">分组</span><select value={draft.groupId} onChange={event=>setDraft({...draft,groupId:event.target.value})}><option value="">全部分组</option>{groups.map(group=><option key={group.id} value={group.id}>{group.name}</option>)}{draft.groupId&&!groups.some(group=>group.id===draft.groupId)&&<option value={draft.groupId}>已解散的分组</option>}</select></label>
+        <InboxOptions label="内容类型" name="inbox-kind" value={draft.kind} options={[["","全部类型"],["graphical","图文"],["audio","音频"],["video","视频"],["pdf","PDF"]]} onChange={kind=>setDraft({...draft,kind})}/>
+        <InboxOptions label="阅读状态" name="inbox-read" value={draft.read} options={[["all","全部状态"],["unread","未读"],["read","已读"]]} onChange={read=>setDraft({...draft,read})}/>
+      </div>
+    </form>
+    {inbox.error&&<p className="inline-feedback" role="alert">{inbox.error} 上次确认的结果仍保留。</p>}
+    {inbox.loading&&<p className="field-hint" role="status">正在读取本地历史…</p>}
+    {readStates.error&&<p className="inline-feedback" role="alert">{readStates.error}<button className="button button-secondary" onClick={readStates.refresh}>重新读取已读状态</button></p>}
+    {saveNotice&&<p className="inline-feedback collection-save-feedback" role={saveError?'alert':'status'}>{saveNotice}</p>}
+    {savingUnavailable&&<p className="field-hint">资料库暂时无法读取，收藏操作不可用。</p>}
+    {inbox.confirmed&&<>
+      <div className="subscription-reading-toolbar"><span className="inbox-count">第 {inbox.pageNumber} 页 · {inbox.page.entries.length} 条，按首次获取顺序</span><button className="button button-secondary" aria-label="将本页标为已读" title="将本页标为已读" disabled={busy||!inbox.page.entries.some(entry=>readStates.get(entry.item.id)?.read===false)} onClick={()=>void readStates.setRead(inbox.page.entries.map(entry=>entry.item.id),true)}><CheckCheck size={15}/>将本页标为已读</button></div>
+      {inbox.page.entries.length?<CardCollection className="content-collection subscription-gallery" masonry={false}>{inbox.page.entries.map(entry=><div className="inbox-entry" key={entry.item.id}><ContentCard headingLevel={3} item={entry.item} saved={savedIDs.has(entry.item.id)} pending={savingUnavailable||savingIDs.has(entry.item.id)} onRead={onRead} onSave={onSave} status={<span className="subscription-read-status">{readStates.available?readStates.get(entry.item.id)?.read?<><Check size={12}/>已读</>:<><span className="unread-dot"/>未读</>:'状态待读取'}</span>} actions={<button disabled={busy} aria-label={`${readStates.get(entry.item.id)?.read?'标为未读':'标为已读'} ${entry.item.title}`} onClick={()=>void readStates.setRead([entry.item.id],!readStates.get(entry.item.id)?.read)}>{readStates.get(entry.item.id)?.read?<CheckCheck size={16} aria-hidden="true"/>:<Circle size={15} aria-hidden="true"/>}<span>{readStates.get(entry.item.id)?.read?'标为未读':'标为已读'}</span></button>}/><p className="inbox-provenance">{entry.sources.map(source=><span key={source.id}>{source.name}{source.removed?'（已移除）':''}</span>)}</p></div>)}</CardCollection>:<div className="subscription-empty"><h3>这里暂时没有内容</h3><p>更新订阅后会留下获取过的条目，也可调整筛选查找已有历史。</p></div>}
+      {(inbox.hasPrevious||inbox.page.nextCursor)&&<nav className="inbox-pagination" aria-label="历史分页"><button className="button button-secondary" disabled={inbox.loading||!inbox.hasPrevious} onClick={inbox.back}><ChevronLeft size={16}/>上一页</button><span>第 {inbox.pageNumber} 页</span><button className="button button-secondary" disabled={inbox.loading||!inbox.page.nextCursor} onClick={()=>void inbox.next()}>下一页<ChevronRight size={16}/></button></nav>}
+    </>}
+    <p className="subscription-reading-hint">仅保留实际获取过的条目和来源提供的文字、媒体地址。移除订阅会保留历史；平台上的全历史和媒体文件需另行获取。</p>
+  </section>
+}

@@ -1,0 +1,188 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+env:
+  GO_VERSION: '1.27.1'
+  NODE_VERSION: '24.21.0'
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    name: Verify source and server build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: src/go.sum
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: src/web/package-lock.json
+
+      - name: Build frontend
+        working-directory: src/web
+        run: npm ci --no-audit --no-fund && npm run build
+
+      - name: Test Go packages
+        working-directory: src
+        run: go test ./...
+
+      - name: Build server
+        working-directory: src
+        run: mkdir -p ../build && go build -trimpath -ldflags='-s -w' -o ../build/tangentry-server ./cmd/tangentry-server
+
+  desktop:
+    name: Build desktop packages
+    needs: verify
+    runs-on: macos-14
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: src/go.sum
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: src/web/package-lock.json
+
+      - name: Install macOS desktop build tools
+        run: brew install ffmpeg whisper-cpp
+
+      - name: Set desktop app version from tag
+        run: echo "TANGENTRY_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
+      - name: Build all desktop targets
+        run: make desktop-build-all
+
+      - name: Pack desktop release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p release-assets
+
+          # Keep runtime files together with their application. Uploading
+          # build/** directly creates duplicate release assets for every
+          # platform's DLL, dylib, manifest, and license files.
+          cp "build/darwin-arm64/Tangentry ${version} arm64.dmg" \
+            "release-assets/Tangentry-${version}-macos-arm64.dmg"
+          for target in windows-amd64 windows-arm64; do
+            (
+              cd "build/${target}"
+              zip -qr "../../release-assets/Tangentry-${version}-${target}.zip" .
+            )
+          done
+          for target in linux-amd64 linux-arm64; do
+            cp "build/${target}"/*.deb release-assets/
+            cp "build/${target}"/*.tar.gz release-assets/
+          done
+
+      - name: Upload desktop packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: tangentry-desktop-${{ github.ref_name }}
+          path: release-assets/*
+          if-no-files-found: error
+
+  docker:
+    name: Publish Docker image
+    needs: verify
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Validate Docker Hub credentials
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          test -n "$DOCKERHUB_USERNAME" || { echo "::error::Set the DOCKERHUB_USERNAME repository secret."; exit 1; }
+          test -n "$DOCKERHUB_TOKEN" || { echo "::error::Set the DOCKERHUB_TOKEN repository secret to a Docker Hub access token."; exit 1; }
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Compute release version
+        id: version
+        shell: bash
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Compute image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/tangentry
+          tags: |
+            type=semver,pattern={{version}},value=${{ github.ref_name }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ github.ref_name }}
+            type=raw,value=latest
+
+      - name: Build and push multi-arch image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  release:
+    name: Create GitHub release
+    needs: [verify, desktop, docker]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download desktop packages
+        uses: actions/download-artifact@v4
+        with:
+          name: tangentry-desktop-${{ github.ref_name }}
+          path: release-assets
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          draft: false
+          make_latest: true
+          overwrite_files: true
+          fail_on_unmatched_files: true
+          files: release-assets/*

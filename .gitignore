@@ -1,0 +1,33 @@
+**/node_modules/
+**/dist/
+**/playwright-report/
+**/test-results/
+test-results/
+/data/
+bin/
+/build/
+/src/build/
+/src/resources/
+/src/.mygo/
+/src/.mygo-resources/
+.DS_Store
+.env
+.env.*
+!.env.example
+*.cookies.txt
+*.log
+
+/src/web/public/pdfjs/
+# Documentation is local-only; dependency licenses are published.
+/docs/*
+!/docs/licenses/
+!/docs/ARCHITECTURE.md
+!/docs/images/
+# Browser captures and design references are local workbench artifacts, never CI inputs.
+/docs/screenshots/
+/CLAUDE.md
+/UX-OPTIMIZATION.md
+/STAGE*-COMPLETE.md
+/REDESIGN-PROPOSAL.md
+/UI-REDESIGN-PROGRESS.md
+IMPLEMENTATION-GUIDE.md

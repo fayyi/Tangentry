@@ -1,0 +1,10 @@
+.content-actions { display: inline-flex; align-items: center; flex-shrink: 0; gap: 2px; }
+.content-actions > button { display: grid; place-items: center; width: 34px; height: 34px; color: var(--faint); border-radius: var(--radius); transition: background-color 140ms var(--ease-out), color 140ms var(--ease-out); }
+.content-actions > .is-saved { color: var(--accent); }
+.content-actions > button:active { transform: scale(.95); }
+.content-action-popover { position: fixed; inset: auto; margin: 0; width: min(216px, calc(100vw - 16px)); max-height: calc(100dvh - 16px); overflow: auto; padding: 5px; border: 1px solid var(--line); border-radius: var(--radius-md); color: var(--ink); background: var(--card); box-shadow: var(--shadow-lg); }
+.content-action-popover > button, .content-action-popover > a { width: 100%; min-height: 38px; border-radius: var(--radius-sm); padding: 8px 10px; display: flex; align-items: center; gap: 10px; font-size: 13px; text-align: left; color: var(--ink); }
+.content-action-popover svg { color: var(--muted); flex-shrink: 0; }
+@media (hover: hover) and (pointer: fine) { .content-actions > button:not(:disabled):hover, .content-action-popover > button:not(:disabled):hover, .content-action-popover > a:hover { background: var(--hover); color: var(--ink); } }
+@media (max-width: 760px), (pointer: coarse) { .content-actions > button { width: 44px; height: 44px; } .content-action-popover > button, .content-action-popover > a { min-height: 44px; } }
+@media (prefers-reduced-motion: reduce) { .content-actions > button:active { transform: none; } }

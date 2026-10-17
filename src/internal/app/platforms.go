@@ -1,0 +1,112 @@
+package app
+
+import (
+	"net/http"
+	"path/filepath"
+	"time"
+
+	"tangentry/internal/adapters/feeds"
+	"tangentry/internal/adapters/platforms/bilibili"
+	"tangentry/internal/adapters/platforms/discourse"
+	"tangentry/internal/adapters/platforms/douyin"
+	"tangentry/internal/adapters/platforms/xiaohongshu"
+	"tangentry/internal/adapters/platforms/xiaoyuzhou"
+	"tangentry/internal/adapters/platforms/youtube"
+	"tangentry/internal/adapters/tools"
+	"tangentry/internal/config"
+	"tangentry/internal/credentials"
+	"tangentry/internal/discovery"
+	"tangentry/internal/netpolicy"
+)
+
+// platforms is an application-level capability registry. The concrete clients
+// are still assembled here, but callers consume a bundle named after the
+// capability they need instead of reaching through one flat platform bag.
+// Shared clients intentionally remain single instances across bundles.
+type platforms struct {
+	network       platformNetwork
+	discovery     platformDiscovery
+	imports       platformImports
+	subscriptions platformSubscriptions
+	media         platformMedia
+}
+
+type platformNetwork struct {
+	public  *http.Client
+	cookies *credentials.Store
+	toolkit *tools.Toolkit
+}
+
+type platformDiscovery struct {
+	creators discovery.Provider
+	bilibili *bilibili.Client
+	douyin   *douyin.Client
+	notes    *xiaohongshu.Client
+	forum    *discourse.Client
+	podcasts *xiaoyuzhou.Client
+}
+
+type platformImports struct {
+	feeds      *feeds.Client
+	youtube    *youtube.Client
+	douyin     *douyin.Client
+	notes      *xiaohongshu.Client
+	forum      *discourse.Client
+	podcasts   *xiaoyuzhou.Client
+	toolkit    *tools.Toolkit
+	noteImages *xiaohongshu.Images
+}
+
+type platformSubscriptions struct {
+	feeds    *feeds.Client
+	youtube  *youtube.Client
+	creators discovery.Provider
+	toolkit  *tools.Toolkit
+}
+
+type platformMedia struct {
+	bilibili *bilibili.Client
+	toolkit  *tools.Toolkit
+	notes    *xiaohongshu.Client
+	podcasts *xiaoyuzhou.Client
+}
+
+func newPlatforms(dataDir string, configuration config.Config, toolkit *tools.Toolkit, cookies *credentials.Store, option Options) (*platforms, error) {
+	public := option.PublicHTTP
+	if public == nil {
+		public = netpolicy.NewClient()
+	}
+	client := bilibili.NewClient(&http.Client{Timeout: 15 * time.Second}, configuration.BilibiliCookie, toolkit)
+	client.SetCookieProvider(func(rawURL string) string { return cookies.Header("bilibili", rawURL) })
+	client.SetCredentialRefresher(&bilibili.CredentialRefresher{HTTP: public, Load: cookies.BilibiliPair, Save: cookies.SaveBilibiliIfCurrent})
+	var creators discovery.Provider = client
+	if option.Platform != nil {
+		creators = option.Platform
+	}
+	noteImages, err := xiaohongshu.OpenImages(filepath.Join(dataDir, "xiaohongshu-images"), public)
+	if err != nil {
+		return nil, err
+	}
+	podcasts := &xiaoyuzhou.Client{HTTP: public, Cookie: cookieFor(cookies, "xiaoyuzhou")}
+	podcasts.Auth = &xiaoyuzhou.AuthSession{HTTP: public, Tokens: func() (string, string) {
+		return cookies.TokenPair("xiaoyuzhou")
+	}, Save: cookies.SaveTokensIfCurrent}
+	feedClient := &feeds.Client{HTTP: public}
+	youtubeClient := youtube.New(public)
+	douyinClient := &douyin.Client{HTTP: public, Cookie: cookieFor(cookies, "douyin")}
+	notesClient := &xiaohongshu.Client{HTTP: public, Cookie: cookieFor(cookies, "xiaohongshu")}
+	forumClient := &discourse.Client{HTTP: public, Session: cookies.PrepareLinuxdoSession, UserKey: cookies.LinuxdoUserKey}
+	return &platforms{
+		network:       platformNetwork{public: public, cookies: cookies, toolkit: toolkit},
+		discovery:     platformDiscovery{creators: creators, bilibili: client, douyin: douyinClient, notes: notesClient, forum: forumClient, podcasts: podcasts},
+		imports:       platformImports{feeds: feedClient, youtube: youtubeClient, douyin: douyinClient, notes: notesClient, forum: forumClient, podcasts: podcasts, toolkit: toolkit, noteImages: noteImages},
+		subscriptions: platformSubscriptions{feeds: feedClient, youtube: youtubeClient, creators: creators, toolkit: toolkit},
+		media:         platformMedia{bilibili: client, toolkit: toolkit, notes: notesClient, podcasts: podcasts},
+	}, nil
+}
+
+func cookieFor(cookies *credentials.Store, platform string) func(string) string {
+	return func(raw string) string { return cookies.Header(platform, raw) }
+}
+
+func (p *platforms) podcastToken() string { return p.network.cookies.AccessToken("xiaoyuzhou") }

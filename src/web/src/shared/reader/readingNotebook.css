@@ -1,0 +1,44 @@
+.reading-notebook-navigation { display: none; }
+
+@media (max-width:760px) {
+  .immersive-reader .reading-notebook .subtitle-cues li,
+  .immersive-reader .reading-notebook .subtitle-cues li[aria-current=true] { padding: 4px; gap: 5px; }
+  .immersive-reader .reading-notebook .subtitle-cues p { font-size: 13px; line-height: 1.6; }
+  .immersive-reader .reading-notebook .subtitle-cues .subtitle-time { font-size: 11px; }
+  .immersive-reader .reading-notebook .subtitle-row-tools :is(.subtitle-note-button,.subtitle-excerpt-button) { min-height: 36px; width: 32px; min-width: 32px; }
+}
+
+@media (max-width:960px) {
+  .immersive-reader .reading-notebook:has(.subtitle-cues) { --reader-player-height: min(30dvh, 280px); }
+  .immersive-reader .reading-notebook:has(.subtitle-cues) :is(.online-video-stage, .online-play, .online-player .platform-video, .local-video) { max-height: var(--reader-player-height); }
+  .immersive-reader .reading-notebook:has(.subtitle-cues) .online-player { width: min(100%, calc(var(--reader-player-height) * 16 / 9)); margin-inline: auto; }
+  .immersive-reader .reading-notebook:has(.subtitle-cues) .player-footer { margin-top: 4px; }
+  .immersive-reader .reading-notebook:has(.subtitle-cues) .player-footer .player-hint { display: none; }
+  .immersive-reader .reading-notebook:has(.subtitle-cues) .reading-progress[data-playing=true] { display: none; }
+  .immersive-reader .reading-notebook .subtitle-cues { min-height: 180px; max-height: 34dvh; }
+  .immersive-reader .reading-notebook .subtitle-cues::after { height: 34dvh; }
+}
+.subtitle-note-button { white-space: nowrap; }
+.reading-notebook .notes-workspace > .note-editor { margin-top: 12px; }
+.reading-notebook .notes-workspace[data-expanded-writing=true] > .note-records-workspace { display: none; }
+@media (min-width: 1101px) {
+  .immersive-reader .reading-columns.reading-notebook { grid-template-columns: minmax(0, 1fr) minmax(340px, 380px); }
+}
+@media (max-width: 760px) {
+  .immersive-reader .reading-columns.reading-notebook { display: flex; flex-direction: column; align-items: stretch; gap: 0; }
+  .reading-notebook > .reader-primary { display: contents; }
+  .reading-notebook > .reader-primary > * { order: 0; }
+  .reading-notebook-navigation { order: 1; display: flex; gap: 0; border-bottom: 1px solid var(--line); margin-top: 12px; }
+  .reading-notebook-navigation button { flex: 1; min-height: 44px; display: flex; align-items: center; justify-content: center; gap: 7px; border-bottom: 2px solid transparent; color: var(--muted); font-size: 13px; }
+  .reading-notebook-navigation button[aria-pressed=true] { color: var(--ink); border-bottom-color: var(--ink); }
+  .reading-notebook-navigation button:focus-visible { outline: 2px solid var(--ink); outline-offset: -3px; }
+  .immersive-reader .reading-notebook > .reader-primary > .subtitle-reader,
+  .immersive-reader .reading-notebook > .reader-primary > .podcast-transcript { order: 2; margin-top: 12px; padding-top: 12px; border-top: 0; }
+  .reading-notebook > .reading-notes { order: 2; margin-top: 12px; }
+  .reading-notebook :is(button, textarea, input) { scroll-margin-top: calc(var(--nav-height, 64px) + 12px); scroll-margin-bottom: calc(var(--bottom-nav-height, 64px) + 24px + env(safe-area-inset-bottom)); }
+  .reading-notebook[data-notebook-view=captions] > .reading-notes,
+  .reading-notebook[data-notebook-view=notes] > .reader-primary > .subtitle-reader,
+  .reading-notebook[data-notebook-view=notes] > .reader-primary > .podcast-transcript { display: none; }
+  .subtitle-cue-actions .subtitle-note-button { width: 44px; min-height: 44px; justify-content: center; padding: 0; font-size: 0; }
+  .subtitle-cue-actions .subtitle-note-button svg { width: 16px; height: 16px; }
+}

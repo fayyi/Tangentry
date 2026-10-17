@@ -1,0 +1,8 @@
+@import '../shared/ui/tokens.css';
+@import './theme-transition.css';
+@import './shell.css';
+@import '../shared/ui/cards.css';
+@import './pages.css';
+
+html.tangentry-desktop, .tangentry-desktop body { scrollbar-width: none; }
+.tangentry-desktop::-webkit-scrollbar, .tangentry-desktop body::-webkit-scrollbar { display: none; }

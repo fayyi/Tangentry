@@ -1,0 +1,31 @@
+import { Languages } from 'lucide-react'
+import { useRef } from 'react'
+import type { useSubtitleTranslation } from './useSubtitleTranslation'
+import './ai.css'
+export function SubtitleTranslation({ translation }: { translation: ReturnType<typeof useSubtitleTranslation> }) {
+  const { inspection, loading, pending, error, notice } = translation
+  const done = inspection?.result.texts.length ?? 0, total = inspection?.result.total ?? 0
+  const options = useRef<HTMLDetailsElement>(null)
+  if (translation.alreadyChinese) return null
+  return <div className="subtitle-translation">
+    <div className="subtitle-translation-bar">
+      {!pending && <details ref={options} className="subtitle-translation-options"><summary><Languages size={14} aria-hidden="true" />双语翻译{done > 0 && <span>{done === total ? '已保存' : `${done}/${total}`}</span>}</summary>
+        <div className="subtitle-translation-body">
+          {loading && !inspection ? <p role="status">正在读取本机译文…</p> : inspection && <>
+            {inspection.settings.ready ? <p>{done < total ? `将这份字幕的 ${total} 段译为简体中文。` : '本机已有完整的简体中文译文。'}服务：<span className="ai-provider-address">{new URL(inspection.settings.baseUrl).host}</span>，模型：{inspection.settings.model}。</p> : <p>先到工具设置填写自己的翻译接口与模型。</p>}
+            <div className="subtitle-translation-actions">
+              {done < total && <button className="button button-secondary" disabled={!inspection.settings.ready || loading || inspection.active || inspection.settings.translating} onClick={() => { if (options.current) options.current.open = false; void translation.translate() }}>{done ? '继续翻译' : '开始翻译整份字幕'}</button>}
+              {total > 0 && done === total && inspection.settings.ready && <button className="text-button" title={`现有译文由 ${inspection.result.model} 生成`} disabled={loading || inspection.active || inspection.settings.translating} onClick={() => { if (options.current) options.current.open = false; void translation.translate(true) }}>用当前模型重新翻译</button>}
+              <button className="text-button" disabled={loading} onClick={() => void translation.reload()}>重新读取设置与译文</button>
+            </div>
+            {inspection.active && <p role="status">另一个页面正在翻译这份字幕，可重新读取进度。</p>}
+          </>}
+          {!inspection && !loading && <button className="text-button" onClick={() => void translation.reload()}>重新读取翻译设置</button>}
+        </div>
+      </details>}
+      {pending && <><span role="status">正在翻译，已完成 {done} / {total} 段</span><button className="text-button" onClick={translation.cancel}>取消翻译</button></>}
+      {done > 0 && <label className="subtitle-show-translation"><input type="checkbox" checked={translation.show} onChange={event => translation.setShow(event.target.checked)} />显示简体中文译文</label>}
+    </div>
+    {notice && <p className="ai-translation-feedback" role="status">{notice}</p>}{error && <p className="ai-translation-feedback" role="alert">{error}</p>}
+  </div>
+}

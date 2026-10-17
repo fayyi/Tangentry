@@ -1,0 +1,30 @@
+.pdf-reader { margin-top: 24px; }
+.pdf-toolbar, .pdf-toolbar > div { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.pdf-toolbar { justify-content: space-between; margin-bottom: 16px; font-size: 12px; }
+.pdf-toolbar label { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+.pdf-toolbar input { width: 62px; background: var(--surface); color: var(--ink); padding: 6px; border-radius: 4px; }
+.pdf-viewport { overflow: auto; background: var(--surface); padding-block: 12px; max-height: 75dvh; }
+.pdf-page { position: relative; margin-inline: auto; max-width: none; background: white; --scale-round-x: .01px; --scale-round-y: .01px; }
+.pdf-viewport canvas { display: block; background: white; max-width: none; }
+.pdf-page .textLayer { z-index: 1; }
+.pdf-page .textLayer ::selection { background: rgb(0 0 0 / .2); color: transparent; }
+.pdf-page .textLayer[data-main-rotation="90"] { transform: rotate(90deg) translateY(-100%); }
+.pdf-page .textLayer[data-main-rotation="180"] { transform: rotate(180deg) translate(-100%, -100%); }
+.pdf-page .textLayer[data-main-rotation="270"] { transform: rotate(270deg) translateX(-100%); }
+.pdf-highlights { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+.pdf-highlight { position: absolute; background: rgb(0 0 0 / .12); border-bottom: 1px solid rgb(0 0 0 / .4); }
+.pdf-annotation[data-current=true] .pdf-highlight { background: rgb(0 0 0 / .22); }
+.pdf-annotation-button { position: absolute; width: 28px; height: 26px; display: grid; place-items: center; pointer-events: auto; background: white; color: #222; border: 1px solid #555; border-radius: 5px; }
+.pdf-annotation-button:focus-visible { outline: 2px solid #111; outline-offset: 2px; }
+.pdf-selection-tools { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 12px; font-size: 12px; color: var(--muted); }
+.immersive-reader .pdf-viewport { max-height: max(220px, calc(100dvh - 430px)); }
+@media (max-width:760px) { .immersive-reader .pdf-viewport { max-height: 65dvh; } }
+@media (forced-colors: active) { .pdf-highlight { background: Highlight; opacity: .25; } }
+.pdf-text { margin-top: 20px; color: var(--muted); font-size: 13px; }
+.pdf-text summary { cursor: pointer; color: var(--ink); padding-block: 8px; }
+.pdf-text p { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.8; }
+.experience-reading .document-workspace .pdf-toolbar { gap: 8px 16px; padding-bottom: 10px; border-bottom: 1px solid var(--line); margin-bottom: 12px; }
+.experience-reading .document-workspace .pdf-viewport { border: 1px solid var(--line); border-radius: 6px; }
+.experience-reading .document-workspace .pdf-toolbar > div { gap: 4px; }
+.experience-reading .document-workspace .pdf-toolbar .icon-button { width: 34px; height: 34px; min-height: 34px; }
+@media (max-width: 760px) { .experience-reading .document-workspace .pdf-toolbar .icon-button { width: 40px; height: 40px; min-height: 40px; } }
