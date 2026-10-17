@@ -15,7 +15,7 @@ import '../reader/watch.css'
 
 function ResizableSubtitlePlayer({ children }: { children: ReactNode }) {
   const notebook = useReadingNotebook()
-  if (!notebook) return <>{children}</>
+  if (!notebook || !children) return <>{children}</>
   return <div className="reader-player-resizable" style={{ '--reader-player-width': `${notebook.playerWidth}%` } as CSSProperties}>{children}<ReaderPlayerSizeHandle value={notebook.playerWidth} onChange={notebook.setPlayerWidth} onReset={notebook.resetPlayerWidth}/></div>
 }
 
