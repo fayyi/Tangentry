@@ -436,7 +436,7 @@ func dynamicItem(raw json.RawMessage, depth int) (content.Item, bool) {
 		item.AuthorID = ""
 	}
 	if item.Title == "" {
-		item.Title = "B站视频动态"
+		item.Title = dynamicKindTitle(typ)
 	}
 	return item, content.Validate(item) == nil
 }

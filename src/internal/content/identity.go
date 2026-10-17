@@ -8,7 +8,7 @@ import (
 // Content identities are shared by notes, read state and saved transcripts.
 // Source IDs and arbitrary locator URLs never identify an individual item.
 var identities = map[string]*regexp.Regexp{
-	"bilibili":    regexp.MustCompile(`^(?:BV[0-9A-Za-z]{10}|dynamic:[0-9A-Za-z_-]{1,64})$`),
+	"bilibili":    regexp.MustCompile(`^BV[0-9A-Za-z]{10}$`),
 	"youtube":     regexp.MustCompile(`^[A-Za-z0-9_-]{11}$`),
 	"douyin":      regexp.MustCompile(`^[1-9][0-9]{15,19}$`),
 	"xiaohongshu": regexp.MustCompile(`^[a-f0-9]{24}$`),
