@@ -239,6 +239,42 @@ func TestDeleteHistoryRequiresTerminalStateAndCanRemoveFiles(t *testing.T) {
 	}
 }
 
+func TestClearHistoryLeavesActiveTasksForCancellation(t *testing.T) {
+	root := t.TempDir()
+	store, err := sqlite.Open(filepath.Join(root, "clear.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	runner := gatedRunner{make(chan struct{}, 1), make(chan struct{})}
+	service, err := downloads.NewService(store, runner, filepath.Join(root, "media"), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Close()
+	ctx := context.Background()
+	terminal := downloads.Job{ID: "terminal-clear", URL: "https://www.bilibili.com/video/BV17x411w7KC/", State: "failed", CreatedAt: 1}
+	if err := store.SaveDownload(ctx, terminal); err != nil {
+		t.Fatal(err)
+	}
+	active, err := service.Start(ctx, downloads.Request{URL: "https://www.bilibili.com/video/BV1xx411c7mD"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Clear(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.GetDownload(ctx, terminal.ID); !errors.Is(err, downloads.ErrNotFound) {
+		t.Fatal("terminal history retained")
+	}
+	if _, err := store.GetDownload(ctx, active.ID); err != nil {
+		t.Fatal("active task was cleared", err)
+	}
+	if err := service.Cancel(ctx, active.ID); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestUntrustedURLsNeverReachDownloadTools(t *testing.T) {
 	store, err := sqlite.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {

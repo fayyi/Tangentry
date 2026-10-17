@@ -124,17 +124,19 @@ func (s *Service) Clear(ctx context.Context, removeFiles bool) error {
 		return err
 	}
 	ids := make([]string, 0, len(jobs))
+	terminal := make([]Job, 0, len(jobs))
 	for _, job := range jobs {
 		if job.State == "queued" || job.State == "running" {
-			return ErrActive
+			continue
 		}
 		ids = append(ids, job.ID)
+		terminal = append(terminal, job)
 	}
 	if err := s.repo.DeleteDownloads(ctx, ids); err != nil {
 		return err
 	}
 	if removeFiles {
-		for _, job := range jobs {
+		for _, job := range terminal {
 			directory := s.locations.Jobs[job.ID]
 			if directory == "" {
 				directory = s.originalDirectory

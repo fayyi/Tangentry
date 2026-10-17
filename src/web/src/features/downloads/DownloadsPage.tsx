@@ -97,10 +97,13 @@ export function DownloadsPage({ downloads, onRead, intent }: { downloads: Downlo
 
   async function confirmDelete(deleteFiles: boolean) {
     if (!deleteDialog) return
-    if (deleteDialog.clear) await downloads.clear(deleteFiles)
-    else for (const id of deleteDialog.ids) await downloads.remove(id, deleteFiles)
-    setSelected(new Set())
-    setDeleteDialog(null)
+    let success = true
+    if (deleteDialog.clear) success = await downloads.clear(deleteFiles)
+    else for (const id of deleteDialog.ids) success = (await downloads.remove(id, deleteFiles)) && success
+    if (success) {
+      setSelected(new Set())
+      setDeleteDialog(null)
+    }
   }
 
   const settingsPanel = <aside className="download-settings" aria-label="下载设置">

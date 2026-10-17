@@ -115,7 +115,8 @@ export function useDownloads() {
       ++revision.current
       setJobs(current => current.filter(job => job.id !== id))
       setWriteError('')
-    } catch (error) { setWriteError(error instanceof Error ? error.message : '无法删除下载记录。') }
+      return true
+    } catch (error) { setWriteError(error instanceof Error ? error.message : '无法删除下载记录。'); return false }
   }
 
   async function clear(deleteFiles = false) {
@@ -124,7 +125,8 @@ export function useDownloads() {
       ++revision.current
       setJobs([])
       setWriteError('')
-    } catch (error) { setWriteError(error instanceof Error ? error.message : '无法清空下载历史。') }
+      return true
+    } catch (error) { setWriteError(error instanceof Error ? error.message : '无法清空下载历史。'); return false }
   }
 
   return { jobs, tools, error: writeError || readError, loading, submitting, notice, reload, start, cancel, remove, clear, info, inspecting, infoError, inspect, clearInfo }
