@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"runtime"
 	"runtime/debug"
 
 	"github.com/egoist/mygo"
@@ -44,7 +46,7 @@ func run() (runErr error) {
 	if err != nil {
 		return err
 	}
-	credentialKey, err := desktopCredentialKey()
+	credentialKey, err := desktopCredentialKey(dataDir)
 	if err != nil {
 		return err
 	}
@@ -80,7 +82,27 @@ func run() (runErr error) {
 	return nil
 }
 
-func desktopCredentialKey() ([]byte, error) {
+func desktopCredentialKey(dataDir string) ([]byte, error) {
+	if !useSystemCredentialStore(runtime.GOOS, macOSAdHocOrUnsigned()) {
+		return fileCredentialKey(dataDir)
+	}
+	key, err := keychainCredentialKey()
+	if err != nil {
+		return nil, err
+	}
+	// Keep a copy for a later ad-hoc build. The signed build continues to use
+	// the keychain as its source of truth, so this copy follows that key.
+	if runtime.GOOS == "darwin" {
+		_ = writeCredentialKey(dataDir, key)
+	}
+	return key, nil
+}
+
+func useSystemCredentialStore(goos string, adHocOrUnsigned bool) bool {
+	return goos != "darwin" || !adHocOrUnsigned
+}
+
+func keychainCredentialKey() ([]byte, error) {
 	const keyName = "tangentry-credential-key"
 	key, err := mygo.Secrets.Get(keyName)
 	if err == nil {
@@ -109,4 +131,81 @@ func desktopCredentialKey() ([]byte, error) {
 		return nil, fmt.Errorf("无法保存系统凭据密钥：%w", err)
 	}
 	return key, nil
+}
+
+func fileCredentialKey(dataDir string) ([]byte, error) {
+	directory := filepath.Join(dataDir, "credentials")
+	if err := ensureCredentialDirectory(directory); err != nil {
+		return nil, err
+	}
+	path := filepath.Join(directory, "desktop.key")
+	if key, err := os.ReadFile(path); err == nil {
+		if len(key) != 32 {
+			return nil, errors.New("桌面凭据密钥长度无效")
+		}
+		if err := os.Chmod(path, 0600); err != nil {
+			return nil, fmt.Errorf("无法设置桌面凭据密钥权限：%w", err)
+		}
+		return key, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("无法读取本地凭据密钥：%w", err)
+	}
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return nil, fmt.Errorf("无法生成桌面凭据密钥：%w", err)
+	}
+	if err := createCredentialKey(dataDir, key); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return fileCredentialKey(dataDir)
+		}
+		return nil, err
+	}
+	return key, nil
+}
+
+func writeCredentialKey(dataDir string, key []byte) error {
+	if err := createCredentialKey(dataDir, key); err != nil && !errors.Is(err, os.ErrExist) {
+		return err
+	}
+	return nil
+}
+
+func createCredentialKey(dataDir string, key []byte) error {
+	if len(key) != 32 {
+		return errors.New("桌面凭据密钥长度无效")
+	}
+	directory := filepath.Join(dataDir, "credentials")
+	if err := ensureCredentialDirectory(directory); err != nil {
+		return err
+	}
+	path := filepath.Join(directory, "desktop.key")
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return err
+	}
+	if _, err := file.Write(key); err != nil {
+		_ = file.Close()
+		_ = os.Remove(path)
+		return fmt.Errorf("无法保存本地凭据密钥：%w", err)
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		_ = os.Remove(path)
+		return fmt.Errorf("无法保存本地凭据密钥：%w", err)
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(path)
+		return fmt.Errorf("无法保存本地凭据密钥：%w", err)
+	}
+	return os.Chmod(path, 0600)
+}
+
+func ensureCredentialDirectory(directory string) error {
+	if err := os.MkdirAll(directory, 0700); err != nil {
+		return fmt.Errorf("无法创建本地凭据目录：%w", err)
+	}
+	if err := os.Chmod(directory, 0700); err != nil {
+		return fmt.Errorf("无法设置本地凭据目录权限：%w", err)
+	}
+	return nil
 }
