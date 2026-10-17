@@ -35,7 +35,6 @@ export interface ContentItem {
   authorAvatarUrl?: string
   category?: string
   replyCount?: number
-  viewCount?: number
   likeCount?: number
   url: string
   thumbnailUrl: string

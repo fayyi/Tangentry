@@ -200,7 +200,7 @@ func (c *Client) Topic(ctx context.Context, id string) (content.Item, error) {
 		return content.Item{}, discovery.ErrUnavailable
 	}
 	date, _ := time.Parse(time.RFC3339Nano, data.Created)
-	item := content.Item{ID: "linuxdo:" + id, Platform: "linuxdo", PlatformID: id, Kind: "article", Title: data.Title, Category: data.Category, ViewCount: data.Views, LikeCount: data.Likes, URL: "https://linux.do/t/" + id}
+	item := content.Item{ID: "linuxdo:" + id, Platform: "linuxdo", PlatformID: id, Kind: "article", Title: data.Title, Category: data.Category, ViewCount: int64(data.Views), LikeCount: data.Likes, URL: "https://linux.do/t/" + id}
 	if !date.IsZero() {
 		item.PublishedAt = date.Unix()
 	}
@@ -338,7 +338,7 @@ func Parse(raw []byte, page int) (discovery.Feed, error) {
 			replies = topic.Posts - 1
 		}
 		avatar := discourseAvatar(topic.Avatar)
-		item := content.Item{ID: "linuxdo:" + id, Platform: "linuxdo", PlatformID: id, Kind: "article", Title: topic.Title, Author: author, AuthorAvatarURL: avatar, Category: topic.Category, ReplyCount: replies, ViewCount: topic.Views, LikeCount: topic.Likes, URL: "https://linux.do/t/" + id, Description: feeds.Text(topic.Excerpt), PreviewText: feeds.Text(topic.Excerpt), PublishedAt: published}
+		item := content.Item{ID: "linuxdo:" + id, Platform: "linuxdo", PlatformID: id, Kind: "article", Title: topic.Title, Author: author, AuthorAvatarURL: avatar, Category: topic.Category, ReplyCount: replies, ViewCount: int64(topic.Views), LikeCount: topic.Likes, URL: "https://linux.do/t/" + id, Description: feeds.Text(topic.Excerpt), PreviewText: feeds.Text(topic.Excerpt), PublishedAt: published}
 		if content.Validate(item) == nil {
 			feed.Items = append(feed.Items, item)
 		}
