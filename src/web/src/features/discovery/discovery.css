@@ -35,6 +35,12 @@
 .discovery-platforms button[data-state='loading'] .platform-dot { animation: platform-pulse 1s ease-in-out infinite alternate; }
 .discovery-platforms button[data-state='error'] { border-color: color-mix(in srgb, var(--danger) 40%, var(--line)); }
 .discovery-platforms button[data-state='error'] .platform-dot { background: var(--danger); }
+.discovery-topics { display: flex; align-items: center; gap: 6px; flex-shrink: 0; padding-left: 10px; border-left: 1px solid var(--line); }
+.discovery-topics > button, .discovery-topic-chip > button:first-child { min-height: 30px; padding: 3px 11px; border: 1px solid var(--line); border-radius: var(--radius-full); color: var(--muted); font-size: 12.5px; white-space: nowrap; }
+.discovery-topics > button[aria-pressed='true'], .discovery-topic-chip > button:first-child[aria-pressed='true'] { border-color: var(--ink); background: var(--ink); color: var(--inverse); }
+.discovery-topic-chip { display: inline-flex; align-items: center; gap: 2px; min-height: 30px; padding: 0 3px 0 0; border: 1px solid var(--line); border-radius: var(--radius-full); }
+.discovery-topic-chip .discovery-topic-action, .discovery-topic-add { display: inline-grid; place-items: center; width: 25px; height: 25px; min-height: 25px; padding: 0; border-radius: 50%; color: var(--faint); }
+.discovery-topic-chip .discovery-topic-action:hover, .discovery-topic-add:hover { color: var(--ink); background: var(--line); }
 .discovery-batch-controls { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; padding-left: 10px; border-left: 1px solid var(--line); }
 .discovery-batch-controls select, .discovery-batch-controls input[type='text'] { min-height: 30px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--card); color: var(--ink); padding: 3px 9px; font-size: 12.5px; }
 .discovery-batch-controls input[type='text'] { width: 116px; }
@@ -46,6 +52,7 @@
 .discovery-topic-chip button:hover { color: var(--danger); background: var(--danger-soft); }
 .discovery-batch-end { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 10px; min-height: 64px; }
 .discovery-batch-end > span { color: var(--muted); font-size: 13px; }
+.discovery-feed-status { min-height: 64px; }
 @keyframes platform-pulse { to { opacity: .25; } }
 @media (hover: hover) and (pointer: fine) { .discovery-platforms button:not([aria-pressed='true']):hover { border-color: var(--line-strong); color: var(--ink); } }
 .content-count { flex-shrink: 0; margin-left: auto; padding-left: 8px; color: var(--faint); font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }

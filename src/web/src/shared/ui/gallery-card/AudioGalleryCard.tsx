@@ -9,13 +9,13 @@ import { useCardAudio } from '../useCardAudio'
 import { announcePlayback } from '../../media/playback'
 import { AuthorName } from '../CardAuthor'
 
-export function AudioGalleryCard({ item, origin, saved, pending, onRead, onSave, onDownload, status, excerpt }: GalleryCardContentProps) {
+export function AudioGalleryCard({ item, origin, saved, pending, onRead, onSave, onDownload, status, excerpt, discovery = false }: GalleryCardContentProps) {
   const playback = useGalleryPlayback()
   const { audio, audioRef, audioURL, audioLoading, audioError, audioPosition, audioDuration, audioTotal, audioTime, toggleAudio,
     setAudioPosition, setAudioDuration, setAudioError, setPlaying } = useCardAudio(item, playback)
 
   return (
-    <GalleryCardFrame item={item} origin={origin} className="card-audio" onRead={onRead}>
+    <GalleryCardFrame item={item} origin={origin} className="card-audio" onRead={onRead} discovery={discovery}>
       <PodcastArtwork key={item.id + item.thumbnailUrl} item={item} />
       <div className="card-audio-info">
         <GalleryCardTitle item={item} onRead={onRead} />

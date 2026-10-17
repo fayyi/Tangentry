@@ -11,12 +11,16 @@ import (
 
 type batchProvider struct {
 	feeds    map[string]Feed
+	pages    map[string]map[int]Feed
 	failures map[string]error
 }
 
-func (p batchProvider) Fetch(_ context.Context, source string, _ int) (Feed, error) {
+func (p batchProvider) Fetch(_ context.Context, source string, page int) (Feed, error) {
 	if err := p.failures[source]; err != nil {
 		return Feed{}, err
+	}
+	if pages := p.pages[source]; pages != nil {
+		return pages[page], nil
 	}
 	return p.feeds[source], nil
 }
@@ -87,8 +91,21 @@ func TestBatchCursorReadsPersistedSnapshotAndEnds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.HasNextBatch || first.EndReason != "本轮已结束" {
+	if first.HasNextBatch || first.EndReason != "暂时没有更多了" {
 		t.Fatalf("short candidate pool should end: %#v", first)
 	}
 	_ = first
+}
+
+func TestBatchUsesDefaultsWhenOptionsAreOmitted(t *testing.T) {
+	service := NewBatchService(batchProvider{feeds: map[string]Feed{
+		"bilibili": {Items: []content.Item{batchItem("bilibili", "BV17x411w7KC", "默认", "作者", 1)}},
+	}}, nil, []string{"bilibili"})
+	response, err := service.Create(context.Background(), BatchRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Items) != 1 || response.Reason == "" {
+		t.Fatalf("omitted options were not defaulted: %#v", response)
+	}
 }

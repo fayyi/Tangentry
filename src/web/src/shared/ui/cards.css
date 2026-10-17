@@ -83,6 +83,8 @@
 .card-platform[data-platform='linuxdo']::before { background: var(--linuxdo); }
 .card-platform[data-platform='pdf']::before { background: var(--accent); }
 .discovery-card-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 22px; margin-bottom: -2px; }
+.modern-card { position: relative; }
+.discovery-origin-label { position: absolute; z-index: 2; top: 8px; left: 8px; max-width: calc(100% - 16px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 3px 7px; border: 1px solid color-mix(in srgb, var(--line) 70%, transparent); border-radius: var(--radius-full); background: color-mix(in srgb, var(--card) 86%, transparent); color: var(--muted); font-size: 11px; line-height: 1.2; backdrop-filter: blur(8px); pointer-events: none; }
 .discovery-card-labels { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
 .discovery-card-duration { color: var(--faint); font: 500 11px/1 var(--font-display); font-variant-numeric: tabular-nums; }
 

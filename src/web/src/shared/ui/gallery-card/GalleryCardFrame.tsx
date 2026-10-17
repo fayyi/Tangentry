@@ -9,9 +9,10 @@ interface Props {
   children: ReactNode
   status?: ReactNode
   dataPlatform?: boolean
+  discovery?: boolean
 }
 
-export function GalleryCardFrame({ item, origin, className, onRead, children, status, dataPlatform = false }: Props) {
+export function GalleryCardFrame({ item, origin, className, onRead, children, status, dataPlatform = false, discovery = false }: Props) {
   const openCard = (event: MouseEvent<HTMLElement>) => {
     if (item.kind === 'video' && !(event.target as Element).closest('.modern-card-content')) return
     if ((event.target as Element).closest('button, a, input, select, textarea, summary, [role="button"]') || window.getSelection()?.toString()) return
@@ -36,6 +37,7 @@ export function GalleryCardFrame({ item, origin, className, onRead, children, st
       {...(dataPlatform ? { 'data-platform': item.platform } : {})}
       title={origin}
     >
+      {discovery && origin && <span className="discovery-origin-label">{origin}</span>}
       {children}
       {status}
     </article>

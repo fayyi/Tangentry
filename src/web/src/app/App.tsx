@@ -77,7 +77,7 @@ export function App() {
   const [galleryKind, setGalleryKind] = useState('all')
   const [galleryOrigin, setGalleryOrigin] = useState('platforms')
   const [galleryQuery, setGalleryQuery] = useState('')
-  const gallery = useGallery(view === 'podcasts' || (view === 'discovery' && galleryOrigin === 'subscriptions'), view === 'podcasts' ? podcastSources : gallerySources)
+  const gallery = useGallery(view === 'podcasts', view === 'podcasts' ? podcastSources : gallerySources)
   const podcastEpisodes = usePodcastEpisodes(view === 'podcasts')
   const searchHistory = useSearchHistory()
   const globalNotes = useGlobalNotes(view === 'notes')

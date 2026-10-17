@@ -60,11 +60,14 @@ export interface Feed {
 export type DiscoveryView = 'wander' | 'latest' | 'topic' | 'random'
 export interface DiscoveryBatchRequest {
   view: DiscoveryView
-  size: 10 | 15 | 25
+  /** Optional: the server chooses a feed page size when omitted. */
+  size?: 10 | 15 | 25
   topic?: string
 	source?: string
-  subscriptionRatio: number
-  explorationRatio: number
+  /** Optional: server-side default keeps the subscription mix consistent. */
+  subscriptionRatio?: number
+  /** Optional: server-side default keeps exploration modest. */
+  explorationRatio?: number
   cursor?: string
   seed?: number
   unreadIds?: string[]

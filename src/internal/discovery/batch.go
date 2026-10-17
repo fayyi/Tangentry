@@ -17,8 +17,8 @@ import (
 
 var ErrInvalidBatch = errors.New("invalid discovery batch")
 
-// BatchRequest describes one finite discovery snapshot. Cursor is an opaque
-// batch offset; seed makes the small exploration slice reproducible.
+// BatchRequest describes a discovery stream request. Cursor is an opaque
+// offset into a persisted snapshot; seed makes the exploration order stable.
 type BatchRequest struct {
 	View              string   `json:"view"`
 	Size              int      `json:"size"`
@@ -86,6 +86,10 @@ type batchCandidate struct {
 type batchSnapshot struct {
 	Candidates []batchCandidate  `json:"candidates"`
 	Status     map[string]string `json:"status"`
+	// NextPages keeps source pagination independent from the user-facing cursor.
+	// A zero value means that the source has not been fetched beyond page one.
+	NextPages map[string]int  `json:"nextPages,omitempty"`
+	Exhausted map[string]bool `json:"exhausted,omitempty"`
 }
 
 func NewBatchService(provider BatchCandidateProvider, subscriptions func(context.Context) (Feed, error), sources []string, repositories ...BatchSnapshotRepository) *BatchService {
@@ -133,8 +137,22 @@ func (s *BatchService) Create(ctx context.Context, request BatchRequest) (BatchR
 		if err != nil {
 			return BatchResponse{}, err
 		}
-		if json.Unmarshal(payload, &snapshot) != nil || cursor.Offset >= len(snapshot.Candidates) {
+		if json.Unmarshal(payload, &snapshot) != nil || cursor.Offset > len(snapshot.Candidates) {
 			return BatchResponse{}, ErrInvalidBatch
+		}
+		if snapshot.NextPages == nil {
+			snapshot.NextPages = map[string]int{}
+		}
+		if snapshot.Exhausted == nil {
+			snapshot.Exhausted = map[string]bool{}
+		}
+		if cursor.Offset == len(snapshot.Candidates) && !allSourcesExhausted(snapshot) {
+			if err := s.extendSnapshot(ctx, request, &snapshot); err != nil {
+				return BatchResponse{}, err
+			}
+			if err := s.saveSnapshot(ctx, cursor.BatchID, requestKey, snapshot); err != nil {
+				return BatchResponse{}, err
+			}
 		}
 		return s.page(request, requestKey, cursor, snapshot), nil
 	}
@@ -155,13 +173,18 @@ func (s *BatchService) Create(ctx context.Context, request BatchRequest) (BatchR
 		}
 	}
 
+	nextPages := make(map[string]int, len(s.sources))
+	exhausted := make(map[string]bool, len(s.sources)+1)
 	if s.subscriptions != nil && request.Source == "" {
 		feed, fetchErr := s.subscriptions(ctx)
 		if fetchErr != nil {
 			status["subscriptions"] = sourceError(fetchErr)
+			exhausted["subscriptions"] = true
 		} else {
 			status["subscriptions"] = "ok"
 			add("subscriptions", "订阅优先", feed, false)
+			// Subscription feeds are already complete snapshots, not page APIs.
+			exhausted["subscriptions"] = true
 		}
 	}
 	for _, source := range s.sources {
@@ -175,50 +198,31 @@ func (s *BatchService) Create(ctx context.Context, request BatchRequest) (BatchR
 			on, enabledErr := s.enabled(ctx, source)
 			if enabledErr != nil {
 				status[source] = sourceError(enabledErr)
+				exhausted[source] = true
 				continue
 			}
 			if !on {
 				status[source] = "disabled"
+				exhausted[source] = true
 				continue
 			}
 		}
 		feed, fetchErr := s.provider.Fetch(ctx, source, 1)
 		if fetchErr != nil {
 			status[source] = sourceError(fetchErr)
+			exhausted[source] = true
 			continue
 		}
 		status[source] = "ok"
 		add(source, "来源更新", feed, true)
+		if len(feed.Items) == 0 || !feed.HasMore {
+			exhausted[source] = true
+		} else {
+			nextPages[source] = 2
+		}
 	}
 
-	if request.Topic != "" {
-		terms := []string{strings.TrimSpace(request.Topic)}
-		if s.topics != nil {
-			if rules, topicErr := s.topics(ctx); topicErr == nil {
-				for _, rule := range rules {
-					if rule.ID == request.Topic || strings.EqualFold(rule.Name, request.Topic) {
-						terms = rule.Keywords
-						break
-					}
-				}
-			}
-		}
-		lowerTerms := make([]string, 0, len(terms))
-		for _, term := range terms {
-			if term = strings.TrimSpace(term); term != "" {
-				lowerTerms = append(lowerTerms, strings.ToLower(term))
-			}
-		}
-		all = filterCandidates(all, func(value batchCandidate) bool {
-			text := strings.ToLower(strings.Join([]string{value.Item.Title, value.Item.Author, value.Item.Description, value.Item.PreviewText}, " "))
-			for _, term := range lowerTerms {
-				if strings.Contains(text, term) {
-					return true
-				}
-			}
-			return false
-		})
-	}
+	all = s.filterTopicCandidates(ctx, request, all)
 	latest := append([]batchCandidate(nil), all...)
 	sort.SliceStable(latest, func(i, j int) bool {
 		if latest[i].Item.PublishedAt != latest[j].Item.PublishedAt {
@@ -243,20 +247,135 @@ func (s *BatchService) Create(ctx context.Context, request BatchRequest) (BatchR
 		}
 	}
 	all = selectBatchOrder(all, request, carried)
-	if len(all) == 0 {
-		return BatchResponse{Items: []BatchItem{}, Reason: batchReason(request), EndReason: "本轮已结束", SourceStatus: status}, nil
+	snapshot = batchSnapshot{Candidates: all, Status: status, NextPages: nextPages, Exhausted: exhausted}
+	// If every source starts empty but advertises a continuation, fetch one
+	// continuation before exposing an empty stream.
+	if len(snapshot.Candidates) == 0 && !allSourcesExhausted(snapshot) {
+		if err := s.extendSnapshot(ctx, request, &snapshot); err != nil {
+			return BatchResponse{}, err
+		}
 	}
-	payload, err := json.Marshal(batchSnapshot{Candidates: all, Status: status})
+	payload, err := json.Marshal(snapshot)
 	if err != nil {
 		return BatchResponse{}, err
 	}
-	batchID := stableKey(request.Seed, requestKey+digestCandidates(all))[:24]
+	batchID := stableKey(request.Seed, requestKey+digestCandidates(snapshot.Candidates))[:24]
 	if s.snapshots != nil {
 		if err := s.snapshots.PutDiscoveryBatch(ctx, batchID, requestKey, payload, s.clock().Add(24*time.Hour).UnixMilli()); err != nil {
 			return BatchResponse{}, err
 		}
 	}
-	return s.page(request, requestKey, batchCursor{BatchID: batchID}, batchSnapshot{Candidates: all, Status: status}), nil
+	return s.page(request, requestKey, batchCursor{BatchID: batchID}, snapshot), nil
+}
+
+func (s *BatchService) extendSnapshot(ctx context.Context, request BatchRequest, snapshot *batchSnapshot) error {
+	seen := make(map[string]struct{}, len(snapshot.Candidates))
+	for _, candidate := range snapshot.Candidates {
+		seen[candidate.Item.ID] = struct{}{}
+	}
+	add := func(source, reason string, feed Feed) {
+		for _, item := range feed.Items {
+			if content.Validate(item) != nil {
+				continue
+			}
+			if _, ok := seen[item.ID]; ok {
+				continue
+			}
+			seen[item.ID] = struct{}{}
+			snapshot.Candidates = append(snapshot.Candidates, batchCandidate{
+				Item: item, Source: source, Fresh: true,
+				Key: stableKey(request.Seed, item.ID) + "\x00" + reason,
+			})
+		}
+	}
+	for _, source := range s.sources {
+		if source == "subscriptions" || request.Source != "" && source != request.Source || snapshot.Exhausted[source] {
+			continue
+		}
+		page := snapshot.NextPages[source]
+		if page < 2 {
+			page = 2
+		}
+		for attempts := 0; attempts < 100 && !snapshot.Exhausted[source]; attempts++ {
+			feed, err := s.provider.Fetch(ctx, source, page)
+			if err != nil {
+				snapshot.Status[source] = sourceError(err)
+				snapshot.Exhausted[source] = true
+				break
+			}
+			snapshot.Status[source] = "ok"
+			before := len(snapshot.Candidates)
+			add(source, "来源更新", feed)
+			if request.Topic != "" {
+				newCandidates := s.filterTopicCandidates(ctx, request, snapshot.Candidates[before:])
+				snapshot.Candidates = append(snapshot.Candidates[:before], newCandidates...)
+			}
+			snapshot.NextPages[source] = page + 1
+			if len(feed.Items) == 0 || !feed.HasMore {
+				snapshot.Exhausted[source] = true
+			}
+			if len(snapshot.Candidates) > before || snapshot.Exhausted[source] {
+				break
+			}
+			page++
+		}
+	}
+	return nil
+}
+
+func (s *BatchService) saveSnapshot(ctx context.Context, batchID, requestKey string, snapshot batchSnapshot) error {
+	if s.snapshots == nil {
+		return ErrUnavailable
+	}
+	payload, err := json.Marshal(snapshot)
+	if err != nil {
+		return err
+	}
+	return s.snapshots.PutDiscoveryBatch(ctx, batchID, requestKey, payload, s.clock().Add(24*time.Hour).UnixMilli())
+}
+
+func (s *BatchService) filterTopicCandidates(ctx context.Context, request BatchRequest, candidates []batchCandidate) []batchCandidate {
+	if request.Topic == "" {
+		return candidates
+	}
+	terms := []string{strings.TrimSpace(request.Topic)}
+	if s.topics != nil {
+		if rules, topicErr := s.topics(ctx); topicErr == nil {
+			for _, rule := range rules {
+				if rule.ID == request.Topic || strings.EqualFold(rule.Name, request.Topic) {
+					terms = rule.Keywords
+					break
+				}
+			}
+		}
+	}
+	lowerTerms := make([]string, 0, len(terms))
+	for _, term := range terms {
+		if term = strings.TrimSpace(term); term != "" {
+			lowerTerms = append(lowerTerms, strings.ToLower(term))
+		}
+	}
+	return filterCandidates(candidates, func(value batchCandidate) bool {
+		text := strings.ToLower(strings.Join([]string{value.Item.Title, value.Item.Author, value.Item.Description, value.Item.PreviewText}, " "))
+		for _, term := range lowerTerms {
+			if strings.Contains(text, term) {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+func allSourcesExhausted(snapshot batchSnapshot) bool {
+	if len(snapshot.Exhausted) == 0 {
+		return true
+	}
+	for _, exhausted := range snapshot.Exhausted {
+		if !exhausted {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *BatchService) page(request BatchRequest, requestKey string, cursor batchCursor, snapshot batchSnapshot) BatchResponse {
@@ -275,11 +394,11 @@ func (s *BatchService) page(request BatchRequest, requestKey string, cursor batc
 		carriedOver := contains(request.UnreadIDs, value.Item.ID)
 		items = append(items, BatchItem{Item: value.Item, Source: value.Source, Reason: reason, CarriedOver: carriedOver})
 	}
-	response := BatchResponse{BatchID: cursor.BatchID, Items: items, Reason: batchReason(request), HasNextBatch: end < len(snapshot.Candidates), SourceStatus: snapshot.Status}
+	response := BatchResponse{BatchID: cursor.BatchID, Items: items, Reason: batchReason(request), HasNextBatch: end < len(snapshot.Candidates) || !allSourcesExhausted(snapshot), SourceStatus: snapshot.Status}
 	if response.HasNextBatch {
 		response.NextCursor = encodeBatchCursor(batchCursor{BatchID: cursor.BatchID, Offset: end, Key: requestKey})
 	} else {
-		response.EndReason = "本轮已结束"
+		response.EndReason = "暂时没有更多了"
 	}
 	return response
 }
@@ -406,7 +525,7 @@ func parseBatchCursor(raw string) (batchCursor, error) {
 	}
 	decoded, err := base64.RawURLEncoding.DecodeString(raw)
 	var cursor batchCursor
-	if err != nil || json.Unmarshal(decoded, &cursor) != nil || cursor.BatchID == "" || cursor.Offset < 0 || cursor.Offset > 10000 || cursor.Key == "" {
+	if err != nil || json.Unmarshal(decoded, &cursor) != nil || cursor.BatchID == "" || cursor.Offset < 0 || cursor.Key == "" {
 		return batchCursor{}, ErrInvalidBatch
 	}
 	return cursor, nil

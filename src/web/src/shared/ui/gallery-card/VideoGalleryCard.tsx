@@ -20,7 +20,7 @@ export function VideoGalleryCard({ item, origin, saved, pending, onRead, onSave,
   const actions = <VideoCardActions item={item} saved={saved} pending={pending} onSave={onSave} onDownload={onDownload} />
 
   return (
-    <GalleryCardFrame item={item} origin={origin} className="card-video" onRead={onRead} status={status} dataPlatform>
+    <GalleryCardFrame item={item} origin={origin} className="card-video" onRead={onRead} status={status} dataPlatform discovery={discovery}>
       <div
         className="modern-card-thumbnail"
         onPointerEnter={event => {
