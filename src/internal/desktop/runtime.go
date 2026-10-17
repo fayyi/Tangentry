@@ -84,7 +84,18 @@ func linkRuntime(runtimeDir, dataDir string) (string, error) {
 		}
 		return "", err
 	}
+	// Windows cannot rename over an existing directory symlink, so a second
+	// launch would fail here; drop the old link first (removing it leaves the
+	// target untouched).
+	if runtime.GOOS == "windows" {
+		if err := os.Remove(link); err != nil && !os.IsNotExist(err) {
+			return runtimeDir, nil
+		}
+	}
 	if err := os.Rename(staged, link); err != nil {
+		if runtime.GOOS == "windows" {
+			return runtimeDir, nil
+		}
 		return "", err
 	}
 	return link, nil
