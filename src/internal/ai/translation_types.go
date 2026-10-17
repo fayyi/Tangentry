@@ -24,6 +24,26 @@ type Translator interface {
 	Translate(context.Context, Config, []Segment) ([]Segment, error)
 }
 
+type ChatMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+type ChatRequest struct {
+	ContentID string        `json:"contentId"`
+	Context   string        `json:"context"`
+	Messages  []ChatMessage `json:"messages"`
+	Revision  int64         `json:"revision"`
+	Clear     bool          `json:"clear,omitempty"`
+}
+type ChatResult struct {
+	ContentID string        `json:"contentId"`
+	Messages  []ChatMessage `json:"messages"`
+	UpdatedAt int64         `json:"updatedAt"`
+}
+type Chatter interface {
+	Chat(context.Context, Config, string, []ChatMessage) (string, error)
+}
+
 type Input struct {
 	Source    string          `json:"source,omitempty"`
 	ContentID string          `json:"contentId"`
@@ -51,15 +71,24 @@ type Inspection struct {
 }
 
 type Service struct {
-	mu           sync.Mutex
-	config       Config
-	settingsPath string
-	results      ResultStore
-	summaries    *summaryStore
-	provider     Translator
-	summarizer   Summarizer
-	active       string
-	cancel       context.CancelFunc
-	closed       bool
-	wait         sync.WaitGroup
+	mu              sync.Mutex
+	config          Config
+	settingsPath    string
+	results         ResultStore
+	summaries       *summaryStore
+	provider        Translator
+	summarizer      Summarizer
+	active          string
+	cancel          context.CancelFunc
+	closed          bool
+	wait            sync.WaitGroup
+	saveSummaryNote func(context.Context, SummaryResult) error
+}
+
+// SetSummaryNoteWriter connects the optional notes use case at the composition root.
+// AI remains usable without notes storage in focused tests and minimal servers.
+func (s *Service) SetSummaryNoteWriter(writer func(context.Context, SummaryResult) error) {
+	s.mu.Lock()
+	s.saveSummaryNote = writer
+	s.mu.Unlock()
 }

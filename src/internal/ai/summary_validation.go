@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"math"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -70,12 +71,31 @@ func contentIDValid(id string) bool {
 
 // summaryKey identifies the summarized text and its timing, which citations
 // carry, independent of content, provider and model.
-func summaryKey(in SummaryInput, segments []SummarySegment) string {
+func summaryKey(in SummaryInput, segments []SummarySegment, prompts ...string) string {
+	prompt := defaultSummaryPrompt
+	budget := 28000
+	if len(prompts) > 0 && strings.TrimSpace(prompts[0]) != "" {
+		prompt = strings.TrimSpace(prompts[0])
+	}
+	if len(prompts) > 1 {
+		if value, err := strconv.Atoi(prompts[1]); err == nil {
+			budget = value
+		}
+	}
 	return hashSource(struct {
 		Version  int
 		Source   string
 		Segments []SummarySegment
-	}{summaryPromptVersion, in.Source, segments})
+		Prompt   string
+		Budget   int
+	}{summaryPromptVersion, in.Source, segments, prompt, budget})
+}
+
+func summaryBudgetKey(budget int) string {
+	if budget <= 0 {
+		return ""
+	}
+	return strconv.Itoa(summaryContextBudget(budget))
 }
 
 // Earlier file caches were keyed by these identities.
@@ -104,11 +124,22 @@ type legacySummaryInput struct {
 	Revision  int64            `json:"revision"`
 }
 
-func summaryPlan(segments []SummarySegment) ([][]SummarySegment, int) {
+func summaryPlan(segments []SummarySegment, budgets ...int) ([][]SummarySegment, int) {
+	leafBytes := summaryLeafBytes
+	if len(budgets) > 0 && budgets[0] > 0 {
+		leafBytes = budgets[0]
+	}
 	groups := make([][]SummarySegment, 0)
+	totalBytes := 0
+	for _, segment := range segments {
+		totalBytes += len(segment.Text)
+	}
+	if totalBytes <= leafBytes && len(segments) <= summaryLeafCount {
+		return [][]SummarySegment{append([]SummarySegment(nil), segments...)}, 1
+	}
 	for start := 0; start < len(segments); {
 		end, bytes := start, 0
-		for end < len(segments) && end-start < summaryLeafCount && (end == start || bytes+len(segments[end].Text) <= summaryLeafBytes) {
+		for end < len(segments) && end-start < summaryLeafCount && (end == start || bytes+len(segments[end].Text) <= leafBytes) {
 			bytes += len(segments[end].Text)
 			end++
 		}
@@ -136,6 +167,34 @@ func validateDraft(draft SummaryDraft, allowed map[int]bool) bool {
 				return false
 			}
 			seen[index] = true
+		}
+	}
+	if !validateOutline(draft.Outline, allowed, 0) {
+		return false
+	}
+	return true
+}
+
+func validateOutline(nodes []SummaryOutline, allowed map[int]bool, parent int) bool {
+	if len(nodes) > 128 {
+		return false
+	}
+	for _, node := range nodes {
+		if !utf8.ValidString(node.Title) || strings.TrimSpace(node.Title) == "" || len(node.Title) > 400 || node.Level < 0 || node.Level > 8 || node.Level < parent || len(node.Indices) > summaryPointIndexLimit {
+			return false
+		}
+		if parent == 0 && node.Level != 0 {
+			return false
+		}
+		seen := map[int]bool{}
+		for _, index := range node.Indices {
+			if !allowed[index] || seen[index] {
+				return false
+			}
+			seen[index] = true
+		}
+		if !validateOutline(node.Children, allowed, node.Level+1) {
+			return false
 		}
 	}
 	return true
@@ -169,7 +228,7 @@ func validCachedSummary(result SummaryResult, segments []SummarySegment) bool {
 	for _, segment := range segments {
 		allowed[segment.Index] = true
 	}
-	draft := SummaryDraft{Overview: result.Overview, Points: result.Points}
+	draft := SummaryDraft{Overview: result.Overview, Points: result.Points, Outline: result.Outline}
 	if result.CompletedCalls != result.TotalCalls || !validateDraft(draft, allowed) {
 		return false
 	}

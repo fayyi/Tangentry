@@ -12,6 +12,8 @@ const summaryLeafCount = 24
 const summaryReduceCount = 6
 const summaryPointIndexLimit = 64
 
+const defaultSummaryPrompt = "请用简体中文总结提供的内容，同时输出一句话总结、关键要点和层级大纲。大纲保留原文段落锚点；有时间戳时请关联时间戳。只引用输入中的索引，不要编造事实。"
+
 // These small proxies keep package-level tests focused on summary behavior
 // while the storage boundary remains isolated from the generation workflow.
 func (s *Service) summaryRead(ctx context.Context, key string) (summaryCache, error) {
@@ -35,8 +37,8 @@ func (s *Service) SummaryInspect(ctx context.Context, in SummaryInput) (SummaryI
 	status := s.publicStatus(c)
 	c = summaryConfig(c)
 	s.mu.Unlock()
-	key := summaryKey(in, segments)
-	_, calls := summaryPlan(segments)
+	key := summaryKey(in, segments, c.SummaryPrompt, summaryBudgetKey(c.SummaryContextBudget))
+	_, calls := summaryPlan(segments, summaryContextBudget(c.SummaryContextBudget))
 	cache, err := s.summaryLoad(ctx, key, in, segments, c)
 	if errors.Is(err, ErrNotFound) {
 		cache.Result = SummaryResult{Key: key, ContentID: in.ContentID, Source: in.Source, BaseURL: c.BaseURL, Model: c.Model, TotalCalls: calls}

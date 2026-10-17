@@ -17,6 +17,8 @@ type AIService interface {
 	SummaryInspect(context.Context, ai.SummaryInput) (ai.SummaryInspection, error)
 	SummaryGenerate(context.Context, ai.SummaryInput) (ai.SummaryResult, error)
 	SummaryCached(context.Context, string) (ai.SummaryResult, error)
+	Chat(context.Context, ai.ChatRequest) (ai.ChatResult, error)
+	ChatHistory(context.Context, string) (ai.ChatResult, error)
 }
 
 type TranscriptionService interface {

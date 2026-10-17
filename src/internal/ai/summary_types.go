@@ -30,8 +30,19 @@ type SummaryPoint struct {
 }
 
 type SummaryDraft struct {
-	Overview string         `json:"overview"`
-	Points   []SummaryPoint `json:"points"`
+	Overview string           `json:"overview"`
+	Points   []SummaryPoint   `json:"points"`
+	Outline  []SummaryOutline `json:"outline,omitempty"`
+}
+
+type SummaryOutline struct {
+	Title    string           `json:"title"`
+	Level    int              `json:"level"`
+	Indices  []int            `json:"indices,omitempty"`
+	Start    float64          `json:"start,omitempty"`
+	End      float64          `json:"end,omitempty"`
+	Anchor   string           `json:"anchor,omitempty"`
+	Children []SummaryOutline `json:"children,omitempty"`
 }
 
 type SummaryCitation struct {
@@ -69,6 +80,7 @@ type SummaryResult struct {
 	Overview       string            `json:"overview,omitempty"`
 	Points         []SummaryPoint    `json:"points,omitempty"`
 	Citations      []SummaryCitation `json:"citations,omitempty"`
+	Outline        []SummaryOutline  `json:"outline,omitempty"`
 	UpdatedAt      int64             `json:"updatedAt"`
 }
 
@@ -80,6 +92,7 @@ type SummaryInspection struct {
 
 type SummaryRequest struct {
 	Mode     string
+	Prompt   string
 	Segments []SummarySegment
 	Drafts   []SummaryDraft
 }

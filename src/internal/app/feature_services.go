@@ -1,6 +1,11 @@
 package app
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"strings"
 	articleadapter "tangentry/internal/adapters/articles"
 	"tangentry/internal/ai"
 	"tangentry/internal/articles"
@@ -90,8 +95,33 @@ func wireFeatures(dataDir string, configuration config.Config, option Options, r
 	}
 	favorites := favoritesync.New(store, favoriteRemote, processing)
 	started.add(favorites.Close)
+	noteService := notes.NewService(store)
 	languageAI := newLanguageAI(dataDir, store, option)
 	if languageAI != nil {
+		languageAI.SetSummaryNoteWriter(func(ctx context.Context, result ai.SummaryResult) error {
+			body := fmt.Sprintf("# AI 摘要\n\n%s\n\n## 要点\n\n%s", result.Overview, strings.Join(summaryNotePoints(result.Points), "\n"))
+			if len(result.Outline) > 0 {
+				body += "\n\n## 大纲\n\n" + strings.Join(summaryNoteOutline(result.Outline, 0), "\n")
+			}
+			createID := summaryNoteID(result.ContentID)
+			saved, err := noteService.Create(ctx, notes.Input{CreateID: createID, ContentID: result.ContentID, Body: body, Tags: []string{"AI摘要"}})
+			if err == nil || err == notes.ErrCreationConflict {
+				if err == nil && saved.Body == body {
+					return nil
+				}
+				items, listErr := noteService.List(ctx, result.ContentID)
+				if listErr != nil {
+					return listErr
+				}
+				for _, note := range items {
+					if note.ID == createID || containsTag(note.Tags, "AI摘要") {
+						_, editErr := noteService.Edit(ctx, note.ID, notes.Edit{Body: body, Tags: &[]string{"AI摘要"}, ExpectedUpdatedAt: &note.UpdatedAt})
+						return editErr
+					}
+				}
+			}
+			return err
+		})
 		started.add(languageAI.Close)
 	}
 	compatibility := newCompatibility(p)
@@ -106,12 +136,42 @@ func wireFeatures(dataDir string, configuration config.Config, option Options, r
 		api: apiServices{
 			ai: languageAI, compatibility: compatibility, favorites: favorites,
 			groupService: subscriptions.NewGroupService(store), inbox: inboxService,
-			notes: notes.NewService(store), noteFrames: notes.NewFrames(store, processing.NoteFrameFile, toolkit.CaptureNoteFrame),
+			notes: noteService, noteFrames: notes.NewFrames(store, processing.NoteFrameFile, toolkit.CaptureNoteFrame),
 			noteExports: notes.NewExporter(store), playback: playback.New(resolvePlayback, p.network.public),
 			progress: readingprogress.NewService(store), readState: readstate.New(store), history: history.New(store),
 			preferences: discovery.NewPreferences(store), savedSubtitles: savedCaptions, subtitles: captions,
 		},
 	}, nil
+}
+
+func summaryNoteID(contentID string) string {
+	sum := sha256.Sum256([]byte("ai-summary-note:" + contentID))
+	return hex.EncodeToString(sum[:16])
+}
+func containsTag(tags []string, target string) bool {
+	for _, tag := range tags {
+		if tag == target {
+			return true
+		}
+	}
+	return false
+}
+
+func summaryNotePoints(points []ai.SummaryPoint) []string {
+	result := make([]string, 0, len(points))
+	for index, point := range points {
+		result = append(result, fmt.Sprintf("%d. %s", index+1, point.Text))
+	}
+	return result
+}
+
+func summaryNoteOutline(nodes []ai.SummaryOutline, depth int) []string {
+	result := make([]string, 0)
+	for _, node := range nodes {
+		result = append(result, strings.Repeat("  ", depth)+"- "+node.Title)
+		result = append(result, summaryNoteOutline(node.Children, depth+1)...)
+	}
+	return result
 }
 
 // startBackgroundServices starts only work that must outlive the constructor.

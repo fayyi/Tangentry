@@ -8,6 +8,7 @@ import { useSummary } from '../ai/useSummary'
 import { SummaryControl } from '../ai/SummaryControl'
 import { cardDescription } from '../../shared/ui/cardDescription'
 import { articleSource, rememberArticleSource } from './articleSource'
+import { ReaderActions } from '../../shared/reader/ReaderActions'
 
 export function FullTextArticle({ item, notes, focus, onQuote, onOpenNotes, onUnresolved, navigationTarget, onReturnedToReading }: {
   item: ContentItem; notes: ReadingNote[]; focus?: { id: string; token: number; allowReturn?: boolean } | null
@@ -127,7 +128,7 @@ export function FullTextArticle({ item, notes, focus, onQuote, onOpenNotes, onUn
       {known && !conflict && <button className="button button-secondary" disabled={Boolean(busy)} onClick={() => void fetchOriginal()}>{doc ? <RefreshCw size={14} aria-hidden="true"/> : <Download size={14} aria-hidden="true"/>}{doc ? '更新原站全文' : '获取原站全文'}</button>}
       {(!known || conflict) && !busy && <button className="button button-secondary" onClick={() => void read()}><RefreshCw size={14} aria-hidden="true"/>读取本机版本</button>}
       {busy === 'fetch' && <button className="button button-secondary" onClick={cancel}><X size={14} aria-hidden="true"/>取消获取</button>}
-      {summaryText && <SummaryControl summary={summary} source={{ contentId: item.id, title: item.title, url: source === 'original' && doc ? doc.sourceUrl : item.url }} onLocateQuote={quote => article.current ? article.current.locateQuote(quote) : '原文还未就绪，请稍后重试。'} />}
+      {summaryText && <ReaderActions><SummaryControl summary={summary} source={{ contentId: item.id, title: item.title, url: source === 'original' && doc ? doc.sourceUrl : item.url }} onLocateQuote={quote => article.current ? article.current.locateQuote(quote) : '原文还未就绪，请稍后重试。'} /></ReaderActions>}
     </div>
     {busy && <p className="fulltext-status" role="status">{busy === 'read' ? '正在读取本机全文…' : '正在获取原站正文…'}</p>}
     {error && <p className="fulltext-status" role="alert">{error}</p>}

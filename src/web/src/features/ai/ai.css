@@ -55,6 +55,28 @@
 .ai-summary-quote-link:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; border-radius: 2px; }
 @media (max-width: 760px) { .ai-summary-control { order: 3; }.ai-summary-popover { position: fixed; top: 76px; right: 16px; left: 16px; width: auto; max-height: calc(100dvh - 110px); } .ai-inline-trigger { min-height: 40px; } }
 @media (prefers-reduced-motion: reduce) { .ai-summary-popover { scroll-behavior: auto; } }
+
+.ai-insights { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 12px; }
+.ai-insights-tabs { display: flex; gap: 4px; margin-bottom: 10px; }
+.ai-insights-tabs button { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 8px; color: var(--muted); border-bottom: 2px solid transparent; }
+.ai-insights-tabs button[aria-selected='true'] { color: var(--ink); border-color: var(--ink); }
+.ai-insight-empty { color: var(--muted); font-size: 12px; line-height: 1.6; }
+.ai-outline-tree, .ai-outline-tree ul { list-style: none; margin: 0; padding: 0; }
+.ai-outline-node { margin: 2px 0; }
+.ai-outline-row { display: flex; align-items: center; gap: 4px; }
+.ai-outline-toggle { display: flex; align-items: center; width: 100%; gap: 5px; padding: 5px 4px; text-align: left; color: var(--ink); font-size: 12px; }
+.ai-outline-dot { width: 14px; height: 1px; display: inline-block; background: var(--control-line); }
+.ai-outline-time { margin-left: auto; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; padding: 4px; }
+.ai-chat-panel { display: grid; gap: 8px; }
+.ai-chat-actions { display: flex; justify-content: flex-end; }
+.ai-chat-messages { display: grid; gap: 8px; max-height: 360px; overflow: auto; }
+.ai-chat-message { padding: 8px 10px; border-left: 2px solid var(--control-line); font-size: 12px; line-height: 1.6; }
+.ai-chat-user { border-color: var(--ink); }
+.ai-chat-message strong { font-size: 11px; color: var(--muted); }
+.ai-chat-message p { margin: 2px 0 0; white-space: pre-wrap; }
+.ai-chat-composer { display: flex; align-items: flex-end; gap: 6px; }
+.ai-chat-composer textarea { flex: 1; min-height: 48px; resize: vertical; }
+.ai-chat-pending { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 12px; }
 .fulltext-ai { display: flex; justify-content: flex-end; margin: 8px 0 4px; }
 .text-translation-control { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 12px; margin-block: 4px; }
 .text-translation-control .text-button { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; }
