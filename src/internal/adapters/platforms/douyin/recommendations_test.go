@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"tangentry/internal/discovery"
+	"tangentry/internal/platformfetch"
 	"testing"
 )
 
@@ -91,4 +92,32 @@ func TestRecommendationNestedPayloadAndAuthorAvatar(t *testing.T) {
 	if err != nil || len(feed.Items) != 1 || feed.Items[0].LikeCount != 12 || feed.Items[0].AuthorAvatarURL == "" {
 		t.Fatalf("nested response not mapped: %+v %v", feed, err)
 	}
+}
+
+func TestRecommendationUsesPageBridgeBeforeCookieFallback(t *testing.T) {
+	calls := 0
+	c := &Client{
+		Page: pageFetcherFunc(func(_ context.Context, platform, path string, request platformfetch.Request) (platformfetch.Response, error) {
+			calls++
+			if platform != "douyin" || !strings.HasPrefix(path, "/aweme/v2/web/module/feed/?") || request.Method != http.MethodPost || request.Body != "encoded_pre_item_ids=" {
+				t.Fatalf("unexpected page request: %s %s %+v", platform, path, request)
+			}
+			return platformfetch.Response{Status: http.StatusOK, Body: `{"status_code":0,"has_more":0,"aweme_list":[{"aweme_id":"6961737553342991651","desc":"页面推荐","video":{"duration":1000}}]}`}, nil
+		}),
+		Cookie: func(string) string { return "sessionid=fallback" },
+		HTTP: &http.Client{Transport: trip(func(*http.Request) (*http.Response, error) {
+			t.Fatal("HTTP fallback used despite page bridge")
+			return nil, nil
+		})},
+	}
+	feed, err := c.Recommendations(context.Background(), 1)
+	if err != nil || calls != 1 || len(feed.Items) != 1 {
+		t.Fatalf("page bridge recommendation failed: %+v calls=%d err=%v", feed, calls, err)
+	}
+}
+
+type pageFetcherFunc func(context.Context, string, string, platformfetch.Request) (platformfetch.Response, error)
+
+func (f pageFetcherFunc) Fetch(ctx context.Context, platform, path string, request platformfetch.Request) (platformfetch.Response, error) {
+	return f(ctx, platform, path, request)
 }

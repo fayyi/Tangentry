@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"tangentry/internal/discovery"
+	"tangentry/internal/platformfetch"
 	"time"
 )
 
@@ -14,6 +15,7 @@ type Client struct {
 	HTTP      *http.Client
 	Cookie    func(string) string
 	UserAgent func(string) string
+	Page      platformfetch.Fetcher
 }
 
 func (c *Client) Resolve(ctx context.Context, raw string) (discovery.DouyinReference, error) {

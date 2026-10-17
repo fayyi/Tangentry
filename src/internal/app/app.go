@@ -15,6 +15,7 @@ import (
 	"tangentry/internal/discovery"
 	"tangentry/internal/downloads"
 	"tangentry/internal/favoritesync"
+	"tangentry/internal/platformfetch"
 	"tangentry/internal/playback"
 	"tangentry/internal/transcription"
 )
@@ -24,6 +25,13 @@ type Application struct {
 	shell         *shellState
 	subscriptions subscriptionManager
 }
+
+// PlatformPageFetcher is the native-shell port for same-origin requests in a
+// platform WebView. The underlying interface lives in the dependency-neutral
+// platformfetch package so adapters can consume it without importing app.
+type PlatformPageFetcher = platformfetch.Fetcher
+type PlatformPageRequest = platformfetch.Request
+type PlatformPageResponse = platformfetch.Response
 
 // Options replaces external platform I/O. Test fixtures are outside product code.
 type Options struct {
@@ -36,6 +44,10 @@ type Options struct {
 	Recommendations     func(context.Context, string) (discovery.Feed, error)
 	Platform            discovery.Provider
 	PublicHTTP          *http.Client
+	// PlatformPageFetcher lets a native shell execute same-origin requests in
+	// the platform's authenticated WebView. A nil value keeps headless/server
+	// builds on their existing HTTP clients.
+	PlatformPageFetcher platformfetch.Fetcher
 	// CredentialKey is supplied by a native shell from its system credential
 	// store. A nil key keeps headless/server storage compatible with older data.
 	CredentialKey []byte

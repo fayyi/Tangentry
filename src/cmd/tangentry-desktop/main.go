@@ -50,7 +50,9 @@ func run() (runErr error) {
 	if err != nil {
 		return err
 	}
-	application, err := app.New(dataDir, web.Assets(), app.Options{CredentialKey: credentialKey})
+	platformPages := newPlatformPageBridge()
+	defer platformPages.Close()
+	application, err := app.New(dataDir, web.Assets(), app.Options{CredentialKey: credentialKey, PlatformPageFetcher: platformPages})
 	if err != nil {
 		return err
 	}
@@ -72,7 +74,7 @@ func run() (runErr error) {
 	if err != nil {
 		return err
 	}
-	openWindow := newDesktopWindows(address).Open
+	openWindow := newDesktopWindows(address, platformPages.Close).Open
 	activity.ObserveJobs(startJobActivity(openWindow).Observe)
 	registerDesktopLifecycle(openWindow)
 	mygo.App.WhenReady(openWindow)
