@@ -14,6 +14,8 @@ import { SourceText } from './SourceText'
 import { ArticleImage } from './ArticleImage'
 import { ReaderActions } from '../../shared/reader/ReaderActions'
 import { shouldRenderInlineSummary } from '../ai/summaryPresentation'
+import MarkdownRenderer from '../notes/MarkdownRenderer'
+import { isLikelyMarkdown, markdownToPlainText } from './markdownContent'
 
 export interface ArticleReaderHandle { locateQuote: (quote: string) => string | null }
 
@@ -40,28 +42,30 @@ export function ArticleReader({ ref: externalRef, contentId = '', text, blocks, 
   const [citation, setCitation] = useState<{ text: string; start: number; end: number } | null>(null)
   const [textExpanded, setTextExpanded] = useState(false)
   const [textOverflow, setTextOverflow] = useState(false)
-  const citationRange = citation?.text === text ? citation : null
-  const sourceHash = hashed.text === text ? hashed.hash : ''
+  const markdown = !blocks && isLikelyMarkdown(text)
+  const annotationText = markdown ? markdownToPlainText(text) : text
+  const citationRange = citation?.text === annotationText ? citation : null
+  const sourceHash = hashed.text === annotationText ? hashed.hash : ''
   const identity = contentId + ':' + sourceHash
   const returnAvailable = returnPoint?.identity === identity
-  const readingPosition = useArticlePosition(root, contentId, sourceHash, text.length, focus?.token)
+  const readingPosition = useArticlePosition(root, contentId, sourceHash, annotationText.length, focus?.token)
   const paragraphs = useMemo(() => {
     if (blocks) return blocks.map(block => block.kind === 'code' || block.kind === 'image' ? null : block.text ?? '')
-    return text.split(/(\n\n+)/).filter((_, index) => index % 2 === 0)
-  }, [blocks, text])
+    return annotationText.split(/(\n\n+)/).filter((_, index) => index % 2 === 0)
+  }, [blocks, annotationText])
   const blockOffsets = useMemo(() => {
     if (!blocks) return []
     let cursor = 0
     return blocks.map(block => {
       if (block.kind === 'image') return { start: cursor, end: cursor }
       const value = block.text ?? ''
-      const found = text.indexOf(value, cursor)
+      const found = annotationText.indexOf(value, cursor)
       const start = found < 0 ? cursor : found
-      const end = Math.min(text.length, start + value.length)
+      const end = Math.min(annotationText.length, start + value.length)
       cursor = end
       return { start, end }
     })
-  }, [blocks, text])
+  }, [blocks, annotationText])
   const { pieces, ranges } = useMemo(() => articleTranslationParts(paragraphs), [paragraphs])
   const translation = useTextTranslation(contentId, pieces, 'article')
   const summary = useSummary(contentId, summarySource ?? '', undefined, undefined, contentId && summarySource ? text : undefined)
@@ -82,38 +86,65 @@ export function ArticleReader({ ref: externalRef, contentId = '', text, blocks, 
     setSelection(null)
     setReturnPoint(null)
     setCitation(null)
-    void hashArticle(text).then(hash => { if (current) setHashed({ text, hash }) }).catch(() => { if (current) setHashed({ text, hash: '' }) })
+    void hashArticle(annotationText).then(hash => { if (current) setHashed({ text: annotationText, hash }) }).catch(() => { if (current) setHashed({ text: annotationText, hash: '' }) })
     return () => { current = false }
-  }, [text])
-  const resolved = useMemo(() => notes.filter(note => note.textAnchor).map(note => ({ id: note.id, range: resolveTextAnchor(text, sourceHash, note.textAnchor!) })), [notes, text, sourceHash])
-  const segments = useMemo(() => highlightSegments(text, resolved.flatMap(value => value.range ? [{ id: value.id, ...value.range }] : []), citationRange ? [citationRange.start, citationRange.end] : []), [text, resolved, citationRange])
+  }, [annotationText])
+  const resolved = useMemo(() => notes.filter(note => note.textAnchor).map(note => ({ id: note.id, range: resolveTextAnchor(annotationText, sourceHash, note.textAnchor!) })), [notes, annotationText, sourceHash])
+  const segments = useMemo(() => highlightSegments(annotationText, resolved.flatMap(value => value.range ? [{ id: value.id, ...value.range }] : []), citationRange ? [citationRange.start, citationRange.end] : []), [annotationText, resolved, citationRange])
   const locateQuote = (quote: string): string | null => {
     if (!sourceHash || !root.current) return '原文还未就绪，请稍后重试。'
     if (!quote.trim()) return '摘要引用没有可定位的原文。'
-    const start = text.indexOf(quote)
+    const candidate = annotationText.indexOf(quote) >= 0 ? quote : markdown ? markdownToPlainText(quote) : quote
+    const start = annotationText.indexOf(candidate)
     if (start < 0) return '当前原文中未找到这段引用，请核对摘要与正文来源。'
-    if (text.indexOf(quote, start + 1) >= 0) return '原文中有多处相同引用，暂时无法确定位置。'
+    if (annotationText.indexOf(candidate, start + 1) >= 0) return '原文中有多处相同引用，暂时无法确定位置。'
     const point = readingPosition.capture()
     if (point) setReturnPoint(current => current?.identity === identity ? current : { identity, ...point })
     readingPosition.pause()
     setTextExpanded(true)
-    setCitation({ text, start, end: start + quote.length })
+    setCitation({ text: annotationText, start, end: start + candidate.length })
     return null
   }
   useImperativeHandle(externalRef, () => ({ locateQuote }))
   useEffect(() => {
     if (!citationRange || !sourceHash) return
-    const node = root.current?.querySelector<HTMLElement>('[data-summary-citation="true"]')
-    if (!node) return
     readingPosition.pause()
-    node.focus({ preventScroll: true })
-    node.scrollIntoView({ block: 'center', behavior: 'instant' })
+    const node = root.current?.querySelector<HTMLElement>('[data-summary-citation="true"]')
+    if (node) {
+      node.focus({ preventScroll: true })
+      node.scrollIntoView({ block: 'center', behavior: 'instant' })
+      return
+    }
+    // Markdown is rendered by react-markdown rather than the offset-aware text
+    // renderer. Locate the same visible quote as a fallback for scrolling.
+    const walker = root.current && document.createTreeWalker(root.current, NodeFilter.SHOW_TEXT)
+    while (walker) {
+      const current = walker.nextNode()
+      if (!current) break
+      if (current.textContent?.includes(citationRange.text.slice(citationRange.start, citationRange.end))) {
+        const parent = current.parentElement
+        parent?.scrollIntoView({ block: 'center', behavior: 'instant' })
+        break
+      }
+    }
   }, [citationRange, sourceHash])
   useEffect(() => { if (sourceHash) onUnresolved?.(resolved.filter(value => !value.range).map(value => value.id)) }, [sourceHash, resolved, onUnresolved])
   useEffect(() => {
     if (!focus || !sourceHash || handledFocus.current?.id === focus.id && handledFocus.current.token === focus.token) return
     if (collapsible && !textExpanded) { setTextExpanded(true); return }
-    const node = root.current?.querySelector<HTMLElement>(`[data-note-ids~="${focus.id}"]`)
+    let node = root.current?.querySelector<HTMLElement>(`[data-note-ids~="${focus.id}"]`)
+    if (!node) {
+      const quote = notes.find(note => note.id === focus.id)?.textAnchor?.quote
+      if (quote && root.current) {
+        const walker = document.createTreeWalker(root.current, NodeFilter.SHOW_TEXT)
+        while (walker.nextNode()) {
+          if (walker.currentNode.textContent?.includes(quote)) {
+            node = walker.currentNode.parentElement
+            break
+          }
+        }
+      }
+    }
     if (!node) return
     handledFocus.current = focus
     if (focus.allowReturn !== false && focus.token !== initialFocus.current) {
@@ -136,12 +167,12 @@ export function ArticleReader({ ref: externalRef, contentId = '', text, blocks, 
     onReturnedToReading?.()
   }
   const returnControls = <><button type="button" onClick={returnToReading}><ArrowLeft size={15} aria-hidden="true"/>返回阅读位置</button><button type="button" aria-label="关闭阅读返回" title="关闭阅读返回" onClick={() => { setReturnPoint(null); setCitation(null); root.current?.focus({ preventScroll: true }) }}><X size={15} aria-hidden="true"/></button></>
-  const capture = () => { if (root.current) setSelection(anchorSelection(root.current, text, sourceHash)) }
+  const capture = () => { if (root.current) setSelection(anchorSelection(root.current, annotationText, sourceHash)) }
   useEffect(() => {
     // selectionchange also covers touch selection handles and keyboard selection.
     document.addEventListener('selectionchange', capture)
     return () => document.removeEventListener('selectionchange', capture)
-  }, [text, sourceHash])
+  }, [annotationText, sourceHash])
   const open = (ids: string[]) => { if (!window.getSelection()?.isCollapsed) return; onOpenNotes?.(ids) }
   // Separators between structured blocks are whitespace; they keep their offsets
   // for selection mapping but never become a highlight of their own.
@@ -161,8 +192,8 @@ export function ArticleReader({ ref: externalRef, contentId = '', text, blocks, 
       if (collapsible && !textExpanded) { setTextExpanded(true); requestAnimationFrame(readingPosition.restore) }
       else readingPosition.restore()
     }} title="回到上次阅读的原文段落"><BookOpen size={14} aria-hidden="true"/>继续阅读</button>}</div>
-    <ArticleReflowGuard root={root} contentId={contentId} text={text} layout={translation.show ? translation.inspection?.result.texts : undefined} focusToken={focus?.token} beforeReflow={readingPosition.pause}>
-    <div ref={root} tabIndex={-1} onFocusCapture={() => { if (collapsible) setTextExpanded(true) }} className={`article-text${blocks ? ' article-structured' : ''}${collapsible && !textExpanded ? ' article-text-collapsed' : ''}`} data-anchor-ready={Boolean(sourceHash)}>{blocks ? blocks.map((block, index) => {
+    <ArticleReflowGuard root={root} contentId={contentId} text={annotationText} layout={translation.show ? translation.inspection?.result.texts : undefined} focusToken={focus?.token} beforeReflow={readingPosition.pause}>
+    <div ref={root} tabIndex={-1} onFocusCapture={() => { if (collapsible) setTextExpanded(true) }} className={`article-text${blocks ? ' article-structured' : ''}${markdown ? ' article-markdown' : ''}${collapsible && !textExpanded ? ' article-text-collapsed' : ''}`} data-anchor-ready={Boolean(sourceHash)}>{markdown ? <MarkdownRenderer imageMode="inline" imageReferrer={sourceURL}>{text}</MarkdownRenderer> : blocks ? blocks.map((block, index) => {
       const text = block.text ?? ''
       const { start, end } = blockOffsets[index] ?? { start: offset, end: offset + text.length }
       if (block.kind === 'image') return <ArticleImage key={index} block={block} referrer={sourceURL}/>
@@ -170,7 +201,7 @@ export function ArticleReader({ ref: externalRef, contentId = '', text, blocks, 
       offset = end
       const Tag = block.kind === 'heading' ? (block.level === 4 ? 'h4' : block.level === 3 ? 'h3' : 'h2') : block.kind === 'code' ? 'pre' : block.kind === 'quote' ? 'blockquote' : 'p'
       return <Fragment key={index}>{separator}<Tag className={`article-block article-block-${block.kind}`}>{renderSegments(start, end, block.kind !== 'code')}</Tag>{translation.show && translatedParagraphs[index] && <p data-translation="true" className="article-translated" lang="zh-Hans">{translatedParagraphs[index]}</p>}</Fragment>
-    }).concat(renderSegments(offset, text.length, false, true)) : text.split(/(\n\n+)/).map((part, index) => {
+    }).concat(renderSegments(offset, annotationText.length, false, true)) : annotationText.split(/(\n\n+)/).map((part, index) => {
       const start = offset; offset += part.length
       return <Fragment key={index}>{renderSegments(start, offset)}{index % 2 === 0 && translation.show && translatedParagraphs[index / 2] && <p data-translation="true" className="article-translated" lang="zh-Hans">{translatedParagraphs[index / 2]}</p>}</Fragment>
     })}</div>

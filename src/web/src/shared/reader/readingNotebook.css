@@ -29,6 +29,9 @@
   max-width: none;
   align-items: start;
 }
+.immersive-reader .reading-columns.reading-notebook,
+.immersive-reader .reading-columns.reading-notebook > .reader-primary,
+.immersive-reader .reading-columns.reading-notebook > .reading-notes { min-width: 0; }
 .immersive-reader .article-workspace > .reading-columns.reading-notebook { display: grid; }
 .immersive-reader .reading-columns.reading-notebook:has(> .reading-ai) > .reading-ai { grid-column: 1; grid-row: 1; }
 .immersive-reader .reading-columns.reading-notebook:has(> .reading-ai) > .reader-primary { grid-column: 2; grid-row: 1; max-width: none; }

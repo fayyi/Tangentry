@@ -250,9 +250,12 @@ func (c *Client) Topic(ctx context.Context, id string) (content.Item, error) {
 		item.PublishedAt = date.Unix()
 	}
 	var body strings.Builder
+	blocks := make([]content.ArticleBlock, 0, 32)
+	hasImage := false
 	for _, post := range data.Stream.Posts {
 		text := feeds.Text(post.Body)
-		if text == "" {
+		cookedBlocks := feeds.ParseArticleBlocks(post.Body, item.URL)
+		if text == "" && len(cookedBlocks) == 0 {
 			continue
 		}
 		if post.Number == 1 {
@@ -266,8 +269,15 @@ func (c *Client) Topic(ctx context.Context, id string) (content.Item, error) {
 			body.WriteString("回复 ")
 			body.WriteString(post.Username)
 			body.WriteString("：")
+			blocks = append(blocks, content.ArticleBlock{Kind: "paragraph", Text: "回复 " + post.Username + "："})
 		}
 		body.WriteString(text)
+		for _, block := range cookedBlocks {
+			if block.Kind == "image" {
+				hasImage = true
+			}
+		}
+		blocks = append(blocks, cookedBlocks...)
 	}
 	item.Description = feeds.Text(body.String())
 	if data.ReplyCount > 0 {
@@ -275,8 +285,14 @@ func (c *Client) Topic(ctx context.Context, id string) (content.Item, error) {
 	} else if len(data.Stream.Posts) > 1 {
 		item.ReplyCount = len(data.Stream.Posts) - 1
 	}
-	if item.Description != "" {
-		item.ArticleBlocks = []content.ArticleBlock{{Kind: "paragraph", Text: item.Description}}
+	if item.Description != "" || len(blocks) > 0 {
+		if !hasImage {
+			blocks = []content.ArticleBlock{{Kind: "paragraph", Text: item.Description}}
+		}
+		item.ArticleBlocks = blocks
+		if len(item.ArticleBlocks) == 0 {
+			item.ArticleBlocks = []content.ArticleBlock{{Kind: "paragraph", Text: item.Description}}
+		}
 	}
 	if content.Validate(item) != nil {
 		return content.Item{}, discovery.ErrUnavailable
