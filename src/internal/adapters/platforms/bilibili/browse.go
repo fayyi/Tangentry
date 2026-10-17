@@ -205,6 +205,38 @@ func dynamicHasMore(raw json.RawMessage) bool {
 	return false
 }
 
+// flexCount accepts the dynamic feed's counters, which arrive as numbers in
+// some item types and as display strings such as "3.4万" in others.
+type flexCount int64
+
+func (f *flexCount) UnmarshalJSON(raw []byte) error {
+	var number float64
+	if json.Unmarshal(raw, &number) == nil {
+		*f = flexCount(number)
+		return nil
+	}
+	var text string
+	if json.Unmarshal(raw, &text) != nil {
+		*f = 0
+		return nil
+	}
+	text = strings.TrimSpace(text)
+	scale := 1.0
+	switch {
+	case strings.HasSuffix(text, "亿"):
+		scale, text = 1e8, strings.TrimSuffix(text, "亿")
+	case strings.HasSuffix(text, "万"):
+		scale, text = 1e4, strings.TrimSuffix(text, "万")
+	}
+	value, err := strconv.ParseFloat(text, 64)
+	if err != nil || value < 0 {
+		*f = 0
+		return nil
+	}
+	*f = flexCount(value * scale)
+	return nil
+}
+
 func dynamicVideo(raw json.RawMessage, depth int) (content.Item, bool) {
 	if depth > 2 {
 		return content.Item{}, false
@@ -218,10 +250,10 @@ func dynamicVideo(raw json.RawMessage, depth int) (content.Item, bool) {
 		UID       int64           `json:"uid"`
 		Published int64           `json:"pub_ts"`
 		Duration  string          `json:"duration_text"`
-		ViewCount int64           `json:"view_count"`
+		ViewCount flexCount       `json:"view_count"`
 		Stat      struct {
-			View int64 `json:"view"`
-			Play int64 `json:"play"`
+			View flexCount `json:"view"`
+			Play flexCount `json:"play"`
 		} `json:"stat"`
 		Author struct {
 			MID  int64  `json:"mid"`
@@ -239,15 +271,15 @@ func dynamicVideo(raw json.RawMessage, depth int) (content.Item, bool) {
 			Dynamic struct {
 				Major struct {
 					Archive struct {
-						BVID        string `json:"bvid"`
-						Title       string `json:"title"`
-						Cover       string `json:"cover"`
-						Description string `json:"desc"`
-						Duration    string `json:"duration_text"`
-						ViewCount   int64  `json:"view_count"`
+						BVID        string    `json:"bvid"`
+						Title       string    `json:"title"`
+						Cover       string    `json:"cover"`
+						Description string    `json:"desc"`
+						Duration    string    `json:"duration_text"`
+						ViewCount   flexCount `json:"view_count"`
 						Stat        struct {
-							View int64 `json:"view"`
-							Play int64 `json:"play"`
+							View flexCount `json:"view"`
+							Play flexCount `json:"play"`
 						} `json:"stat"`
 					} `json:"archive"`
 				} `json:"major"`
@@ -274,12 +306,12 @@ func dynamicVideo(raw json.RawMessage, depth int) (content.Item, bool) {
 			}
 		}
 		v.Title, v.Picture, v.Duration, v.Published = data.Title, data.Cover, duration(data.Duration), data.Published
-		v.ViewCount = data.ViewCount
+		v.ViewCount = int64(data.ViewCount)
 		if v.ViewCount == 0 {
-			v.ViewCount = data.Stat.View
+			v.ViewCount = int64(data.Stat.View)
 		}
 		if v.ViewCount == 0 {
-			v.ViewCount = data.Stat.Play
+			v.ViewCount = int64(data.Stat.Play)
 		}
 		v.Owner.MID, v.Owner.Name, v.Owner.Face = data.Author.MID, data.Author.Name, data.Author.Face
 		if v.Owner.MID <= 0 {
@@ -288,12 +320,12 @@ func dynamicVideo(raw json.RawMessage, depth int) (content.Item, bool) {
 	} else {
 		a := data.Modules.Dynamic.Major.Archive
 		v.BVID, v.Title, v.Picture, v.Description, v.Duration = a.BVID, a.Title, a.Cover, a.Description, duration(a.Duration)
-		v.ViewCount = a.ViewCount
+		v.ViewCount = int64(a.ViewCount)
 		if v.ViewCount == 0 {
-			v.ViewCount = a.Stat.View
+			v.ViewCount = int64(a.Stat.View)
 		}
 		if v.ViewCount == 0 {
-			v.ViewCount = a.Stat.Play
+			v.ViewCount = int64(a.Stat.Play)
 		}
 		v.Published = data.Modules.Author.Published
 		v.Owner.MID, v.Owner.Name, v.Owner.Face = data.Modules.Author.MID, data.Modules.Author.Name, data.Modules.Author.Face
