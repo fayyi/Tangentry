@@ -58,3 +58,17 @@ func TestReadUsesStoredBrowserUserAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestTopicNormalizesCookedImageURLs(t *testing.T) {
+	raw := `{"id":42,"title":"图片","post_stream":{"posts":[{"post_number":1,"username":"作者","cooked":"<p>正文</p><p><img class=\"lightbox\" data-src=\"//cdn.example.test/a.jpg\"><img src=\"upload://short-key\"></p>"}]}}`
+	c := &Client{HTTP: &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		return response(r, 200, raw), nil
+	})}}
+	item, err := c.Topic(context.Background(), "42")
+	if err != nil || len(item.ArticleBlocks) != 3 {
+		t.Fatalf("topic blocks = %#v, err=%v", item.ArticleBlocks, err)
+	}
+	if item.ArticleBlocks[1].URL != "https://cdn.example.test/a.jpg" || item.ArticleBlocks[2].URL != "https://linux.do/uploads/short-url/short-key" {
+		t.Fatalf("image URLs were not normalized: %#v", item.ArticleBlocks)
+	}
+}

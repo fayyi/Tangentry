@@ -11,7 +11,7 @@ import (
 
 // parseArticleBlocks keeps feed document structure without exposing raw HTML.
 // Image URLs are represented as data and fetched through the local image proxy.
-func parseArticleBlocks(raw, base string) []content.ArticleBlock {
+func ParseArticleBlocks(raw, base string) []content.ArticleBlock {
 	root, err := html.Parse(bytes.NewReader([]byte(raw)))
 	if err != nil {
 		return nil
@@ -99,6 +99,10 @@ func parseArticleBlocks(raw, base string) []content.ArticleBlock {
 		blocks = blocks[:4000]
 	}
 	return blocks
+}
+
+func parseArticleBlocks(raw, base string) []content.ArticleBlock {
+	return ParseArticleBlocks(raw, base)
 }
 
 func feedBlockKind(tag string) (string, int) {

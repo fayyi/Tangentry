@@ -9,6 +9,7 @@ import { SummaryControl } from '../ai/SummaryControl'
 import { cardDescription } from '../../shared/ui/cardDescription'
 import { articleSource, rememberArticleSource } from './articleSource'
 import { ReaderActions } from '../../shared/reader/ReaderActions'
+import { isLikelyMarkdown, markdownToPlainText } from './markdownContent'
 
 export function FullTextArticle({ item, notes, focus, onQuote, onOpenNotes, onUnresolved, navigationTarget, onReturnedToReading }: {
   item: ContentItem; notes: ReadingNote[]; focus?: { id: string; token: number; allowReturn?: boolean } | null
@@ -42,11 +43,13 @@ export function FullTextArticle({ item, notes, focus, onQuote, onOpenNotes, onUn
   const description = cardDescription(item)
   const feedBlocks = item.articleBlocks?.length ? item.articleBlocks : undefined
   const feedText = description || (feedBlocks ? feedBlocks.filter(block => block.kind !== 'image').map(block => block.text).join('\n').trim() : '') || '来源没有提供正文，可打开原内容查看。'
+  const feedMarkdown = isLikelyMarkdown(feedText)
+  const feedAnchorText = feedMarkdown ? markdownToPlainText(feedText) : feedText
   useEffect(() => {
     let alive = true
-    void hashArticle(feedText).then(hash => { if (alive) setFeedHash({ text: feedText, hash }) }).catch(() => {})
+    void hashArticle(feedAnchorText).then(hash => { if (alive) setFeedHash({ text: feedAnchorText, hash }) }).catch(() => {})
     return () => { alive = false }
-  }, [feedText])
+  }, [feedAnchorText])
   const read = async (initial = false) => {
     controller.current?.abort()
     const choiceAtStart = sourceChoice.current
@@ -99,16 +102,16 @@ export function FullTextArticle({ item, notes, focus, onQuote, onOpenNotes, onUn
     // The response may have been lost after a successful write. Re-read before retrying.
     setKnown(false); setError('已停止等待；再次获取前，请先读取本机版本。')
   }
-  const hash = feedHash.text === feedText ? feedHash.hash : ''
+  const hash = feedHash.text === feedAnchorText ? feedHash.hash : ''
   const summaryText = source === 'original' && doc ? doc.text : description
   const summary = useSummary(item.id, `article:${source}`, undefined, undefined, summaryText)
-  const missing = useMemo(() => notes.filter(note => note.textAnchor && !resolveTextAnchor(feedText, hash, note.textAnchor) && (!doc || !resolveTextAnchor(doc.text, doc.sourceHash, note.textAnchor))).map(note => note.id), [notes, feedText, hash, doc])
+  const missing = useMemo(() => notes.filter(note => note.textAnchor && !resolveTextAnchor(feedAnchorText, hash, note.textAnchor) && (!doc || !resolveTextAnchor(doc.text, doc.sourceHash, note.textAnchor))).map(note => note.id), [notes, feedAnchorText, hash, doc])
   useEffect(() => { if (hash && known) onUnresolved?.(missing) }, [missing, hash, known, onUnresolved])
   useEffect(() => {
     if (!requestedFocus || handledFocus.current?.id === requestedFocus.id && handledFocus.current.token === requestedFocus.token) return
     const anchor = notes.find(note => note.id === requestedFocus.id)?.textAnchor
     if (!anchor || !hash) return
-    const feed = resolveTextAnchor(feedText, hash, anchor), original = doc && resolveTextAnchor(doc.text, doc.sourceHash, anchor)
+    const feed = resolveTextAnchor(feedAnchorText, hash, anchor), original = doc && resolveTextAnchor(doc.text, doc.sourceHash, anchor)
     if (!feed && !original) return
     let next = source
     if (anchor.sourceHash === hash && feed) next = 'feed'
@@ -118,7 +121,7 @@ export function FullTextArticle({ item, notes, focus, onQuote, onOpenNotes, onUn
     handledFocus.current = requestedFocus
     ++sourceChoice.current
     setSource(next)
-  }, [requestedFocus, doc, hash, feedText, notes, source])
+  }, [requestedFocus, doc, hash, feedAnchorText, notes, source])
   return <section className="fulltext-reader" aria-label="文章正文来源">
       <div className="fulltext-toolbar">
       <div className="fulltext-sources" role="group" aria-label="选择正文来源">
@@ -132,6 +135,6 @@ export function FullTextArticle({ item, notes, focus, onQuote, onOpenNotes, onUn
     </div>
     {busy && <p className="fulltext-status" role="status">{busy === 'read' ? '正在读取本机全文…' : '正在获取原站正文…'}</p>}
     {error && <p className="fulltext-status" role="alert">{error}</p>}
-    <ArticleReader ref={article} key={source} contentId={summaryText ? item.id : ''} title={source === 'original' && doc ? '原站全文' : '订阅源正文'} text={source === 'original' && doc ? doc.text : feedText} blocks={source === 'original' && doc ? doc.blocks : feedBlocks} feed={source === 'feed'} toolbarOwnsSummary notes={notes} focus={requestedFocus} sourceURL={source === 'original' && doc ? doc.sourceUrl : item.url} onQuote={source === 'original' && doc || description ? onQuote : undefined} onOpenNotes={onOpenNotes} navigationTarget={navigationTarget} onReturnedToReading={onReturnedToReading}/>
+    <ArticleReader ref={article} key={source} contentId={summaryText ? item.id : ''} title={source === 'original' && doc ? '原站全文' : '订阅源正文'} text={source === 'original' && doc ? doc.text : feedText} blocks={source === 'original' && doc ? doc.blocks : feedMarkdown ? undefined : feedBlocks} feed={source === 'feed'} toolbarOwnsSummary notes={notes} focus={requestedFocus} sourceURL={source === 'original' && doc ? doc.sourceUrl : item.url} onQuote={source === 'original' && doc || description ? onQuote : undefined} onOpenNotes={onOpenNotes} navigationTarget={navigationTarget} onReturnedToReading={onReturnedToReading}/>
   </section>
 }

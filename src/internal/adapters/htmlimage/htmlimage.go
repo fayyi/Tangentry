@@ -17,7 +17,7 @@ import (
 
 // Lazy-loading pages keep a placeholder in src and the real image in a data
 // attribute, so the data attributes win.
-var sourceAttrs = []string{"data-src", "data-original", "data-lazy-src", "data-actualsrc", "data-url", "src"}
+var sourceAttrs = []string{"data-src", "data-original", "data-lazy-src", "data-actualsrc", "data-image-src", "data-fallback-src", "data-url", "src"}
 
 // Attrs returns an element's attributes with lower-case keys.
 func Attrs(node *html.Node) map[string]string {
@@ -56,6 +56,14 @@ func Resolve(raw, base string) string {
 	raw = fields[0]
 	if strings.HasPrefix(raw, "//") {
 		raw = "https:" + raw
+	}
+	if strings.HasPrefix(strings.ToLower(raw), "upload://") {
+		key := strings.TrimPrefix(raw, "upload://")
+		key = strings.TrimPrefix(key, "/")
+		if key == "" {
+			return ""
+		}
+		raw = "https://linux.do/uploads/short-url/" + key
 	}
 	u, err := url.Parse(raw)
 	if err != nil {

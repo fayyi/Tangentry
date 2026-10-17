@@ -202,7 +202,12 @@
 }
 
 /* Original text shares the existing selection and Markdown annotation contract. */
-.article-text { font-size: 15px; line-height: 1.9; white-space: pre-wrap; overflow-wrap: anywhere; }
+.article-text { min-width: 0; max-width: 100%; font-size: 15px; line-height: 1.9; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
+.article-text :is(p, h1, h2, h3, h4, h5, h6, blockquote, li, pre, code, a) { max-width: 100%; overflow-wrap: anywhere; }
+.article-text pre, .article-text code { white-space: pre-wrap; }
+.article-markdown { white-space: normal; }
+.article-markdown .markdown-body { font-size: inherit; line-height: inherit; }
+.article-markdown .markdown-body img { display: block; max-width: 100%; height: auto; max-height: 75vh; margin: 16px auto; object-fit: contain; border-radius: var(--radius-xs); }
 .article-block-image { margin: 20px 0; }
 .article-block-image img { display: block; width: auto; max-width: 100%; height: auto; max-height: 75vh; margin-inline: auto; object-fit: contain; border-radius: var(--radius-xs); }
 .article-block-image figcaption { margin-top: 6px; color: var(--muted); font-size: 12px; text-align: center; }
