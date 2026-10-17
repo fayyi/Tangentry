@@ -101,10 +101,15 @@ func open(directory, header, file string, key []byte) (*Store, error) {
 				continue
 			}
 			if !decryptPrivate(s.secretKey, e.Secret, &e) {
-				return nil, ErrStorage
+				// A local ad-hoc build deliberately does not probe the system
+				// keychain. Keep the app usable and make these credentials appear
+				// unavailable so the owner can log in again.
+				delete(s.entries, platform)
+				continue
 			}
 			e.Secret = ""
 			s.entries[platform] = e
+			needsEncryption = true
 		} else if len(s.secretKey) > 0 && (e.Jar != "" || e.UserAgent != "" || e.APIKey != "" || e.ClientID != "" || e.Token != "" || e.Refresh != "") {
 			needsEncryption = true
 		}
