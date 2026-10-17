@@ -29,6 +29,9 @@ func (m *ModelList) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &values); err != nil {
 		return err
 	}
+	if values == nil {
+		values = []string{}
+	}
 	*m = modelList(values)
 	return nil
 }
@@ -115,7 +118,11 @@ func (s *Service) ListModels(ctx context.Context, draft ConfigureInput) (ModelsR
 	s.mu.Lock()
 	c, provider := s.config, s.provider
 	s.mu.Unlock()
-	if strings.TrimSpace(draft.BaseURL) != "" {
+	requestedBase := strings.TrimRight(strings.TrimSpace(draft.BaseURL), "/")
+	if requestedBase != "" {
+		if requestedBase != c.BaseURL && draft.Key == nil && c.Key != "" {
+			return ModelsResult{}, ErrInvalid
+		}
 		c.BaseURL = strings.TrimRight(strings.TrimSpace(draft.BaseURL), "/")
 	}
 	if draft.Protocol != "" {
@@ -123,6 +130,9 @@ func (s *Service) ListModels(ctx context.Context, draft ConfigureInput) (ModelsR
 	}
 	if draft.Key != nil {
 		c.Key = strings.TrimSpace(*draft.Key)
+	}
+	if strings.TrimSpace(draft.Model) != "" {
+		c.Model = strings.TrimSpace(draft.Model)
 	}
 	if !validConfig(Config{Protocol: c.Protocol, BaseURL: c.BaseURL, Model: c.Model, Key: c.Key, Revision: c.Revision}) {
 		return ModelsResult{}, ErrInvalid
@@ -164,7 +174,7 @@ func validConfig(c Config) bool {
 		return false
 	}
 	for _, model := range append(append([]string{}, c.EnabledModels...), c.AvailableModels...) {
-		if !validModel(model) {
+		if !ValidModelName(model) {
 			return false
 		}
 	}
@@ -239,10 +249,10 @@ func (s *Service) Configure(in ConfigureInput) (Status, error) {
 		protocol = "openai"
 	}
 	c := Config{Protocol: protocol, BaseURL: strings.TrimRight(strings.TrimSpace(in.BaseURL), "/"), Model: strings.TrimSpace(in.Model), ChatModel: s.config.ChatModel, EnabledModels: append([]string{}, in.EnabledModels...), AvailableModels: append([]string{}, in.AvailableModels...), SummaryModel: s.config.SummaryModel, SummaryPrompt: s.config.SummaryPrompt, SummaryContextBudget: s.config.SummaryContextBudget, Key: s.config.Key, Revision: s.config.Revision + 1}
-	if len(c.EnabledModels) == 0 {
+	if in.EnabledModels == nil {
 		c.EnabledModels = append([]string{}, s.config.EnabledModels...)
 	}
-	if len(c.AvailableModels) == 0 {
+	if in.AvailableModels == nil {
 		c.AvailableModels = append([]string{}, s.config.AvailableModels...)
 	}
 	if len(c.EnabledModels) == 0 && c.Model != "" {
