@@ -35,6 +35,17 @@
 .discovery-platforms button[data-state='loading'] .platform-dot { animation: platform-pulse 1s ease-in-out infinite alternate; }
 .discovery-platforms button[data-state='error'] { border-color: color-mix(in srgb, var(--danger) 40%, var(--line)); }
 .discovery-platforms button[data-state='error'] .platform-dot { background: var(--danger); }
+.discovery-batch-controls { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; padding-left: 10px; border-left: 1px solid var(--line); }
+.discovery-batch-controls select, .discovery-batch-controls input[type='text'] { min-height: 30px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--card); color: var(--ink); padding: 3px 9px; font-size: 12.5px; }
+.discovery-batch-controls input[type='text'] { width: 116px; }
+.discovery-range { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.discovery-range input { width: 76px; accent-color: var(--accent); }
+.discovery-topic-list { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.discovery-topic-chip { display: inline-flex; align-items: center; gap: 3px; min-height: 26px; padding: 2px 5px 2px 8px; border: 1px solid var(--line); border-radius: var(--radius-full); color: var(--muted); font-size: 12px; white-space: nowrap; }
+.discovery-topic-chip button { display: inline-grid; place-items: center; width: 20px; height: 20px; padding: 0; border-radius: 50%; color: var(--faint); }
+.discovery-topic-chip button:hover { color: var(--danger); background: var(--danger-soft); }
+.discovery-batch-end { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 10px; min-height: 64px; }
+.discovery-batch-end > span { color: var(--muted); font-size: 13px; }
 @keyframes platform-pulse { to { opacity: .25; } }
 @media (hover: hover) and (pointer: fine) { .discovery-platforms button:not([aria-pressed='true']):hover { border-color: var(--line-strong); color: var(--ink); } }
 .content-count { flex-shrink: 0; margin-left: auto; padding-left: 8px; color: var(--faint); font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
@@ -57,4 +68,6 @@
   .content-count { display: none; }
   .gallery-errors-summary > summary span { display: none; }
   .gallery-errors-summary > summary { width: 44px; height: 44px; padding: 0; justify-content: center; border-radius: 50%; }
+  .discovery-batch-controls { width: 100%; padding: 8px 0 0; border-left: 0; border-top: 1px solid var(--line); overflow-x: auto; }
+  .discovery-range input { width: 64px; }
 }

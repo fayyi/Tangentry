@@ -3,6 +3,11 @@ package httptransport
 import "net/http"
 
 func (h *Handler) registerDiscoveryRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("POST /api/discovery/batch", h.discovery.batch)
+	mux.HandleFunc("GET /api/discovery/topics", h.discovery.topicList)
+	mux.HandleFunc("POST /api/discovery/topics", h.discovery.topicCreate)
+	mux.HandleFunc("PATCH /api/discovery/topics/{id}", h.discovery.topicUpdate)
+	mux.HandleFunc("DELETE /api/discovery/topics/{id}", h.discovery.topicDelete)
 	mux.HandleFunc("GET /api/discovery/bilibili", h.discovery.search)
 	mux.HandleFunc("GET /api/discovery/{source}", h.discovery.importSearch)
 	mux.HandleFunc("GET /api/recommendations/{source}", h.discovery.recommendationRead)

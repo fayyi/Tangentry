@@ -23,6 +23,8 @@ func New(library *content.Service, discover *discovery.Service, assets fs.FS, op
 			Search: discover, BilibiliBrowser: optionsValue.BilibiliBrowser, RecommendationQueue: optionsValue.RecommendationQueue,
 			RecommendationConfig: optionsValue.RecommendationConfig, Recommendations: optionsValue.Recommendations,
 			RecommendationPage: optionsValue.RecommendationPage, Imports: optionsValue.Imports,
+			DiscoveryBatch:    optionsValue.DiscoveryBatch,
+			DiscoveryTopics:   optionsValue.DiscoveryTopics,
 			XiaohongshuDetail: optionsValue.XiaohongshuDetail, XiaohongshuRefresh: optionsValue.XiaohongshuRefresh,
 			XiaohongshuImages: optionsValue.XiaohongshuImages, XiaohongshuImageVersion: optionsValue.XiaohongshuImageVersion,
 			XiaohongshuImageItems: optionsValue.XiaohongshuImageItems,

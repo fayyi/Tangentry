@@ -21,3 +21,14 @@ type RecommendationConfig interface {
 	Save(context.Context, string, bool) error
 	Enabled(context.Context, string) (bool, error)
 }
+
+type DiscoveryBatchService interface {
+	Create(context.Context, discovery.BatchRequest) (discovery.BatchResponse, error)
+}
+
+type DiscoveryTopicService interface {
+	List(context.Context) ([]discovery.TopicRule, error)
+	Create(context.Context, discovery.TopicRuleEdit) (discovery.TopicRule, error)
+	Update(context.Context, string, discovery.TopicRuleEdit) (discovery.TopicRule, error)
+	Delete(context.Context, string, int64) error
+}

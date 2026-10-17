@@ -20,6 +20,8 @@ func httpDiscoveryDependencies(s *services, adapters httpAdapterBundle) httptran
 		Search: discovery.NewService(p.creators), BilibiliBrowser: adapters.bilibiliBrowser,
 		RecommendationConfig: s.features.api.preferences, RecommendationQueue: s.features.recommendations.queue,
 		RecommendationPage: s.features.recommendations.Page, Imports: s.imports.importSource,
+		DiscoveryBatch:        s.features.discoveryBatch,
+		DiscoveryTopics:       discovery.NewTopicRules(s.runtime.store),
 		XiaohongshuDetail:     s.runtime.repositories.xiaohongshu.XiaohongshuDetail,
 		XiaohongshuImageItems: s.runtime.repositories.xiaohongshu.XiaohongshuImageCandidates,
 		XiaohongshuImages:     adapters.imageCache, XiaohongshuImageVersion: adapters.imageVersion,

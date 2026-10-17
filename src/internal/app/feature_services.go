@@ -29,6 +29,7 @@ type apiBundle struct {
 	content         *content.Service
 	articles        *articles.Service
 	recommendations *recommender
+	discoveryBatch  *discovery.BatchService
 	sources         *subscriptions.Service
 	downloads       *downloads.Service
 	transcription   *transcription.Service
@@ -76,6 +77,11 @@ func wireFeatures(dataDir string, configuration config.Config, option Options, r
 		}),
 		override: option.Recommendations,
 	}
+	discoveryBatch := discovery.NewBatchService(recommendations, sources.Gallery, []string{"subscriptions", "bilibili", "youtube", "xiaohongshu", "linuxdo", "xiaoyuzhou", "douyin"}, store)
+	discoveryBatch.SetSourceEnabled(func(ctx context.Context, source string) (bool, error) {
+		return discovery.NewPreferences(store).Enabled(ctx, source)
+	})
+	discoveryBatch.SetTopicRules(discovery.NewTopicRules(store).List)
 
 	resolvePlayback := p.media.bilibili.Playback
 	if option.Playback != nil {
@@ -132,7 +138,7 @@ func wireFeatures(dataDir string, configuration config.Config, option Options, r
 
 	return &apiBundle{
 		content: contentService, articles: articles.New(store, &articleadapter.Extractor{HTTP: p.network.public}), sources: sources,
-		recommendations: recommendations, downloads: processing, transcription: speech, modelDownloads: modelDownloads, modelDir: modelDir,
+		recommendations: recommendations, discoveryBatch: discoveryBatch, downloads: processing, transcription: speech, modelDownloads: modelDownloads, modelDir: modelDir,
 		api: apiServices{
 			ai: languageAI, compatibility: compatibility, favorites: favorites,
 			groupService: subscriptions.NewGroupService(store), inbox: inboxService,
