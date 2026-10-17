@@ -68,7 +68,7 @@ export function DiscoveryGallery({kind,onKind,origin,onOrigin,query,onClearQuery
   // Count sources with errors
   const errorSources = selectedSources.filter(source => gallery.sources[source].error)
   const hasErrors = errorSources.length > 0
-  const needsVerification = (source: GallerySource) => (source === 'linuxdo' || source === 'douyin') && /重新验证|Cloudflare|验证页面|登录 Cookie|需要验证/i.test(gallery.sources[source].error)
+  const needsVerification = (source: GallerySource) => (source === 'linuxdo' || source === 'douyin') && /重新验证|重新保存|重新导入|登录已失效|Cloudflare|验证页面|登录 Cookie|需要验证/i.test(gallery.sources[source].error)
   async function verifyPlatform(source: PlatformWebView) {
     if (webViewPlatform) return
     setWebViewPlatform(source); setWebViewError('')

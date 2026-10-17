@@ -63,11 +63,17 @@ func browserJar(platform string, cookies []*http.Cookie, userAgent string) (stri
 		if !cookie.Expires.IsZero() {
 			expires = cookie.Expires.Unix()
 		}
-		domain := "." + root
-		subdomains := "TRUE"
-		if cookie.Domain == "" {
-			domain = root
-			subdomains = "FALSE"
+		domain := root
+		subdomains := "FALSE"
+		if cookie.Domain != "" {
+			// Preserve the cookie's actual domain. Broadening a host cookie to
+			// the platform root could send a credential to passport or CDN
+			// subdomains that never received it in the WebView.
+			rawDomain := strings.ToLower(strings.TrimSpace(cookie.Domain))
+			domain = strings.TrimPrefix(rawDomain, ".")
+			if strings.HasPrefix(rawDomain, ".") {
+				subdomains = "TRUE"
+			}
 		}
 		secure := "FALSE"
 		if cookie.Secure {

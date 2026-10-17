@@ -18,9 +18,10 @@ func TestDouyinBrowserLoginPersistsSessionAndUA(t *testing.T) {
 	}
 	ua := "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/136.0.0.0 Safari/537.36"
 	cookies := []*http.Cookie{
-		{Name: "sessionid", Value: "session-fixture", Domain: ".douyin.com", Path: "/", Secure: true, HttpOnly: true},
+		{Name: "sessionid", Value: "session-fixture", Domain: "passport.douyin.com", Path: "/", Secure: true, HttpOnly: true},
 		{Name: "ttwid", Value: "ttwid-fixture", Domain: ".douyin.com", Path: "/", Secure: true},
 		{Name: "msToken", Value: "token-fixture", Domain: ".douyin.com", Path: "/", Secure: true},
+		{Name: "__ac_nonce", Value: "narrow-fixture", Domain: "passport.douyin.com", Path: "/", Secure: true},
 		{Name: "unrelated", Value: "drop-me", Domain: ".douyin.com", Path: "/", Secure: true},
 	}
 	if err := s.PrepareDouyinBrowserLogin()(cookies, ua); err != nil {
@@ -30,8 +31,12 @@ func TestDouyinBrowserLoginPersistsSessionAndUA(t *testing.T) {
 		t.Fatalf("UA mismatch: %q", got)
 	}
 	header := s.Header("douyin", "https://www.douyin.com/")
-	if !strings.Contains(header, "sessionid=session-fixture") || !strings.Contains(header, "ttwid=ttwid-fixture") || strings.Contains(header, "unrelated") {
+	if strings.Contains(header, "sessionid=session-fixture") || !strings.Contains(header, "ttwid=ttwid-fixture") || strings.Contains(header, "unrelated") {
 		t.Fatalf("cookie header mismatch: %q", header)
+	}
+	passportHeader := s.Header("douyin", "https://passport.douyin.com/")
+	if strings.Contains(header, "__ac_nonce") || !strings.Contains(passportHeader, "__ac_nonce=narrow-fixture") || !strings.Contains(passportHeader, "sessionid=session-fixture") {
+		t.Fatalf("host cookie domain was broadened: %q / %q", header, passportHeader)
 	}
 	reopened, err := Open(dir, "", "")
 	if err != nil || reopened.UserAgent("douyin") != ua {
