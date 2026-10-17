@@ -111,10 +111,22 @@ type ModelLister interface {
 	ListModels(context.Context, Config) ([]string, error)
 }
 
-func (s *Service) ListModels(ctx context.Context) (ModelsResult, error) {
+func (s *Service) ListModels(ctx context.Context, draft ConfigureInput) (ModelsResult, error) {
 	s.mu.Lock()
 	c, provider := s.config, s.provider
 	s.mu.Unlock()
+	if strings.TrimSpace(draft.BaseURL) != "" {
+		c.BaseURL = strings.TrimRight(strings.TrimSpace(draft.BaseURL), "/")
+	}
+	if draft.Protocol != "" {
+		c.Protocol = draft.Protocol
+	}
+	if draft.Key != nil {
+		c.Key = strings.TrimSpace(*draft.Key)
+	}
+	if !validConfig(Config{Protocol: c.Protocol, BaseURL: c.BaseURL, Model: c.Model, Key: c.Key, Revision: c.Revision}) {
+		return ModelsResult{}, ErrInvalid
+	}
 	lister, ok := provider.(ModelLister)
 	if !ok {
 		return ModelsResult{}, ErrProvider

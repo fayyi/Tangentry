@@ -33,7 +33,11 @@ func (h *aiHandler) aiModels(w http.ResponseWriter, r *http.Request) {
 	if !h.aiReady(w) {
 		return
 	}
-	result, err := h.ai.AI.ListModels(r.Context())
+	var input ai.ConfigureInput
+	if r.ContentLength != 0 && !decodeAIRequest(w, r, &input, 8192) {
+		return
+	}
+	result, err := h.ai.AI.ListModels(r.Context(), input)
 	if err != nil {
 		aiFail(w, err)
 		return
