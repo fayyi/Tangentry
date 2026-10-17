@@ -11,7 +11,7 @@ import { useRecommendationExposure } from './useRecommendationExposure'
 import { MediaFilters } from '../../shared/ui/MediaFilters'
 import { SkeletonGallery } from '../../shared/ui/SkeletonLoading'
 import { openDesktopPlatformLogin, useCapabilities, type PlatformWebView } from '../../shared/api/desktop'
-import { discoveryReasonType, getDiscoverySourceLabel, useDiscoveryBatch } from './useDiscoveryBatch'
+import { discoveryReasonType, getDiscoverySourceLabel, readDiscoveryFilterState, updateDiscoveryFilterState, useDiscoveryBatch } from './useDiscoveryBatch'
 import { useDiscoveryTopics } from './useDiscoveryTopics'
 
 const labels: Record<GallerySource, string> = { subscriptions: '订阅更新', bilibili: 'B站推荐', youtube: 'YouTube 推荐', xiaohongshu: '小红书推荐', linuxdo: 'Linux.do 话题', xiaoyuzhou: '小宇宙发现', douyin: '抖音推荐' }
@@ -26,8 +26,8 @@ export function DiscoveryGallery({ kind, onKind, query, onClearQuery, notice, no
   const batchState = useDiscoveryBatch(true)
   const topicState = useDiscoveryTopics(true)
   const sentinel = useRef<HTMLDivElement>(null)
-  const [platform, setPlatform] = useState('all')
-  const [topic, setTopic] = useState('')
+  const [platform, setPlatformState] = useState(() => readDiscoveryFilterState().platform)
+  const [topic, setTopicState] = useState(() => readDiscoveryFilterState().topic)
   const [webViewPlatform, setWebViewPlatform] = useState<PlatformWebView | ''>('')
   const [webViewError, setWebViewError] = useState('')
   const matchesKind = (mediaKind: string) => kind === 'all' || mediaKind === kind
@@ -39,6 +39,9 @@ export function DiscoveryGallery({ kind, onKind, query, onClearQuery, notice, no
   useRecommendationExposure(true, items.map(({ item }) => item.id).join(','))
   const loading = batchState.loading
   const errorCount = Object.values(sourceStatus).filter(status => status.status !== 'ok' && status.status !== 'disabled').length
+  const setPlatform = (value: string) => { setPlatformState(value); updateDiscoveryFilterState({ platform: value }) }
+  const setTopic = (value: string) => { setTopicState(value); updateDiscoveryFilterState({ topic: value }) }
+  const setKind = (value: string) => { onKind(value); updateDiscoveryFilterState({ kind: value }) }
 
   useEffect(() => {
     if (!sentinel.current || !batchState.batch?.hasNextBatch) return
@@ -88,12 +91,13 @@ export function DiscoveryGallery({ kind, onKind, query, onClearQuery, notice, no
         <button type="button" className="icon-button" aria-label="刷新发现内容" title="刷新发现内容" disabled={loading} onClick={batchState.retry}>{loading ? <LoaderCircle size={18} className="spin" /> : <RefreshCw size={18} />}</button>
       </div>
       <div className="discovery-filter-rail" role="group" aria-label="筛选发现内容" tabIndex={0}>
-        <MediaFilters value={kind} onChange={onKind} />
+        <MediaFilters value={kind} onChange={setKind} />
         <div className="discovery-platforms" role="group" aria-label="内容来源"><button type="button" aria-pressed={platform === 'all'} onClick={() => setPlatform('all')}>全部</button>{sourceOptions.map(source => <button key={source} type="button" data-platform={source} aria-pressed={platform === source} onClick={() => setPlatform(platform === source ? 'all' : source)}><span className="platform-dot" aria-hidden="true" />{labels[source]}</button>)}</div>
         <div className="discovery-topics" role="group" aria-label="主题筛选"><button type="button" aria-pressed={!topic} onClick={() => { setTopic(''); batchState.setOptions({ topic: '' }) }}>全部主题</button>{topicState.topics.map(value => <span className="discovery-topic-chip" key={value.id}><button type="button" aria-pressed={topic === value.id} onClick={() => { setTopic(value.id); batchState.setOptions({ topic: value.id }) }}>{value.name}</button><button type="button" className="discovery-topic-action" aria-label={`编辑主题 ${value.name}`} title="编辑主题" onClick={() => manageTopic(value)}><Edit3 size={12} /></button><button type="button" className="discovery-topic-action" aria-label={`删除主题 ${value.name}`} title="删除主题" onClick={() => void topicState.remove(value)}><X size={12} /></button></span>)}<button type="button" className="discovery-topic-add" aria-label="新增主题" title="新增主题" onClick={() => manageTopic()}><Plus size={15} /></button></div>
         <span className="content-count">{items.length} 条内容</span>
       </div>
     </div>
+    {batchState.optionsStale && <p className="discovery-new-content" role="status">有新内容，点击刷新<button type="button" className="text-button" onClick={batchState.retry}>刷新</button></p>}
     {notice && <p className="inline-feedback collection-save-feedback" role={noticeError ? 'alert' : 'status'}>{notice}</p>}
     {savingUnavailable && <p className="field-hint" role="status">资料库暂不可用，收藏操作等待重新连接。</p>}
     {search && <p className="discovery-search-result" role="status">当前已加载内容中找到 {items.length} 条结果<button type="button" className="text-button" onClick={onClearQuery}>清除搜索</button></p>}

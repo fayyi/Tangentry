@@ -2,6 +2,7 @@ import { AlertCircle, ArrowDown, ArrowRight, Bookmark, Check, Compass, Grid2X2, 
 import { lazy, useEffect, useMemo, useRef, useState } from 'react'
 import { ReaderActionsProvider } from '../shared/reader/ReaderActions'
 import { DiscoveryGallery } from '../features/discovery/DiscoveryGallery'
+import { readDiscoveryFilterState } from '../features/discovery/useDiscoveryBatch'
 import { useBilibiliBrowse } from '../features/bilibili/useBilibiliBrowse'
 import { gallerySources, useGallery } from '../features/discovery/useGallery'
 import type { GallerySource } from '../features/discovery/useGallery'
@@ -74,7 +75,7 @@ export function App() {
   const inbox = useSubscriptionInbox(view==='subscriptions' && subscriptionMode==='history')
   const [subscriptionFilter, setSubscriptionFilter] = useState('')
   const [subscriptionReadFilter, setSubscriptionReadFilter] = useState<'all' | 'unread' | 'read'>('all')
-  const [galleryKind, setGalleryKind] = useState('all')
+  const [galleryKind, setGalleryKind] = useState(() => readDiscoveryFilterState().kind)
   const [galleryOrigin, setGalleryOrigin] = useState('platforms')
   const [galleryQuery, setGalleryQuery] = useState('')
   const gallery = useGallery(view === 'podcasts', view === 'podcasts' ? podcastSources : gallerySources)
