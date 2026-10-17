@@ -27,12 +27,14 @@ type Translator interface {
 type ChatMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
+	Model   string `json:"model,omitempty"`
 }
 type ChatRequest struct {
 	ContentID string        `json:"contentId"`
 	Context   string        `json:"context"`
 	Messages  []ChatMessage `json:"messages"`
 	Revision  int64         `json:"revision"`
+	Model     string        `json:"model,omitempty"`
 	Clear     bool          `json:"clear,omitempty"`
 }
 type ChatResult struct {

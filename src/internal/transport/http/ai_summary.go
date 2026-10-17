@@ -75,7 +75,7 @@ func (h *aiHandler) aiChat(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := h.ai.AI.Chat(r.Context(), input)
 	if err != nil {
-		summaryFail(w, err)
+		chatFail(w, err)
 		return
 	}
 	write(w, http.StatusOK, result)
@@ -86,7 +86,7 @@ func (h *aiHandler) aiChatStream(w http.ResponseWriter, r *http.Request, input a
 	if !ok {
 		result, err := h.ai.AI.Chat(r.Context(), input)
 		if err != nil {
-			summaryFail(w, err)
+			chatFail(w, err)
 			return
 		}
 		write(w, http.StatusOK, result)
@@ -109,7 +109,7 @@ func (h *aiHandler) aiChatStream(w http.ResponseWriter, r *http.Request, input a
 		return nil
 	})
 	if err != nil {
-		payload, _ := json.Marshal(map[string]string{"error": "对话暂时不可用。"})
+		payload, _ := json.Marshal(map[string]string{"error": aiErrorMessage(err)})
 		_, _ = fmt.Fprintf(w, "data: %s\n\n", payload)
 		flusher.Flush()
 		return

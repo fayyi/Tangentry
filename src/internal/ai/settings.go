@@ -3,6 +3,7 @@
 package ai
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,29 @@ import (
 	"strings"
 	"unicode/utf8"
 )
+
+type ModelList string
+
+func modelList(values []string) ModelList { data, _ := json.Marshal(values); return ModelList(data) }
+func (m ModelList) MarshalJSON() ([]byte, error) {
+	if len(m) == 0 {
+		return []byte("[]"), nil
+	}
+	return []byte(m), nil
+}
+func (m *ModelList) UnmarshalJSON(data []byte) error {
+	var values []string
+	if err := json.Unmarshal(data, &values); err != nil {
+		return err
+	}
+	*m = modelList(values)
+	return nil
+}
+func (m ModelList) Values() []string {
+	var values []string
+	_ = json.Unmarshal([]byte(m), &values)
+	return values
+}
 
 var (
 	ErrInvalid             = errors.New("invalid AI input")
@@ -36,37 +60,73 @@ var (
 )
 
 type Config struct {
-	Protocol             string `json:"protocol"`
-	BaseURL              string `json:"baseUrl"`
-	Model                string `json:"model"`
-	SummaryModel         string `json:"summaryModel,omitempty"`
-	SummaryPrompt        string `json:"summaryPrompt,omitempty"`
-	SummaryContextBudget int    `json:"summaryContextBudget,omitempty"`
-	Key                  string `json:"key"`
-	Revision             int64  `json:"revision"`
+	Protocol             string   `json:"protocol"`
+	BaseURL              string   `json:"baseUrl"`
+	Model                string   `json:"model"`
+	ChatModel            string   `json:"chatModel,omitempty"`
+	EnabledModels        []string `json:"enabledModels,omitempty"`
+	AvailableModels      []string `json:"availableModels,omitempty"`
+	SummaryModel         string   `json:"summaryModel,omitempty"`
+	SummaryPrompt        string   `json:"summaryPrompt,omitempty"`
+	SummaryContextBudget int      `json:"summaryContextBudget,omitempty"`
+	Key                  string   `json:"key"`
+	Revision             int64    `json:"revision"`
 }
 type Status struct {
-	Protocol             string `json:"protocol"`
-	Translating          bool   `json:"translating"`
-	BaseURL              string `json:"baseUrl"`
-	Model                string `json:"model"`
-	SummaryModel         string `json:"summaryModel"`
-	SummaryPrompt        string `json:"summaryPrompt"`
-	SummaryContextBudget int    `json:"summaryContextBudget"`
-	SummaryReady         bool   `json:"summaryReady"`
-	HasKey               bool   `json:"hasKey"`
-	Ready                bool   `json:"ready"`
-	Revision             int64  `json:"revision"`
+	Protocol             string    `json:"protocol"`
+	Translating          bool      `json:"translating"`
+	BaseURL              string    `json:"baseUrl"`
+	Model                string    `json:"model"`
+	ChatModel            string    `json:"chatModel"`
+	EnabledModels        ModelList `json:"enabledModels"`
+	AvailableModels      ModelList `json:"availableModels"`
+	SummaryModel         string    `json:"summaryModel"`
+	SummaryPrompt        string    `json:"summaryPrompt"`
+	SummaryContextBudget int       `json:"summaryContextBudget"`
+	SummaryReady         bool      `json:"summaryReady"`
+	HasKey               bool      `json:"hasKey"`
+	Ready                bool      `json:"ready"`
+	Revision             int64     `json:"revision"`
 }
 type ConfigureInput struct {
-	Protocol             string  `json:"protocol"`
-	BaseURL              string  `json:"baseUrl"`
-	Model                string  `json:"model"`
-	SummaryModel         *string `json:"summaryModel,omitempty"`
-	SummaryPrompt        *string `json:"summaryPrompt,omitempty"`
-	SummaryContextBudget *int    `json:"summaryContextBudget,omitempty"`
-	Key                  *string `json:"key,omitempty"`
-	Revision             int64   `json:"revision"`
+	Protocol             string   `json:"protocol"`
+	BaseURL              string   `json:"baseUrl"`
+	Model                string   `json:"model"`
+	ChatModel            *string  `json:"chatModel,omitempty"`
+	EnabledModels        []string `json:"enabledModels,omitempty"`
+	AvailableModels      []string `json:"availableModels,omitempty"`
+	SummaryModel         *string  `json:"summaryModel,omitempty"`
+	SummaryPrompt        *string  `json:"summaryPrompt,omitempty"`
+	SummaryContextBudget *int     `json:"summaryContextBudget,omitempty"`
+	Key                  *string  `json:"key,omitempty"`
+	Revision             int64    `json:"revision"`
+}
+
+type ModelsResult struct {
+	Models   []string `json:"models"`
+	Revision int64    `json:"revision"`
+}
+
+type ModelLister interface {
+	ListModels(context.Context, Config) ([]string, error)
+}
+
+func (s *Service) ListModels(ctx context.Context) (ModelsResult, error) {
+	s.mu.Lock()
+	c, provider := s.config, s.provider
+	s.mu.Unlock()
+	lister, ok := provider.(ModelLister)
+	if !ok {
+		return ModelsResult{}, ErrProvider
+	}
+	models, err := lister.ListModels(ctx, c)
+	if err != nil {
+		return ModelsResult{}, err
+	}
+	if len(models) == 0 {
+		return ModelsResult{}, ErrFormat
+	}
+	return ModelsResult{Models: models, Revision: c.Revision}, nil
 }
 
 func ValidEndpoint(raw string) bool {
@@ -83,11 +143,30 @@ func ValidEndpoint(raw string) bool {
 func validModel(model string) bool {
 	return utf8.ValidString(model) && len(model) <= 200 && !strings.ContainsAny(model, "\r\n\x00")
 }
+func ValidModelName(model string) bool { return validModel(model) && strings.TrimSpace(model) != "" }
 func validConfig(c Config) bool {
-	return (c.Protocol == "" || c.Protocol == "openai" || c.Protocol == "compatible") && ValidEndpoint(c.BaseURL) && validModel(c.Model) && validModel(c.SummaryModel) && validPrompt(c.SummaryPrompt) && validContextBudget(c.SummaryContextBudget) && utf8.ValidString(c.Key) && len(c.Key) <= 4096 && !strings.ContainsAny(c.Key, "\r\n\x00") && c.Revision > 0 && c.Revision < 9007199254740991
+	if (c.Protocol != "" && c.Protocol != "openai" && c.Protocol != "compatible") || !ValidEndpoint(c.BaseURL) || !validModel(c.Model) || !validModel(c.ChatModel) || !validModel(c.SummaryModel) || !validPrompt(c.SummaryPrompt) || !validContextBudget(c.SummaryContextBudget) || !utf8.ValidString(c.Key) || len(c.Key) > 4096 || strings.ContainsAny(c.Key, "\r\n\x00") || c.Revision <= 0 || c.Revision >= 9007199254740991 {
+		return false
+	}
+	if len(c.EnabledModels) > 128 || len(c.AvailableModels) > 256 {
+		return false
+	}
+	for _, model := range append(append([]string{}, c.EnabledModels...), c.AvailableModels...) {
+		if !validModel(model) {
+			return false
+		}
+	}
+	return true
 }
 func public(c Config) Status {
-	return Status{Protocol: c.Protocol, BaseURL: c.BaseURL, Model: c.Model, SummaryModel: c.SummaryModel, SummaryPrompt: summaryPrompt(c.SummaryPrompt), SummaryContextBudget: summaryContextBudget(c.SummaryContextBudget), HasKey: c.Key != "", Ready: c.Model != "", Revision: c.Revision}
+	return Status{Protocol: c.Protocol, BaseURL: c.BaseURL, Model: c.Model, ChatModel: chatModel(c), EnabledModels: modelList(c.EnabledModels), AvailableModels: modelList(c.AvailableModels), SummaryModel: c.SummaryModel, SummaryPrompt: summaryPrompt(c.SummaryPrompt), SummaryContextBudget: summaryContextBudget(c.SummaryContextBudget), HasKey: c.Key != "", Ready: c.Model != "", Revision: c.Revision}
+}
+
+func chatModel(c Config) string {
+	if c.ChatModel != "" {
+		return c.ChatModel
+	}
+	return c.Model
 }
 
 func validPrompt(prompt string) bool {
@@ -147,7 +226,22 @@ func (s *Service) Configure(in ConfigureInput) (Status, error) {
 	if protocol == "" {
 		protocol = "openai"
 	}
-	c := Config{Protocol: protocol, BaseURL: strings.TrimRight(strings.TrimSpace(in.BaseURL), "/"), Model: strings.TrimSpace(in.Model), SummaryModel: s.config.SummaryModel, SummaryPrompt: s.config.SummaryPrompt, SummaryContextBudget: s.config.SummaryContextBudget, Key: s.config.Key, Revision: s.config.Revision + 1}
+	c := Config{Protocol: protocol, BaseURL: strings.TrimRight(strings.TrimSpace(in.BaseURL), "/"), Model: strings.TrimSpace(in.Model), ChatModel: s.config.ChatModel, EnabledModels: append([]string{}, in.EnabledModels...), AvailableModels: append([]string{}, in.AvailableModels...), SummaryModel: s.config.SummaryModel, SummaryPrompt: s.config.SummaryPrompt, SummaryContextBudget: s.config.SummaryContextBudget, Key: s.config.Key, Revision: s.config.Revision + 1}
+	if len(c.EnabledModels) == 0 {
+		c.EnabledModels = append([]string{}, s.config.EnabledModels...)
+	}
+	if len(c.AvailableModels) == 0 {
+		c.AvailableModels = append([]string{}, s.config.AvailableModels...)
+	}
+	if len(c.EnabledModels) == 0 && c.Model != "" {
+		c.EnabledModels = []string{c.Model}
+	}
+	if len(c.AvailableModels) == 0 && c.Model != "" {
+		c.AvailableModels = []string{c.Model}
+	}
+	if in.ChatModel != nil {
+		c.ChatModel = strings.TrimSpace(*in.ChatModel)
+	}
 	if in.SummaryModel != nil {
 		c.SummaryModel = strings.TrimSpace(*in.SummaryModel)
 	}

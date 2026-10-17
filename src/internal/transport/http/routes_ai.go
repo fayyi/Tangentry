@@ -5,6 +5,7 @@ import "net/http"
 func (h *Handler) registerAIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/ai/settings", h.ai.aiSettingsGet)
 	mux.HandleFunc("PUT /api/ai/settings", h.ai.aiSettingsPut)
+	mux.HandleFunc("POST /api/ai/models", h.ai.aiModels)
 	mux.HandleFunc("POST /api/ai/check", h.ai.aiCheck)
 	mux.HandleFunc("POST /api/ai/subtitles/inspect", h.ai.aiSubtitleInspect)
 	mux.HandleFunc("POST /api/ai/subtitles/translate", h.ai.aiSubtitleTranslate)

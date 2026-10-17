@@ -10,6 +10,7 @@ import (
 type AIService interface {
 	Status() ai.Status
 	Configure(ai.ConfigureInput) (ai.Status, error)
+	ListModels(context.Context) (ai.ModelsResult, error)
 	Check(context.Context, ai.CheckInput) (ai.CheckResult, error)
 	Inspect(context.Context, ai.Input) (ai.Inspection, error)
 	Translate(context.Context, ai.Input) (ai.Result, error)

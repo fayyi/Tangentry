@@ -56,6 +56,48 @@ func aiFail(w http.ResponseWriter, err error) {
 	}
 }
 
+func aiErrorMessage(err error) string {
+	switch {
+	case errors.Is(err, ai.ErrNotReady):
+		return "请先在工具设置选择对话模型。"
+	case errors.Is(err, ai.ErrAuth):
+		return "上游拒绝访问，请检查 API 密钥。"
+	case errors.Is(err, ai.ErrRate):
+		return "上游提示额度或请求频率受限，请稍后重试。"
+	case errors.Is(err, ai.ErrRequestRejected):
+		return "上游拒绝了请求参数，请检查模型名称与接口协议。"
+	case errors.Is(err, ai.ErrFormat):
+		return "上游返回格式无法识别，请检查接口地址是否指向 OpenAI 兼容 API。"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "等待上游响应超时，请稍后重试。"
+	default:
+		return "上游服务暂时不可用，请检查接口、模型与网络。"
+	}
+}
+
+func chatFail(w http.ResponseWriter, err error) {
+	if errors.Is(err, context.Canceled) {
+		return
+	}
+	status := http.StatusBadGateway
+	if errors.Is(err, ai.ErrInvalid) {
+		status = http.StatusBadRequest
+	}
+	if errors.Is(err, ai.ErrNotReady) {
+		status = http.StatusServiceUnavailable
+	}
+	if errors.Is(err, ai.ErrAuth) {
+		status = http.StatusBadGateway
+	}
+	if errors.Is(err, ai.ErrRate) {
+		status = http.StatusTooManyRequests
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		status = http.StatusGatewayTimeout
+	}
+	write(w, status, apiError{"ai_chat_failed", aiErrorMessage(err)})
+}
+
 func summaryFail(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, context.Canceled):

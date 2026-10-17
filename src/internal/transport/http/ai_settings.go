@@ -29,6 +29,18 @@ func (h *aiHandler) aiSettingsPut(w http.ResponseWriter, r *http.Request) {
 	write(w, 200, result)
 }
 
+func (h *aiHandler) aiModels(w http.ResponseWriter, r *http.Request) {
+	if !h.aiReady(w) {
+		return
+	}
+	result, err := h.ai.AI.ListModels(r.Context())
+	if err != nil {
+		aiFail(w, err)
+		return
+	}
+	write(w, http.StatusOK, result)
+}
+
 func (h *aiHandler) aiCheck(w http.ResponseWriter, r *http.Request) {
 	if !h.aiReady(w) {
 		return
