@@ -134,7 +134,11 @@ func keychainCredentialKey() ([]byte, error) {
 }
 
 func fileCredentialKey(dataDir string) ([]byte, error) {
-	path := filepath.Join(dataDir, "credentials", "desktop.key")
+	directory := filepath.Join(dataDir, "credentials")
+	if err := ensureCredentialDirectory(directory); err != nil {
+		return nil, err
+	}
+	path := filepath.Join(directory, "desktop.key")
 	if key, err := os.ReadFile(path); err == nil {
 		if len(key) != 32 {
 			return nil, errors.New("桌面凭据密钥长度无效")
@@ -171,11 +175,8 @@ func createCredentialKey(dataDir string, key []byte) error {
 		return errors.New("桌面凭据密钥长度无效")
 	}
 	directory := filepath.Join(dataDir, "credentials")
-	if err := os.MkdirAll(directory, 0700); err != nil {
-		return fmt.Errorf("无法创建本地凭据目录：%w", err)
-	}
-	if err := os.Chmod(directory, 0700); err != nil {
-		return fmt.Errorf("无法设置本地凭据目录权限：%w", err)
+	if err := ensureCredentialDirectory(directory); err != nil {
+		return err
 	}
 	path := filepath.Join(directory, "desktop.key")
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
@@ -197,4 +198,14 @@ func createCredentialKey(dataDir string, key []byte) error {
 		return fmt.Errorf("无法保存本地凭据密钥：%w", err)
 	}
 	return os.Chmod(path, 0600)
+}
+
+func ensureCredentialDirectory(directory string) error {
+	if err := os.MkdirAll(directory, 0700); err != nil {
+		return fmt.Errorf("无法创建本地凭据目录：%w", err)
+	}
+	if err := os.Chmod(directory, 0700); err != nil {
+		return fmt.Errorf("无法设置本地凭据目录权限：%w", err)
+	}
+	return nil
 }

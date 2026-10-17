@@ -51,6 +51,39 @@ func TestFileCredentialKeyCreatesPrivateKey(t *testing.T) {
 	}
 }
 
+func TestFileCredentialKeyRepairsExistingDirectoryPermissions(t *testing.T) {
+	dataDir := t.TempDir()
+	directory := filepath.Join(dataDir, "credentials")
+	if err := os.MkdirAll(directory, 0755); err != nil {
+		t.Fatal(err)
+	}
+	key := bytes.Repeat([]byte{0x55}, 32)
+	if err := os.WriteFile(filepath.Join(directory, "desktop.key"), key, 0644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := fileCredentialKey(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, key) {
+		t.Fatal("existing local key changed")
+	}
+	directoryInfo, err := os.Stat(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := directoryInfo.Mode().Perm(); got != 0700 {
+		t.Fatalf("directory permissions = %o, want 700", got)
+	}
+	fileInfo, err := os.Stat(filepath.Join(directory, "desktop.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fileInfo.Mode().Perm(); got != 0600 {
+		t.Fatalf("key permissions = %o, want 600", got)
+	}
+}
+
 func TestFormalMacOSSignatureDetection(t *testing.T) {
 	if hasFormalMacOSSignature("Signature=adhoc\n") {
 		t.Fatal("ad-hoc signature considered formal")
