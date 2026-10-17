@@ -1,7 +1,9 @@
 package httptransport
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"tangentry/internal/ai"
@@ -67,12 +69,54 @@ func (h *aiHandler) aiChat(w http.ResponseWriter, r *http.Request) {
 	if !decodeAIRequest(w, r, &input, 512<<10) {
 		return
 	}
+	if r.Header.Get("Accept") == "text/event-stream" || r.URL.Query().Get("stream") == "1" {
+		h.aiChatStream(w, r, input)
+		return
+	}
 	result, err := h.ai.AI.Chat(r.Context(), input)
 	if err != nil {
 		summaryFail(w, err)
 		return
 	}
 	write(w, http.StatusOK, result)
+}
+
+func (h *aiHandler) aiChatStream(w http.ResponseWriter, r *http.Request, input ai.ChatRequest) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		result, err := h.ai.AI.Chat(r.Context(), input)
+		if err != nil {
+			summaryFail(w, err)
+			return
+		}
+		write(w, http.StatusOK, result)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+	result, err := h.ai.AI.ChatStream(r.Context(), input, func(chunk string) error {
+		payload, marshalErr := json.Marshal(map[string]string{"delta": chunk})
+		if marshalErr != nil {
+			return marshalErr
+		}
+		if _, writeErr := fmt.Fprintf(w, "data: %s\n\n", payload); writeErr != nil {
+			return writeErr
+		}
+		flusher.Flush()
+		return nil
+	})
+	if err != nil {
+		payload, _ := json.Marshal(map[string]string{"error": "对话暂时不可用。"})
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", payload)
+		flusher.Flush()
+		return
+	}
+	payload, _ := json.Marshal(result)
+	_, _ = fmt.Fprintf(w, "event: done\ndata: %s\n\n", payload)
+	flusher.Flush()
 }
 
 func (h *aiHandler) aiChatHistory(w http.ResponseWriter, r *http.Request) {

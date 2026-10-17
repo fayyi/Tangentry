@@ -13,13 +13,15 @@ import { originalRunAt } from './articleViewport'
 import { SourceText } from './SourceText'
 import { ArticleImage } from './ArticleImage'
 import { ReaderActions } from '../../shared/reader/ReaderActions'
+import { shouldRenderInlineSummary } from '../ai/summaryPresentation'
 
 export interface ArticleReaderHandle { locateQuote: (quote: string) => string | null }
 
-export function ArticleReader({ ref: externalRef, contentId = '', text, blocks, feed, notes, focus, onQuote, onOpenNotes, onUnresolved, navigationTarget, onReturnedToReading, collapsible = false, title = '订阅源正文', sourceURL, sourceTitle, summarySource = contentId.startsWith('xiaohongshu:') ? 'article:social' : undefined }: {
+export function ArticleReader({ ref: externalRef, contentId = '', text, blocks, feed, notes, focus, onQuote, onOpenNotes, onUnresolved, navigationTarget, onReturnedToReading, collapsible = false, title = '订阅源正文', sourceURL, sourceTitle, summarySource = contentId.startsWith('xiaohongshu:') ? 'article:social' : undefined, toolbarOwnsSummary = false }: {
   ref?: Ref<ArticleReaderHandle>
   contentId?: string
   summarySource?: string
+  toolbarOwnsSummary?: boolean
   sourceURL?: string
   sourceTitle?: string
   blocks?: ArticleBlock[]
@@ -154,7 +156,7 @@ export function ArticleReader({ ref: externalRef, contentId = '', text, blocks, 
   let offset = 0
   return <article className="article-reader" onMouseUp={event => { event.stopPropagation(); capture() }} onKeyUp={event => { event.stopPropagation(); capture() }}>
     <h2>{title}</h2>
-    {contentId && summarySource && text.trim() && <ReaderActions><SummaryControl summary={summary} source={{contentId,title:sourceTitle,url:sourceURL}} onLocateQuote={locateQuote}/></ReaderActions>}
+    {contentId && summarySource && text.trim() && shouldRenderInlineSummary(feed, toolbarOwnsSummary) && <ReaderActions><SummaryControl summary={summary} source={{contentId,title:sourceTitle,url:sourceURL}} onLocateQuote={locateQuote}/></ReaderActions>}
     <div className="article-reading-tools">{contentId && pieces.length > 0 && <TextTranslationControl translation={translation} label="翻译文章"/>}{readingPosition.available && <button type="button" className="text-button article-resume" onClick={() => {
       if (collapsible && !textExpanded) { setTextExpanded(true); requestAnimationFrame(readingPosition.restore) }
       else readingPosition.restore()

@@ -11,6 +11,7 @@ type SummarySegment struct {
 	Index int     `json:"index"`
 	Start float64 `json:"start"`
 	End   float64 `json:"end"`
+	Page  int     `json:"page,omitempty"`
 	Text  string  `json:"text"`
 }
 
@@ -41,6 +42,7 @@ type SummaryOutline struct {
 	Indices  []int            `json:"indices,omitempty"`
 	Start    float64          `json:"start,omitempty"`
 	End      float64          `json:"end,omitempty"`
+	Page     int              `json:"page,omitempty"`
 	Anchor   string           `json:"anchor,omitempty"`
 	Children []SummaryOutline `json:"children,omitempty"`
 }
@@ -50,6 +52,7 @@ type SummaryCitation struct {
 	Start float64 `json:"start,omitempty"`
 	End   float64 `json:"end,omitempty"`
 	Quote string  `json:"quote"`
+	Page  int     `json:"page,omitempty"`
 }
 
 // A timed citation may start at zero. Keep article citations untimed without
@@ -60,8 +63,9 @@ func (citation SummaryCitation) MarshalJSON() ([]byte, error) {
 		Start *float64 `json:"start,omitempty"`
 		End   *float64 `json:"end,omitempty"`
 		Quote string   `json:"quote"`
+		Page  int      `json:"page,omitempty"`
 	}
-	value := wireCitation{Index: citation.Index, Quote: citation.Quote}
+	value := wireCitation{Index: citation.Index, Quote: citation.Quote, Page: citation.Page}
 	if citation.End > citation.Start {
 		value.Start, value.End = &citation.Start, &citation.End
 	}

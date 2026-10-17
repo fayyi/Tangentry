@@ -18,6 +18,7 @@ type AIService interface {
 	SummaryGenerate(context.Context, ai.SummaryInput) (ai.SummaryResult, error)
 	SummaryCached(context.Context, string) (ai.SummaryResult, error)
 	Chat(context.Context, ai.ChatRequest) (ai.ChatResult, error)
+	ChatStream(context.Context, ai.ChatRequest, func(string) error) (ai.ChatResult, error)
 	ChatHistory(context.Context, string) (ai.ChatResult, error)
 }
 

@@ -68,6 +68,18 @@ func (s *Service) SummaryGenerate(parent context.Context, in SummaryInput) (Summ
 	if cache.Result.TotalCalls != totalCalls || !validCachedSummary(cache.Result, segments) {
 		return SummaryResult{}, ErrStorage
 	}
+	// A completed cache from before outline support must not remain an empty
+	// outline forever. Keep the key but rerun the resumable operation.
+	if cache.Result.Complete && len(cache.Result.Outline) == 0 {
+		cache.Result.Complete = false
+		cache.Result.CompletedCalls = 0
+		cache.Result.Overview = ""
+		cache.Result.Points = nil
+		cache.Result.Citations = nil
+		cache.Result.Outline = nil
+		cache.Current = nil
+		cache.Next = nil
+	}
 	if cache.Result.Complete {
 		return cache.Result, nil
 	}
@@ -99,6 +111,15 @@ func (s *Service) SummaryGenerate(parent context.Context, in SummaryInput) (Summ
 	cache.Result.Points = final.Points
 	cache.Result.Citations = buildCitations(final, segments)
 	cache.Result.Outline = normalizeOutline(final.Outline, segments)
+	if len(cache.Result.Outline) == 0 {
+		// Some otherwise valid models omit the optional field. Turn the concrete
+		// points into a useful outline rather than rendering an empty panel.
+		cache.Result.Outline = make([]SummaryOutline, 0, len(final.Points))
+		for _, point := range final.Points {
+			cache.Result.Outline = append(cache.Result.Outline, SummaryOutline{Title: point.Text, Level: 0, Indices: append([]int(nil), point.Indices...)})
+		}
+		cache.Result.Outline = normalizeOutline(cache.Result.Outline, segments)
+	}
 	if err := save(cache); err != nil {
 		return SummaryResult{}, ErrStorage
 	}
@@ -305,6 +326,7 @@ func normalizeOutline(outline []SummaryOutline, segments []SummarySegment) []Sum
 			if len(node.Indices) > 0 {
 				first, last := byIndex[node.Indices[0]], byIndex[node.Indices[len(node.Indices)-1]]
 				node.Start, node.End = first.Start, last.End
+				node.Page = first.Page
 			}
 			node.Children = walk(node.Children, node.Level)
 			result = append(result, node)

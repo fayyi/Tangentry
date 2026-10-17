@@ -5,14 +5,14 @@ import (
 	"errors"
 )
 
-const summaryPromptVersion = 1
+const summaryPromptVersion = 2
 const maxSummaryTextBytes = 1 << 20
 const summaryLeafBytes = 7000
 const summaryLeafCount = 24
 const summaryReduceCount = 6
 const summaryPointIndexLimit = 64
 
-const defaultSummaryPrompt = "请用简体中文总结提供的内容，同时输出一句话总结、关键要点和层级大纲。大纲保留原文段落锚点；有时间戳时请关联时间戳。只引用输入中的索引，不要编造事实。"
+const defaultSummaryPrompt = "请用简体中文总结提供的内容，同时输出一句话总结、关键要点和层级大纲。大纲至少输出一个一级节点，保留原文段落锚点；有时间戳时请关联时间戳。只引用输入中的索引，不要编造事实。"
 
 // These small proxies keep package-level tests focused on summary behavior
 // while the storage boundary remains isolated from the generation workflow.

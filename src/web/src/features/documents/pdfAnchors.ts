@@ -1,6 +1,38 @@
 import type { PageViewport } from 'pdfjs-dist'
 import type { PDFAnchor, PDFRect } from '../../shared/api/types'
 
+export interface PDFSummarySegment { index: number; start: number; end: number; page: number; text: string }
+
+// Keep PDF extraction independent from the canvas so summary input can be
+// tested without pdf.js or a browser DOM.
+export function pdfSummarySegments(pages: Array<{ page: number; text: string }>): PDFSummarySegment[] {
+  const segments: PDFSummarySegment[] = []
+  const encoder = new TextEncoder()
+  for (const { page, text } of pages) {
+    const value = text.trim()
+    let part = ''
+    let bytes = 0
+    const flush = () => {
+      const chunk = part.trim()
+      if (chunk) {
+        const index = segments.length
+        segments.push({ index, start: 0, end: 0, page, text: chunk })
+      }
+      part = ''
+      bytes = 0
+    }
+    for (const character of value) {
+      const size = encoder.encode(character).length
+      if (bytes + size > 7000) flush()
+      part += character
+      bytes += size
+      if (character === '\n' && bytes > 5500) flush()
+    }
+    if (part) flush()
+  }
+  return segments
+}
+
 export function pdfSelection(root: HTMLElement, viewport: PageViewport, documentId: string, page: number): PDFAnchor | null {
   const selection = window.getSelection()
   if (!selection || selection.rangeCount !== 1 || selection.isCollapsed) return null

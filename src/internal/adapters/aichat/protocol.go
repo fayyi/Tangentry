@@ -1,6 +1,7 @@
 package aichat
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -50,6 +51,106 @@ func (c *Client) Chat(ctx context.Context, config ai.Config, source string, mess
 	}
 	payload := map[string]any{"model": config.Model, "stream": false, "messages": chat}
 	return c.complete(ctx, config, payload)
+}
+
+// ChatStream consumes an OpenAI-compatible text/event-stream. A provider that
+// closes the stream without any content is treated as a format error so the
+// HTTP layer can fall back to the regular completion endpoint.
+func (c *Client) ChatStream(ctx context.Context, config ai.Config, source string, messages []ai.ChatMessage, emit func(string) error) error {
+	if !ai.ValidEndpoint(config.BaseURL) || strings.TrimSpace(config.Model) == "" {
+		return ai.ErrInvalid
+	}
+	chat := make([]map[string]string, 0, len(messages)+1)
+	chat = append(chat, map[string]string{"role": "system", "content": "你是 Tangentry 阅读助手。根据给定内容回答问题，无法确定时明确说明。" + source})
+	for _, message := range messages {
+		chat = append(chat, map[string]string{"role": message.Role, "content": message.Content})
+	}
+	payload := map[string]any{"model": config.Model, "stream": true, "messages": chat}
+	body, _ := json.Marshal(payload)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(config.BaseURL, "/")+"/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return ai.ErrProvider
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream, application/json")
+	if config.Key != "" {
+		req.Header.Set("Authorization", "Bearer "+config.Key)
+	}
+	client := c.HTTP
+	if client == nil {
+		client = New().HTTP
+	}
+	safe := *client
+	safe.Jar = nil
+	safe.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	response, err := safe.Do(req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return ai.ErrProvider
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		if response.StatusCode == http.StatusBadRequest || response.StatusCode == http.StatusUnprocessableEntity {
+			return rejectedRequest(response.Body)
+		}
+		if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
+			return ai.ErrAuth
+		}
+		if response.StatusCode == http.StatusTooManyRequests {
+			return ai.ErrRate
+		}
+		return ai.ErrProvider
+	}
+	return parseStream(response.Body, emit)
+}
+
+// parseStream is deliberately small and line-oriented: OpenAI-compatible
+// servers send one JSON object per data line and terminate with [DONE].
+func parseStream(body io.Reader, emit func(string) error) error {
+	reader := bufio.NewScanner(io.LimitReader(body, (256<<10)+1))
+	reader.Buffer(make([]byte, 4096), 64<<10)
+	emitted := false
+	for reader.Scan() {
+		line := strings.TrimSpace(reader.Text())
+		if line == "" || strings.HasPrefix(line, ":") {
+			continue
+		}
+		if strings.HasPrefix(line, "data:") {
+			line = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		}
+		if line == "[DONE]" {
+			if !emitted {
+				return ai.ErrFormat
+			}
+			return nil
+		}
+		var event struct {
+			Choices []struct {
+				Delta struct {
+					Content string `json:"content"`
+				} `json:"delta"`
+				FinishReason string `json:"finish_reason"`
+			} `json:"choices"`
+		}
+		if json.Unmarshal([]byte(line), &event) != nil || len(event.Choices) != 1 {
+			return ai.ErrFormat
+		}
+		if value := event.Choices[0].Delta.Content; value != "" {
+			emitted = true
+			if err := emit(value); err != nil {
+				return err
+			}
+		}
+	}
+	if err := reader.Err(); err != nil {
+		return err
+	}
+	if !emitted {
+		return ai.ErrFormat
+	}
+	return nil
 }
 
 func New() *Client {
