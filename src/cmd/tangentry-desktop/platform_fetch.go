@@ -13,6 +13,7 @@ import (
 	"github.com/egoist/mygo"
 
 	"tangentry/internal/app"
+	"tangentry/internal/platformfetch"
 )
 
 const (
@@ -37,6 +38,36 @@ type platformPageSession struct {
 	ready     chan struct{}
 	readyOnce sync.Once
 }
+
+const douyinFeedCaptureScript = `(function(){
+  if (window.__tangentryDouyinFeedInstalled) return;
+  window.__tangentryDouyinFeedInstalled = true;
+  window.__tangentryDouyinFeed = window.__tangentryDouyinFeed || [];
+  const max = 4 * 1024 * 1024;
+  const isFeed = value => /\/aweme\/(?:v1|v2)\/[^?]*feed/i.test(String(value || ''));
+  const push = (url, status, body) => {
+    if (!isFeed(url) || typeof body !== 'string' || !body || body.length > max) return;
+    window.__tangentryDouyinFeed.push({url:String(url), status:Number(status)||0, body:body});
+    if (window.__tangentryDouyinFeed.length > 32) window.__tangentryDouyinFeed.splice(0, window.__tangentryDouyinFeed.length - 32);
+  };
+  const originalFetch = window.fetch;
+  window.fetch = function(){
+    const request = arguments[0];
+    const url = typeof request === 'string' ? request : request && request.url;
+    return originalFetch.apply(this, arguments).then(response => {
+      if (!isFeed(url || response.url)) return response;
+      try { response.clone().text().then(body => push(url || response.url, response.status, body)).catch(() => {}); } catch (_) {}
+      return response;
+    });
+  };
+  const open = XMLHttpRequest.prototype.open;
+  const send = XMLHttpRequest.prototype.send;
+  XMLHttpRequest.prototype.open = function(method, url){ this.__tangentryURL = url; return open.apply(this, arguments); };
+  XMLHttpRequest.prototype.send = function(){
+    this.addEventListener('load', function(){ try { push(this.__tangentryURL || this.responseURL, this.status, this.responseText); } catch (_) {} });
+    return send.apply(this, arguments);
+  };
+})();`
 
 func newPlatformPageBridge() *platformPageBridge {
 	return &platformPageBridge{sessions: make(map[string]*platformPageSession)}
@@ -103,7 +134,73 @@ func (b *platformPageBridge) Fetch(ctx context.Context, platform, path string, r
 			}
 		})
 	}
-	return app.PlatformPageResponse{Status: result.Status, Body: result.Body, Restricted: isCloudflarePage(result.Status, result.Body)}, nil
+	return app.PlatformPageResponse{Status: result.Status, Body: result.Body, Restricted: isCloudflarePage(result.Status, result.Body), URL: session.window.Page().URL()}, nil
+}
+
+func (b *platformPageBridge) CaptureFeed(ctx context.Context, platform string, pages int) (platformfetch.FeedCaptureResponse, error) {
+	if platform != "douyin" {
+		return platformfetch.FeedCaptureResponse{}, errors.New("该平台不支持页面推荐抓取")
+	}
+	if pages < 1 || pages > 5 {
+		return platformfetch.FeedCaptureResponse{}, errors.New("页面推荐抓取页数无效")
+	}
+	session, err := b.session(platform, "https://www.douyin.com/")
+	if err != nil {
+		return platformfetch.FeedCaptureResponse{}, err
+	}
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if err := waitPlatformPage(ctx, session.ready); err != nil {
+		return platformfetch.FeedCaptureResponse{}, err
+	}
+	session.lastUsed = time.Now()
+	if session.closeAt != nil {
+		session.closeAt.Stop()
+		session.closeAt = nil
+	}
+	code := feedCaptureScript(pages)
+	raw, err := session.window.Page().EvalContext(ctx, code)
+	if err != nil {
+		return platformfetch.FeedCaptureResponse{}, err
+	}
+	encoded, err := json.Marshal(raw)
+	if err != nil {
+		return platformfetch.FeedCaptureResponse{}, err
+	}
+	var result struct {
+		PageURL   string `json:"pageUrl"`
+		Title     string `json:"title"`
+		Ready     string `json:"ready"`
+		Responses []struct {
+			URL    string `json:"url"`
+			Status int    `json:"status"`
+			Body   string `json:"body"`
+		} `json:"responses"`
+	}
+	if err := json.Unmarshal(encoded, &result); err != nil {
+		return platformfetch.FeedCaptureResponse{}, err
+	}
+	responses := make([]platformfetch.Response, 0, len(result.Responses))
+	for _, response := range result.Responses {
+		if len(response.Body) > platformFetchMaxBody {
+			continue
+		}
+		responses = append(responses, platformfetch.Response{Status: response.Status, Body: response.Body, URL: response.URL, Restricted: isCloudflarePage(response.Status, response.Body)})
+	}
+	if session.closeAt == nil {
+		session.closeAt = time.AfterFunc(platformFetchIdle, func() {
+			session.mu.Lock()
+			idle := time.Since(session.lastUsed) >= platformFetchIdle
+			if idle {
+				session.closeAt = nil
+			}
+			session.mu.Unlock()
+			if idle && session.window != nil && !session.window.IsDestroyed() {
+				session.window.Close()
+			}
+		})
+	}
+	return platformfetch.FeedCaptureResponse{Responses: responses, PageURL: result.PageURL, Title: result.Title, Ready: result.Ready}, nil
 }
 
 func (b *platformPageBridge) session(platform, origin string) (*platformPageSession, error) {
@@ -120,7 +217,12 @@ func (b *platformPageBridge) session(platform, origin string) (*platformPageSess
 	window := mygo.NewWindow(mygo.WindowOptions{
 		Title: "Tangentry 平台请求", Hidden: true,
 		Width: 800, Height: 600, MinWidth: 640, MinHeight: 480,
-		SkipTaskbar: true, Page: mygo.PageOptions{TrustedOrigins: []string{origin}},
+		SkipTaskbar: true, Page: mygo.PageOptions{TrustedOrigins: []string{origin}, PreloadScript: func() string {
+			if platform == "douyin" {
+				return douyinFeedCaptureScript
+			}
+			return ""
+		}()},
 	})
 	window.Page().OnPageTitleUpdated(func(event *mygo.TitleEvent) { event.PreventDefault() })
 	window.Page().OnDOMReady(func() { session.readyOnce.Do(func() { close(session.ready) }) })
@@ -279,6 +381,10 @@ func platformFetchScript(path string, request app.PlatformPageRequest) (string, 
 		bodyOption = ", body:" + string(body)
 	}
 	return fmt.Sprintf(`const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), %d); try { return await fetch(location.origin + %s, {method:%s, headers:%s, credentials:"include"%s, signal:controller.signal}).then(async response => { const max=%d; if (!response.body) { const body=await response.text(); return {status:response.status, body:body.length>max?"":body, tooLarge:body.length>max}; } const reader=response.body.getReader(); const decoder=new TextDecoder(); let body="", bytes=0; try { for (;;) { const part=await reader.read(); if (part.done) break; bytes+=part.value.byteLength; if (bytes>max) { await reader.cancel(); return {status:response.status, body:"", tooLarge:true}; } body+=decoder.decode(part.value,{stream:true}); } body+=decoder.decode(); return {status:response.status, body:body, tooLarge:false}; } finally { reader.releaseLock(); } }); } finally { clearTimeout(timer); }`, platformFetchTimeout.Milliseconds(), pathJSON, method, headers, bodyOption, platformFetchMaxBody), nil
+}
+
+func feedCaptureScript(pages int) string {
+	return fmt.Sprintf(`const wait = ms => new Promise(resolve => setTimeout(resolve, ms)); const count = %d; for (let i=0; i<count; i++) { window.scrollTo(0, document.body ? document.body.scrollHeight : 0); await wait(1200); } await wait(800); return {pageUrl: location.href, title: document.title || "", ready: document.readyState, responses: (window.__tangentryDouyinFeed || []).splice(0, 20)};`, pages)
 }
 
 func isCloudflarePage(status int, body string) bool {

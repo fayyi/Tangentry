@@ -116,8 +116,55 @@ func TestRecommendationUsesPageBridgeBeforeCookieFallback(t *testing.T) {
 	}
 }
 
+func TestRecommendationCaptureUsesPageOwnedFeedAndReportsRedirect(t *testing.T) {
+	c := &Client{
+		Page: captureFetcherFunc(func(context.Context, string, int) (platformfetch.FeedCaptureResponse, error) {
+			return platformfetch.FeedCaptureResponse{
+				PageURL: "https://passport.douyin.com/login",
+				Ready:   "complete",
+				Responses: []platformfetch.Response{{
+					Status: http.StatusOK,
+					URL:    "https://www.douyin.com/aweme/v1/web/tab/feed/",
+					Body:   `{"status_code":0,"has_more":0,"aweme_list":[{"aweme_id":"6961737553342991651","desc":"页面自带推荐","video":{"duration":2100}}]}`,
+				}},
+			}, nil
+		}),
+		Cookie: func(string) string { t.Fatal("cookie fallback should not run"); return "" },
+	}
+	feed, err := c.Recommendations(context.Background(), 1)
+	if err != nil || len(feed.Items) != 1 || feed.Items[0].Title != "页面自带推荐" {
+		t.Fatalf("captured feed was not used: %+v %v", feed, err)
+	}
+}
+
+func TestRecommendationMobileFallback(t *testing.T) {
+	c := &Client{Cookie: func(string) string { return "sessionid=fixture" }, HTTP: &http.Client{Transport: trip(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path == "/aweme/v2/web/module/feed/" {
+			return &http.Response{StatusCode: http.StatusForbidden, Request: r, Body: io.NopCloser(strings.NewReader("blocked"))}, nil
+		}
+		if r.URL.Path != "/aweme/v1/feed/" || r.Method != http.MethodGet || !strings.Contains(r.Header.Get("User-Agent"), "Android") {
+			t.Fatalf("unexpected mobile fallback request: %s %s", r.Method, r.URL.Path)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Request: r, Body: io.NopCloser(strings.NewReader(`{"status_code":0,"has_more":0,"aweme_list":[{"aweme_id":"6961737553342991651","desc":"移动推荐","video":{"duration":3000}}]}`))}, nil
+	})}}
+	feed, err := c.Recommendations(context.Background(), 1)
+	if err != nil || len(feed.Items) != 1 || feed.SourceTitle != "抖音移动端推荐" {
+		t.Fatalf("mobile fallback failed: %+v %v", feed, err)
+	}
+}
+
 type pageFetcherFunc func(context.Context, string, string, platformfetch.Request) (platformfetch.Response, error)
 
 func (f pageFetcherFunc) Fetch(ctx context.Context, platform, path string, request platformfetch.Request) (platformfetch.Response, error) {
 	return f(ctx, platform, path, request)
+}
+
+type captureFetcherFunc func(context.Context, string, int) (platformfetch.FeedCaptureResponse, error)
+
+func (f captureFetcherFunc) CaptureFeed(ctx context.Context, platform string, pages int) (platformfetch.FeedCaptureResponse, error) {
+	return f(ctx, platform, pages)
+}
+
+func (captureFetcherFunc) Fetch(context.Context, string, string, platformfetch.Request) (platformfetch.Response, error) {
+	return platformfetch.Response{}, errors.New("unexpected regular page fetch")
 }

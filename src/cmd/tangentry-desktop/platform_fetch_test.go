@@ -57,6 +57,26 @@ func TestPlatformFetchScriptHonorsMethodBodyAndLimits(t *testing.T) {
 	}
 }
 
+func TestDouyinFeedCaptureScriptHooksPageRequests(t *testing.T) {
+	for _, part := range []string{
+		"__tangentryDouyinFeed",
+		"XMLHttpRequest.prototype.open",
+		"XMLHttpRequest.prototype.send",
+		"window.fetch",
+		"aweme\\/(?:v1|v2)\\/",
+	} {
+		if !strings.Contains(douyinFeedCaptureScript, part) {
+			t.Fatalf("capture script does not contain %q", part)
+		}
+	}
+	code := feedCaptureScript(2)
+	for _, part := range []string{"window.scrollTo", "await wait(1200)", "splice(0, 20)", "pageUrl", "ready"} {
+		if !strings.Contains(code, part) {
+			t.Fatalf("capture execution script does not contain %q: %s", part, code)
+		}
+	}
+}
+
 func TestPlatformFetchRequestAndResponseLimits(t *testing.T) {
 	request := app.PlatformPageRequest{Method: "", Body: strings.Repeat("x", 256<<10)}
 	if err := validatePlatformFetchRequest(&request); err != nil || request.Method != "GET" {

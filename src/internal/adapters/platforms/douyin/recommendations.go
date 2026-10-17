@@ -3,6 +3,8 @@ package douyin
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -41,6 +43,37 @@ func (c *Client) Recommendations(ctx context.Context, page int) (discovery.Feed,
 	if page > 1 {
 		query.Set("pull_type", "2")
 	}
+	diagnostics := make([]string, 0, 4)
+	if capture, ok := c.Page.(platformfetch.FeedCaptureFetcher); ok {
+		captured, err := capture.CaptureFeed(ctx, "douyin", page)
+		if err != nil {
+			diagnostics = append(diagnostics, "页面抓取执行失败："+err.Error())
+		} else {
+			if captured.PageURL != "" && !isDouyinPageURL(captured.PageURL) {
+				diagnostics = append(diagnostics, "隐藏页面被重定向到 "+captured.PageURL)
+			}
+			if title := strings.TrimSpace(captured.Title); title != "" && looksLikeLoginOrChallenge(title) {
+				diagnostics = append(diagnostics, "隐藏页面标题显示为“"+title+"”")
+			}
+			for _, response := range captured.Responses {
+				if response.Status != http.StatusOK || response.Body == "" {
+					diagnostics = append(diagnostics, fmt.Sprintf("页面 feed 响应为 HTTP %d 或空 body", response.Status))
+					continue
+				}
+				feed, err := decodeRecommendations([]byte(response.Body), page, nil)
+				if err == nil && len(feed.Items) > 0 {
+					feed.SourceTitle = "抖音页面推荐"
+					return feed, nil
+				}
+				if err != nil {
+					diagnostics = append(diagnostics, "页面 feed JSON 解析失败："+err.Error())
+				}
+			}
+			if len(captured.Responses) == 0 {
+				diagnostics = append(diagnostics, "页面未捕获到推荐 feed 请求（页面状态："+captured.Ready+"）")
+			}
+		}
+	}
 	if c.Page != nil {
 		response, err := c.Page.Fetch(ctx, "douyin", "/aweme/v2/web/module/feed/?"+query.Encode(), platformfetch.Request{
 			Method: http.MethodPost,
@@ -53,21 +86,30 @@ func (c *Client) Recommendations(ctx context.Context, page int) (discovery.Feed,
 			Body: "encoded_pre_item_ids=",
 		})
 		if err == nil {
-			denied := &discovery.PlatformError{Restricted: true, Message: "抖音未提供可用的网页推荐，请在应用内完成验证后重试。"}
-			if response.Restricted || response.Status != http.StatusOK || looksLikeChallenge([]byte(response.Body)) {
-				return discovery.Feed{}, denied
+			if response.Status == http.StatusOK && response.Body != "" && !response.Restricted && !looksLikeChallenge([]byte(response.Body)) {
+				feed, decodeErr := decodeRecommendations([]byte(response.Body), page, nil)
+				if decodeErr == nil && len(feed.Items) > 0 {
+					return feed, nil
+				}
+				if decodeErr != nil {
+					diagnostics = append(diagnostics, "页面 fetch JSON 解析失败："+decodeErr.Error())
+				}
+			} else {
+				diagnostics = append(diagnostics, describePageResponse(response.Status, response.Body, response.Restricted))
 			}
-			return decodeRecommendations([]byte(response.Body), page, denied)
+		} else {
+			diagnostics = append(diagnostics, "页面 fetch 执行失败："+err.Error())
 		}
-		// The bridge is deliberately best-effort. A native WebView may be
-		// unavailable during startup; server-side HTTP remains the fallback.
 	}
 	cookie := ""
 	if c.Cookie != nil {
 		cookie = c.Cookie(endpoint)
 	}
 	if cookie == "" {
-		return discovery.Feed{}, &discovery.PlatformError{Message: "抖音网页推荐需要登录信息，请在设置中保存 Cookie。"}
+		return discovery.Feed{}, &discovery.PlatformError{Restricted: true, Message: "抖音推荐不可用：" + joinDiagnostics(diagnostics, "未找到抖音登录 Cookie；请在应用内打开抖音完成登录后重试。")}
+	}
+	if c.HTTP == nil {
+		return discovery.Feed{}, &discovery.PlatformError{Message: "抖音推荐不可用：" + joinDiagnostics(diagnostics, "当前运行环境没有可用的网络客户端。")}
 	}
 	query = url.Values{"device_platform": {"webapp"}, "aid": {"6383"}, "channel": {"channel_pc_web"}, "module_id": {"3003101"}, "count": {"20"}, "refresh_index": {strconv.Itoa(page)}, "refer_type": {"10"}, "pull_type": {"0"}, "use_lite_type": {"2"}}
 	query.Set("update_version_code", "170400")
@@ -117,10 +159,15 @@ func (c *Client) Recommendations(ctx context.Context, page int) (discovery.Feed,
 		return discovery.Feed{}, &discovery.PlatformError{Message: "抖音推荐暂时无法连接，请稍后手动重试。"}
 	}
 	defer res.Body.Close()
-	denied := &discovery.PlatformError{Restricted: true, Message: "抖音未提供可用的网页推荐；Cookie 不保证通过站点限制。可关闭推荐，使用订阅或导入链接。"}
+	denied := &discovery.PlatformError{Restricted: true, Message: "抖音推荐不可用：" + joinDiagnostics(diagnostics, "网页 Cookie 请求未返回可解析的推荐。")}
 	if res.StatusCode != http.StatusOK {
 		if res.StatusCode == http.StatusForbidden || res.StatusCode == http.StatusTooManyRequests {
-			return discovery.Feed{}, &discovery.PlatformError{Message: "抖音推荐触发网页验证或限流，请在浏览器打开抖音完成验证后重新导入 Cookie。", Restricted: true}
+			if feed, mobileErr := c.mobileRecommendations(ctx, page, cookie); mobileErr == nil {
+				return feed, nil
+			} else {
+				diagnostics = append(diagnostics, "移动端免签名 feed 失败："+mobileErr.Error())
+			}
+			return discovery.Feed{}, &discovery.PlatformError{Message: "抖音推荐不可用：" + joinDiagnostics(diagnostics, "网页请求返回 HTTP "+strconv.Itoa(res.StatusCode)+"，可能触发验证或限流；请在浏览器打开抖音完成验证后重新导入 Cookie。"), Restricted: true}
 		}
 		return discovery.Feed{}, denied
 	}
@@ -129,9 +176,83 @@ func (c *Client) Recommendations(ctx context.Context, page int) (discovery.Feed,
 		return discovery.Feed{}, denied
 	}
 	if looksLikeChallenge(body) {
-		return discovery.Feed{}, &discovery.PlatformError{Message: "抖音返回了网页验证页面，桌面版暂不能代替 WebView 完成验证；请重新导入浏览器 Cookie。", Restricted: true}
+		if feed, mobileErr := c.mobileRecommendations(ctx, page, cookie); mobileErr == nil {
+			return feed, nil
+		} else {
+			diagnostics = append(diagnostics, "移动端免签名 feed 失败："+mobileErr.Error())
+		}
+		return discovery.Feed{}, &discovery.PlatformError{Message: "抖音推荐不可用：" + joinDiagnostics(diagnostics, "返回了网页验证页面；桌面版暂不能代替 WebView 完成验证，请重新导入浏览器 Cookie。"), Restricted: true}
 	}
-	return decodeRecommendations(body, page, denied)
+	feed, err := decodeRecommendations(body, page, nil)
+	if err != nil {
+		return discovery.Feed{}, denied
+	}
+	return feed, nil
+}
+
+func (c *Client) mobileRecommendations(ctx context.Context, page int, cookie string) (discovery.Feed, error) {
+	endpoint := "https://aweme.snssdk.com/aweme/v1/feed/"
+	query := url.Values{"device_platform": {"android"}, "aid": {"1128"}, "version_code": {"290000"}, "version_name": {"29.0.0"}, "count": {"20"}, "refresh_index": {strconv.Itoa(page)}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"?"+query.Encode(), nil)
+	if err != nil {
+		return discovery.Feed{}, err
+	}
+	req.Header.Set("User-Agent", "com.ss.android.ugc.aweme/290000 (Linux; Android 13)")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Cookie", cookie)
+	client := *c.HTTP
+	client.Jar = nil
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	res, err := client.Do(req)
+	if err != nil {
+		return discovery.Feed{}, err
+	}
+	defer res.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(res.Body, (4<<20)+1))
+	if err != nil {
+		return discovery.Feed{}, err
+	}
+	if len(body) > 4<<20 {
+		return discovery.Feed{}, errors.New("响应超过大小限制")
+	}
+	if res.StatusCode != http.StatusOK {
+		return discovery.Feed{}, fmt.Errorf("HTTP %d", res.StatusCode)
+	}
+	feed, err := decodeRecommendations(body, page, nil)
+	if err != nil {
+		return discovery.Feed{}, errors.New("响应不是可用的推荐 JSON")
+	}
+	feed.SourceTitle = "抖音移动端推荐"
+	return feed, nil
+}
+
+func describePageResponse(status int, body string, restricted bool) string {
+	if restricted || looksLikeChallenge([]byte(body)) {
+		return fmt.Sprintf("页面响应 HTTP %d，内容疑似登录/验证页", status)
+	}
+	if body == "" {
+		return fmt.Sprintf("页面响应 HTTP %d，body 为空", status)
+	}
+	return fmt.Sprintf("页面响应 HTTP %d，未返回可解析推荐", status)
+}
+
+func isDouyinPageURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+	return u.Scheme == "https" && (host == "www.douyin.com" || host == "douyin.com")
+}
+
+func joinDiagnostics(diagnostics []string, fallback string) string {
+	if len(diagnostics) == 0 {
+		return fallback
+	}
+	if len(diagnostics) > 4 {
+		diagnostics = diagnostics[len(diagnostics)-4:]
+	}
+	return strings.Join(append(diagnostics, fallback), "；")
 }
 
 func cookieValue(header, name string) string {
@@ -147,6 +268,11 @@ func cookieValue(header, name string) string {
 func looksLikeChallenge(body []byte) bool {
 	value := strings.ToLower(string(body))
 	return strings.Contains(value, "verify_center") || strings.Contains(value, "verify_page") || strings.Contains(value, "captcha") || strings.Contains(value, "secsdk") || strings.Contains(value, "byted_acrawler") || strings.Contains(value, "slide_verify") || strings.Contains(value, "just a moment") || strings.Contains(value, "cf-chl-") || strings.Contains(value, "challenge-platform") || strings.Contains(value, "cloudflare")
+}
+
+func looksLikeLoginOrChallenge(value string) bool {
+	lower := strings.ToLower(value)
+	return strings.Contains(lower, "login") || strings.Contains(lower, "登录") || strings.Contains(lower, "verify") || strings.Contains(lower, "验证") || strings.Contains(lower, "captcha")
 }
 
 type feedVideo struct {
@@ -185,13 +311,13 @@ func decodeRecommendations(body []byte, page int, denied error) (discovery.Feed,
 		} `json:"data"`
 	}
 	if json.Unmarshal(body, &response) != nil {
-		return discovery.Feed{}, denied
+		return discovery.Feed{}, decodeError(denied, "响应不是 JSON")
 	}
 	if response.Data != nil && response.Status == nil {
 		response.Status, response.Videos, response.More = response.Data.Status, response.Data.Videos, response.Data.More
 	}
 	if response.Status == nil || *response.Status != 0 || response.Videos == nil || len(response.Videos) > 500 {
-		return discovery.Feed{}, denied
+		return discovery.Feed{}, decodeError(denied, "推荐 JSON 状态无效或没有视频列表")
 	}
 	feed := discovery.Feed{Items: []content.Item{}, Page: page, HasMore: response.More != 0, SourceTitle: "抖音网页推荐"}
 	seen := map[string]bool{}
@@ -225,8 +351,15 @@ func decodeRecommendations(body []byte, page int, denied error) (discovery.Feed,
 		}
 	}
 	if len(response.Videos) > 0 && len(feed.Items) == 0 {
-		return discovery.Feed{}, denied
+		return discovery.Feed{}, decodeError(denied, "推荐视频字段无法映射")
 	}
 	feed.Total = len(feed.Items)
 	return feed, nil
+}
+
+func decodeError(denied error, detail string) error {
+	if denied != nil {
+		return denied
+	}
+	return errors.New(detail)
 }
