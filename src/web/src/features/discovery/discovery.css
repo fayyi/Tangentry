@@ -67,6 +67,7 @@
 .gallery-errors-popover .text-button { white-space: nowrap; }
 .gallery-errors-feedback { grid-column: 1 / -1 !important; color: var(--danger) !important; }
 .discovery-search-result { display: flex; align-items: center; gap: 8px; margin: -6px 0 14px; color: var(--muted); font-size: 13px; }
+.discovery-new-content { display: flex; align-items: center; gap: 8px; margin: -8px 0 14px; color: var(--muted); font-size: 13px; }
 
 @media (max-width: 760px) {
   .discovery-toolbar { gap: 10px 8px; margin-bottom: 14px; }

@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest'
 import type { DiscoveryBatchItem } from '../../shared/api/types'
-import { appendDiscoveryBatch, appendDiscoveryItems, buildDiscoveryBatchParams, buildDiscoveryTopicParam, discoverySourceLabel } from './useDiscoveryBatch'
+import { appendDiscoveryBatch, appendDiscoveryItems, buildDiscoveryBatchParams, buildDiscoveryTopicParam, createDiscoveryBatchSession, discoveryReasonType, discoverySourceLabel, isDiscoverySessionStale, readDiscoveryFilterState, restoreDiscoveryBatchSession, updateDiscoveryFilterState } from './useDiscoveryBatch'
 
 function entry(id: string, source = 'bilibili', reason = '来源更新'): DiscoveryBatchItem {
   return {
@@ -42,4 +42,32 @@ test('maps source and reason to compact Chinese labels', () => {
   expect(discoverySourceLabel('bilibili')).toBe('B站推荐')
   expect(discoverySourceLabel('unknown')).toBe('unknown 推荐')
   expect(discoverySourceLabel('youtube', '少量随机探索')).toBe('陌生探索')
+})
+
+test('maps backend reasons to discovery badge types', () => {
+  expect(discoveryReasonType('subscriptions', '最近更新')).toBe('订阅')
+  expect(discoveryReasonType('bilibili', '订阅优先')).toBe('订阅')
+  expect(discoveryReasonType('youtube', '少量随机探索')).toBe('探索')
+  expect(discoveryReasonType('linuxdo', '平台首页推荐')).toBe('推荐')
+})
+
+test('restores a discovery session without sharing mutable response arrays', () => {
+  const session = createDiscoveryBatchSession({ view: 'wander', topic: '科技', source: '' }, 42)
+  session.batch = { batchId: 'batch', items: [entry('a')], hasNextBatch: true, nextCursor: 'cursor', reason: '最近更新', sourceStatus: {} }
+  session.cursor = 'cursor'
+  session.unreadIds = ['a']
+  session.lastLoadedAt = 100
+  const restored = restoreDiscoveryBatchSession(session)
+  expect(restored).not.toBe(session)
+  expect(restored?.batch?.items).not.toBe(session.batch.items)
+  expect(restored?.options.topic).toBe('科技')
+  expect(restored?.cursor).toBe('cursor')
+  expect(isDiscoverySessionStale(100, 100 + 29 * 60 * 1000)).toBe(false)
+  expect(isDiscoverySessionStale(100, 100 + 30 * 60 * 1000)).toBe(true)
+})
+
+test('keeps discovery source and topic filters in the session', () => {
+  updateDiscoveryFilterState({ platform: 'linuxdo', topic: '技术' })
+  expect(readDiscoveryFilterState()).toMatchObject({ platform: 'linuxdo', topic: '技术' })
+  updateDiscoveryFilterState({ platform: 'all', topic: '' })
 })

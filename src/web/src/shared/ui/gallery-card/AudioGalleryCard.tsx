@@ -9,20 +9,20 @@ import { useCardAudio } from '../useCardAudio'
 import { announcePlayback } from '../../media/playback'
 import { AuthorName } from '../CardAuthor'
 
-export function AudioGalleryCard({ item, origin, saved, pending, onRead, onSave, onDownload, status, excerpt, discovery = false }: GalleryCardContentProps) {
+export function AudioGalleryCard({ item, origin, discoveryReason, discoveryType, saved, pending, onRead, onSave, onDownload, status, excerpt, discovery = false }: GalleryCardContentProps) {
   const playback = useGalleryPlayback()
   const { audio, audioRef, audioURL, audioLoading, audioError, audioPosition, audioDuration, audioTotal, audioTime, toggleAudio,
     setAudioPosition, setAudioDuration, setAudioError, setPlaying } = useCardAudio(item, playback)
 
   return (
-    <GalleryCardFrame item={item} origin={origin} className="card-audio" onRead={onRead} discovery={discovery}>
+    <GalleryCardFrame item={item} origin={origin} discoveryReason={discoveryReason} className="card-audio" onRead={onRead}>
       <PodcastArtwork key={item.id + item.thumbnailUrl} item={item} />
       <div className="card-audio-info">
         <GalleryCardTitle item={item} onRead={onRead} />
         {excerpt}
       </div>
       <div className="card-audio-meta">
-        <AuthorName item={item} />
+        <AuthorName item={item} discoveryType={discovery ? discoveryType : undefined} discoveryReason={discoveryReason} />
         <AudioCardActions item={item} saved={saved} pending={pending} onSave={onSave} onDownload={onDownload} />
       </div>
       <div className="card-audio-controls">

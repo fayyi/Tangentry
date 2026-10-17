@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 	"time"
 
@@ -85,7 +86,9 @@ func TestBatchPreservesPlatformErrorDetails(t *testing.T) {
 	want := &PlatformError{Message: "Linux.do 触发 Cloudflare 验证，请重新验证。", Restricted: true}
 	service := NewBatchService(batchProvider{failures: map[string]error{"linuxdo": want}}, nil, []string{"linuxdo"})
 	response, err := service.Create(context.Background(), BatchRequest{})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	status := response.SourceStatus["linuxdo"]
 	if status.Status != "unavailable" || status.Message != want.Message || !status.Restricted || !status.RequiresVerification {
 		t.Fatalf("platform details were lost: %#v", status)
@@ -118,5 +121,93 @@ func TestBatchUsesDefaultsWhenOptionsAreOmitted(t *testing.T) {
 	}
 	if len(response.Items) != 1 || response.Reason == "" {
 		t.Fatalf("omitted options were not defaulted: %#v", response)
+	}
+}
+
+func TestBatchRoundRobinsSourcesAndCapsRuns(t *testing.T) {
+	feeds := map[string]Feed{
+		"bilibili": {Items: make([]content.Item, 0, 8)},
+		"youtube":  {Items: make([]content.Item, 0, 5)},
+	}
+	bilibiliItems := feeds["bilibili"].Items
+	for index := 0; index < 8; index++ {
+		bilibiliItems = append(bilibiliItems, batchItem("bilibili", "b"+strconv.Itoa(index), "B站", "b", int64(100-index)))
+	}
+	feeds["bilibili"] = Feed{Items: bilibiliItems}
+	youtubeItems := feeds["youtube"].Items
+	for index := 0; index < 5; index++ {
+		youtubeItems = append(youtubeItems, batchItem("youtube", "y"+strconv.Itoa(index), "YouTube", "y", int64(90-index)))
+	}
+	feeds["youtube"] = Feed{Items: youtubeItems}
+	service := NewBatchService(batchProvider{feeds: feeds}, func(context.Context) (Feed, error) {
+		items := make([]content.Item, 0, 12)
+		for index := 0; index < 12; index++ {
+			items = append(items, batchItem("rss", "s"+strconv.Itoa(index), "订阅", "s", int64(120-index)))
+		}
+		return Feed{Items: items}, nil
+	}, []string{"bilibili", "youtube"})
+	response, err := service.Create(context.Background(), BatchRequest{Size: 15, Seed: 77, SubscriptionRatio: 60, ExplorationRatio: 15})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Items) != 15 {
+		t.Fatalf("expected a full page, got %d", len(response.Items))
+	}
+	counts := map[string]int{}
+	last, streak := "", 0
+	for _, item := range response.Items {
+		counts[item.Source]++
+		if item.Source == last {
+			streak++
+		} else {
+			last, streak = item.Source, 1
+		}
+		if streak > 2 {
+			t.Fatalf("source %q appeared %d times consecutively: %#v", item.Source, streak, response.Items)
+		}
+	}
+	if counts["subscriptions"] != 5 || counts["bilibili"] != 5 || counts["youtube"] != 5 {
+		t.Fatalf("round-robin distribution was not balanced: %#v", counts)
+	}
+}
+
+func TestBatchContinuesRoundRobinAfterSourcesNeedNextPage(t *testing.T) {
+	snapshots := &batchSnapshots{}
+	bilibiliFirst := make([]content.Item, 0, 6)
+	youtubeFirst := make([]content.Item, 0, 6)
+	bilibiliSecond := make([]content.Item, 0, 6)
+	youtubeSecond := make([]content.Item, 0, 6)
+	for index := 0; index < 6; index++ {
+		bilibiliFirst = append(bilibiliFirst, batchItem("bilibili", "b1-"+strconv.Itoa(index), "B1", "b", int64(40-index)))
+		youtubeFirst = append(youtubeFirst, batchItem("youtube", "y1-"+strconv.Itoa(index), "Y1", "y", int64(39-index)))
+		bilibiliSecond = append(bilibiliSecond, batchItem("bilibili", "b2-"+strconv.Itoa(index), "B2", "b", int64(20-index)))
+		youtubeSecond = append(youtubeSecond, batchItem("youtube", "y2-"+strconv.Itoa(index), "Y2", "y", int64(19-index)))
+	}
+	service := NewBatchService(batchProvider{pages: map[string]map[int]Feed{
+		"bilibili": {
+			1: {Items: bilibiliFirst, HasMore: true},
+			2: {Items: bilibiliSecond, HasMore: false},
+		},
+		"youtube": {
+			1: {Items: youtubeFirst, HasMore: true},
+			2: {Items: youtubeSecond, HasMore: false},
+		},
+	}}, nil, []string{"bilibili", "youtube"}, snapshots)
+	first, err := service.Create(context.Background(), BatchRequest{Size: 10, Seed: 88})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Items) != 10 || first.Items[0].Source == first.Items[1].Source {
+		t.Fatalf("first page should interleave sources: %#v cursor=%q hasNext=%v", first.Items, first.NextCursor, first.HasNextBatch)
+	}
+	if first.NextCursor == "" {
+		t.Fatalf("expected continuation cursor: %#v", first)
+	}
+	second, err := service.Create(context.Background(), BatchRequest{Size: 10, Seed: 88, Cursor: first.NextCursor})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second.Items) != 2 || second.Items[0].Source == second.Items[1].Source {
+		t.Fatalf("extended page should continue interleaving sources: %#v cursor=%q hasNext=%v", second.Items, second.NextCursor, second.HasNextBatch)
 	}
 }

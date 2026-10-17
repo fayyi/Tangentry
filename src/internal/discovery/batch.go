@@ -153,8 +153,8 @@ func (s *BatchService) Create(ctx context.Context, request BatchRequest) (BatchR
 		if snapshot.Exhausted == nil {
 			snapshot.Exhausted = map[string]bool{}
 		}
-		if cursor.Offset == len(snapshot.Candidates) && !allSourcesExhausted(snapshot) {
-			if err := s.extendSnapshot(ctx, request, &snapshot); err != nil {
+		if s.shouldExtendSnapshot(snapshot, cursor.Offset) {
+			if err := s.extendSnapshot(ctx, request, &snapshot, cursor.Offset); err != nil {
 				return BatchResponse{}, err
 			}
 			if err := s.saveSnapshot(ctx, cursor.BatchID, requestKey, snapshot); err != nil {
@@ -258,7 +258,7 @@ func (s *BatchService) Create(ctx context.Context, request BatchRequest) (BatchR
 	// If every source starts empty but advertises a continuation, fetch one
 	// continuation before exposing an empty stream.
 	if len(snapshot.Candidates) == 0 && !allSourcesExhausted(snapshot) {
-		if err := s.extendSnapshot(ctx, request, &snapshot); err != nil {
+		if err := s.extendSnapshot(ctx, request, &snapshot, 0); err != nil {
 			return BatchResponse{}, err
 		}
 	}
@@ -296,12 +296,32 @@ func unmarshalBatchSnapshot(payload []byte, snapshot *batchSnapshot) error {
 	return nil
 }
 
-func (s *BatchService) extendSnapshot(ctx context.Context, request BatchRequest, snapshot *batchSnapshot) error {
+func (s *BatchService) shouldExtendSnapshot(snapshot batchSnapshot, offset int) bool {
+	if allSourcesExhausted(snapshot) {
+		return false
+	}
+	if offset >= len(snapshot.Candidates) {
+		return true
+	}
+	remaining := make(map[string]bool, len(snapshot.Exhausted))
+	for _, candidate := range snapshot.Candidates[offset:] {
+		remaining[candidate.Source] = true
+	}
+	for source, exhausted := range snapshot.Exhausted {
+		if !exhausted && !remaining[source] {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *BatchService) extendSnapshot(ctx context.Context, request BatchRequest, snapshot *batchSnapshot, offset int) error {
 	seen := make(map[string]struct{}, len(snapshot.Candidates))
 	for _, candidate := range snapshot.Candidates {
 		seen[candidate.Item.ID] = struct{}{}
 	}
-	add := func(source, reason string, feed Feed) {
+	add := func(source, reason string, feed Feed) []batchCandidate {
+		added := make([]batchCandidate, 0, len(feed.Items))
 		for _, item := range feed.Items {
 			if content.Validate(item) != nil {
 				continue
@@ -310,12 +330,14 @@ func (s *BatchService) extendSnapshot(ctx context.Context, request BatchRequest,
 				continue
 			}
 			seen[item.ID] = struct{}{}
-			snapshot.Candidates = append(snapshot.Candidates, batchCandidate{
+			added = append(added, batchCandidate{
 				Item: item, Source: source, Fresh: true,
 				Key: stableKey(request.Seed, item.ID) + "\x00" + reason,
 			})
 		}
+		return added
 	}
+	newCandidates := make([]batchCandidate, 0, len(s.sources)*20)
 	for _, source := range s.sources {
 		if source == "subscriptions" || request.Source != "" && source != request.Source || snapshot.Exhausted[source] {
 			continue
@@ -332,22 +354,26 @@ func (s *BatchService) extendSnapshot(ctx context.Context, request BatchRequest,
 				break
 			}
 			snapshot.Status[source] = BatchSourceStatus{Status: "ok"}
-			before := len(snapshot.Candidates)
-			add(source, "来源更新", feed)
+			before := len(newCandidates)
+			newCandidates = append(newCandidates, add(source, "来源更新", feed)...)
 			if request.Topic != "" {
-				newCandidates := s.filterTopicCandidates(ctx, request, snapshot.Candidates[before:])
-				snapshot.Candidates = append(snapshot.Candidates[:before], newCandidates...)
+				filtered := s.filterTopicCandidates(ctx, request, newCandidates[before:])
+				newCandidates = append(newCandidates[:before], filtered...)
 			}
 			snapshot.NextPages[source] = page + 1
 			if len(feed.Items) == 0 || !feed.HasMore {
 				snapshot.Exhausted[source] = true
 			}
-			if len(snapshot.Candidates) > before || snapshot.Exhausted[source] {
+			if len(newCandidates) > before || snapshot.Exhausted[source] {
 				break
 			}
 			page++
 		}
 	}
+	offset = min(offset, len(snapshot.Candidates))
+	prefix := append([]batchCandidate(nil), snapshot.Candidates[:offset]...)
+	tail := append(append([]batchCandidate(nil), snapshot.Candidates[offset:]...), newCandidates...)
+	snapshot.Candidates = append(prefix, interleaveBatchCandidates(tail)...)
 	return nil
 }
 
@@ -445,72 +471,97 @@ func selectBatchOrder(candidates []batchCandidate, request BatchRequest, carried
 	if len(carryCandidates) > carryLimit {
 		carryCandidates = carryCandidates[:carryLimit]
 	}
-	result := append([]batchCandidate(nil), carryCandidates...)
-	for start := 0; start < len(newCandidates); start += request.Size {
-		end := min(start+request.Size, len(newCandidates))
-		result = append(result, selectBatch(newCandidates[start:end], request)...)
-	}
-	return result
+	// Carry-over items remain part of the same source queues. Keeping them in
+	// the interleaving prevents a refresh from putting one source back on top.
+	return selectBatch(append(carryCandidates, newCandidates...), request)
 }
 
 func selectBatch(candidates []batchCandidate, request BatchRequest) []batchCandidate {
-	selected := make([]batchCandidate, 0, len(candidates))
-	used := make(map[string]struct{}, len(candidates))
-	subscriptionTarget := len(candidates) * request.SubscriptionRatio / 100
-	explorationTarget := len(candidates) * request.ExplorationRatio / 100
-	if request.View == "random" {
-		explorationTarget = min(explorationTarget, len(candidates)/3)
-	}
-	lastAuthor, lastSource, authorStreak, sourceStreak := "", "", 0, 0
-	appendCandidate := func(candidate batchCandidate) bool {
-		if _, ok := used[candidate.Item.ID]; ok {
-			return false
-		}
-		author := candidate.Item.AuthorID
-		if author == "" {
-			author = candidate.Item.Author
-		}
-		if author != "" && author == lastAuthor && authorStreak >= 2 || candidate.Source == lastSource && sourceStreak >= 2 {
-			return false
-		}
-		selected = append(selected, candidate)
-		used[candidate.Item.ID] = struct{}{}
-		if author == lastAuthor {
-			authorStreak++
-		} else {
-			lastAuthor, authorStreak = author, 1
-		}
-		if candidate.Source == lastSource {
-			sourceStreak++
-		} else {
-			lastSource, sourceStreak = candidate.Source, 1
-		}
-		return true
-	}
+	_ = request
+	return interleaveBatchCandidates(candidates)
+}
+
+// interleaveBatchCandidates performs a stable round-robin over source queues.
+// It deliberately does not sort within a queue, so latest/random/topic ordering
+// chosen before this function remains deterministic for each source. When a
+// queue is exhausted, the remaining sources continue without a gap.
+func interleaveBatchCandidates(candidates []batchCandidate) []batchCandidate {
+	queues := make(map[string][]batchCandidate, len(candidates))
+	sources := make([]string, 0, len(candidates))
 	for _, candidate := range candidates {
-		if candidate.Source == "subscriptions" && countSource(selected, "subscriptions") < subscriptionTarget {
-			appendCandidate(candidate)
+		if _, ok := queues[candidate.Source]; !ok {
+			sources = append(sources, candidate.Source)
 		}
+		queues[candidate.Source] = append(queues[candidate.Source], candidate)
 	}
-	exploration := 0
-	for _, candidate := range candidates {
-		if candidate.Source != "subscriptions" && candidate.Fresh && exploration < explorationTarget && appendCandidate(candidate) {
-			exploration++
+	result := make([]batchCandidate, 0, len(candidates))
+	positions := make(map[string]int, len(sources))
+	lastSource, lastAuthor := "", ""
+	sourceStreak, authorStreak := 0, 0
+	for len(result) < len(candidates) {
+		added := false
+		for _, source := range sources {
+			queue := queues[source]
+			position := positions[source]
+			candidateIndex := -1
+			for index := position; index < len(queue); index++ {
+				candidate := queue[index]
+				author := candidate.Item.AuthorID
+				if author == "" {
+					author = candidate.Item.Author
+				}
+				if source == lastSource && sourceStreak >= 2 || author != "" && author == lastAuthor && authorStreak >= 2 {
+					continue
+				}
+				candidateIndex = index
+				break
+			}
+			if candidateIndex < 0 {
+				continue
+			}
+			candidate := queue[candidateIndex]
+			queue = append(queue[:candidateIndex], queue[candidateIndex+1:]...)
+			queues[source] = queue
+			positions[source] = position
+			result = append(result, candidate)
+			author := candidate.Item.AuthorID
+			if author == "" {
+				author = candidate.Item.Author
+			}
+			if source == lastSource {
+				sourceStreak++
+			} else {
+				lastSource, sourceStreak = source, 1
+			}
+			if author != "" && author == lastAuthor {
+				authorStreak++
+			} else {
+				lastAuthor, authorStreak = author, 1
+			}
+			added = true
 		}
-	}
-	for _, candidate := range candidates {
-		appendCandidate(candidate)
-	}
-	// If diversity constraints leave a short page, use the remaining stable
-	// order rather than pretending the candidate pool is empty.
-	for _, candidate := range candidates {
-		if _, ok := used[candidate.Item.ID]; ok {
+		if added {
 			continue
 		}
-		selected = append(selected, candidate)
-		used[candidate.Item.ID] = struct{}{}
+		// All remaining candidates violate a diversity guard. Do not drop them;
+		// append the first remaining queue item so pagination can still finish.
+		for _, source := range sources {
+			queue := queues[source]
+			if len(queue) == 0 {
+				continue
+			}
+			candidate := queue[0]
+			queues[source] = queue[1:]
+			result = append(result, candidate)
+			lastSource, sourceStreak = source, 1
+			lastAuthor, authorStreak = candidate.Item.AuthorID, 1
+			if lastAuthor == "" {
+				lastAuthor = candidate.Item.Author
+			}
+			break
+		}
 	}
-	return selected
+	return result
 }
 
 func validateBatchRequest(request *BatchRequest) error {
@@ -602,16 +653,6 @@ func contains(values []string, target string) bool {
 		}
 	}
 	return false
-}
-
-func countSource(values []batchCandidate, source string) int {
-	count := 0
-	for _, value := range values {
-		if value.Source == source {
-			count++
-		}
-	}
-	return count
 }
 
 func sourceError(err error) BatchSourceStatus {
