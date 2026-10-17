@@ -1,5 +1,5 @@
 import { Copy, Download, FileText, LoaderCircle, Sparkles, X } from 'lucide-react'
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import type { useSummary } from './useSummary'
 import { summaryMarkdown, type SummarySource } from './summaryMarkdown'
 import { saveFile } from '../../shared/browser/saveFile'
@@ -7,7 +7,7 @@ import './ai.css'
 
 function clock(seconds: number) { const total = Math.max(0, Math.floor(seconds)); const h = Math.floor(total / 3600); const m = Math.floor(total / 60) % 60; const s = total % 60; return h ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}` }
 
-export function SummaryControl({ summary, onLocateQuote, source }: { summary: ReturnType<typeof useSummary>; onLocateQuote?: (quote: string) => string | null; source?: SummarySource }) {
+export function SummaryControl({ summary, onLocateQuote, source, emptyMessage, emptyAction }: { summary: ReturnType<typeof useSummary>; onLocateQuote?: (quote: string) => string | null; source?: SummarySource; emptyMessage?: string; emptyAction?: ReactNode }) {
   const { inspection, loading, pending, error, notice, open, setOpen, generate, cancel, onSeek } = summary
   const result = inspection?.result; const done = result?.complete; const points = result?.points ?? []; const citations = new Map((result?.citations ?? []).map(value => [value.index, value]))
   const ready = inspection?.settings.summaryReady ?? inspection?.settings.ready
@@ -120,6 +120,7 @@ export function SummaryControl({ summary, onLocateQuote, source }: { summary: Re
     {open && <div ref={panel} id={id} tabIndex={-1} className="ai-summary-popover" role="dialog" aria-label="AI 摘要">
       <div className="ai-summary-head"><strong><FileText size={15} aria-hidden="true" />AI 摘要</strong><div className="ai-summary-actions">{done && <><button type="button" className="icon-button" aria-label="复制摘要" title="复制摘要" disabled={copying || pending || loading || Boolean(error)} onClick={() => void copy()}>{copying ? <LoaderCircle size={15} className="spin"/> : <Copy size={15}/>}</button><button type="button" className="icon-button" aria-label="导出摘要" title="导出摘要" disabled={pending || loading || Boolean(error)} onClick={download}><Download size={15}/></button></>}<button className="icon-button" aria-label="关闭 AI 摘要" title="关闭 AI 摘要" onClick={close}><X size={15}/></button></div></div>
       {loading && !inspection && <p role="status">正在读取本机摘要…</p>}
+      {!loading && !inspection && (emptyMessage || emptyAction) && <><p className="ai-summary-muted">{emptyMessage}</p>{emptyAction}</>}
       {inspection && !done && !pending && <>{ready ? <p className="ai-summary-muted">预计调用 {result?.totalCalls ?? 0} 次，使用 {result?.model || inspection.settings.model || '未选择模型'}。</p> : <p className="ai-summary-muted">请先在<a href="/tools#translation">翻译与摘要设置</a>配置支持摘要的通用模型。</p>}{!error && <button className="button button-secondary" title={inspection.settings.translating ? 'AI 正在处理其他任务' : undefined} disabled={loading || !ready || inspection.active || inspection.settings.translating} onClick={() => void generate()}>{result?.completedCalls ? '继续生成摘要' : '生成摘要'}</button>}</>}
       {pending && <p role="status">正在生成，已完成 {result?.completedCalls ?? 0} / {result?.totalCalls ?? 0} 次 <button className="text-button" onClick={cancel}>取消</button></p>}
       {done && <div className="ai-summary-result"><p className="ai-summary-overview">{result?.overview}</p><ol>{points.map((point, index) => <li key={`${index}-${point.text}`}><span>{point.text}</span><div className="ai-summary-citations">{point.indices.map(sourceIndex => { const citation = citations.get(sourceIndex); return citation ? citation.start !== undefined && citation.end !== undefined ? <button key={sourceIndex} className="ai-summary-time" onClick={() => onSeek?.(citation.start!)}>{clock(citation.start)}</button> : onLocateQuote ? <button key={sourceIndex} className="ai-summary-quote ai-summary-quote-link" title="定位原文" aria-label={`定位原文：${citation.quote}`} onClick={() => {

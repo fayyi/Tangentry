@@ -4,9 +4,11 @@ import type { SubtitleTrack } from '../../shared/api/types'
 import type { SummaryInspection, SummaryResult } from './summaryTypes'
 import { usePageVisibility } from '../../shared/hooks/usePageVisibility'
 
-export function useSummary(contentId: string, source: string, track?: SubtitleTrack, onSeek?: (seconds: number) => void, text?: string) {
+export interface SummarySegmentInput { index: number; start?: number; end?: number; page?: number; text: string }
+
+export function useSummary(contentId: string, source: string, track?: SubtitleTrack, onSeek?: (seconds: number) => void, text?: string, segments?: SummarySegmentInput[]) {
   const visible = usePageVisibility()
-  const input = useMemo(() => track ? { contentId, source, segments: track.cues.map((cue, index) => ({ index, start: cue.start, end: cue.end, text: cue.text })), revision: 0 } : text?.trim() ? { contentId, source, text, revision: 0 } : null, [contentId, source, track, text])
+  const input = useMemo(() => track ? { contentId, source, segments: track.cues.map((cue, index) => ({ index, start: cue.start, end: cue.end, text: cue.text })), revision: 0 } : segments?.length ? { contentId, source, segments, revision: 0 } : text?.trim() ? { contentId, source, text, revision: 0 } : null, [contentId, source, track, text, segments])
   const scope = useMemo(() => input ? JSON.stringify(input) : '', [input])
   const liveScope = useRef(scope); liveScope.current = scope
   const [inspection, setInspection] = useState<SummaryInspection | null>(null)

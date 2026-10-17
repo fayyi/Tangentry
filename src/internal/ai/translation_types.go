@@ -44,6 +44,13 @@ type Chatter interface {
 	Chat(context.Context, Config, string, []ChatMessage) (string, error)
 }
 
+// StreamChatter is optional. Providers that support OpenAI-compatible SSE can
+// emit answer deltas as they arrive; the service falls back to Chatter when it
+// is not implemented.
+type StreamChatter interface {
+	ChatStream(context.Context, Config, string, []ChatMessage, func(string) error) error
+}
+
 type Input struct {
 	Source    string          `json:"source,omitempty"`
 	ContentID string          `json:"contentId"`

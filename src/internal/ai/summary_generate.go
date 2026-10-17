@@ -305,6 +305,7 @@ func normalizeOutline(outline []SummaryOutline, segments []SummarySegment) []Sum
 			if len(node.Indices) > 0 {
 				first, last := byIndex[node.Indices[0]], byIndex[node.Indices[len(node.Indices)-1]]
 				node.Start, node.End = first.Start, last.End
+				node.Page = first.Page
 			}
 			node.Children = walk(node.Children, node.Level)
 			result = append(result, node)

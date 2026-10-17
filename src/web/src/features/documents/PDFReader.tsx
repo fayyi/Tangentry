@@ -4,6 +4,11 @@ import type { PageViewport, PDFDocumentProxy, RenderTask, TextLayer } from 'pdfj
 import type { PDFAnchor, ReadingNote } from '../../shared/api/types'
 import workerURL from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import { pdfSelection, viewportPDFRect } from './pdfAnchors'
+import { pdfSummarySegments } from './pdfAnchors'
+import { useSummary } from '../ai/useSummary'
+import { SummaryControl } from '../ai/SummaryControl'
+import { AIInsights } from '../ai/AIInsights'
+import { ReaderActions } from '../../shared/reader/ReaderActions'
 import './pdf.css'
 
 export interface PDFAnnotationProps {
@@ -22,6 +27,7 @@ export function PDFReader({ id, notes = [], focus, onQuote, onOpenNotes, onUnres
   const [page, setPage] = useState(1), [zoom, setZoom] = useState(1), [rotation, setRotation] = useState(0)
   const [width, setWidth] = useState(720), [busy, setBusy] = useState(true), [error, setError] = useState('')
   const [rendered, setRendered] = useState<RenderedPage | null>(null), [attempt, setAttempt] = useState(0)
+  const [summaryPages, setSummaryPages] = useState<Array<{ page: number; text: string }>>([])
   const [selection, setSelection] = useState<PDFAnchor | null>(null), [selectionHint, setSelectionHint] = useState('')
   const canvas = useRef<HTMLCanvasElement>(null), container = useRef<HTMLDivElement>(null), layer = useRef<HTMLDivElement>(null)
   const ready = !busy && !error && rendered?.page === page && rendered.rotation === rotation && rendered.zoom === zoom && rendered.width === width
@@ -29,13 +35,23 @@ export function PDFReader({ id, notes = [], focus, onQuote, onOpenNotes, onUnres
   useEffect(() => {
     let active = true
     let destroy: (() => void) | undefined
-    setDocument(null); setRendered(null); setError(''); setBusy(true); setPage(1); setSelection(null)
+    setDocument(null); setRendered(null); setError(''); setBusy(true); setPage(1); setSelection(null); setSummaryPages([])
     void import('pdfjs-dist').then(pdfjs => {
       if (!active) return
       pdfjs.GlobalWorkerOptions.workerSrc = workerURL
       const task = pdfjs.getDocument({ url: '/api/documents/' + encodeURIComponent(id) + '/file', enableXfa: false, cMapUrl: '/pdfjs/cmaps/', cMapPacked: true, standardFontDataUrl: '/pdfjs/standard_fonts/', wasmUrl: '/pdfjs/wasm/' })
       destroy = () => { void task.destroy().catch(() => {}) }
-      return task.promise.then(value => { if (active) setDocument(value) })
+      return task.promise.then(async value => {
+        if (!active) return
+        setDocument(value)
+        const pages: Array<{ page: number; text: string }> = []
+        for (let number = 1; number <= value.numPages; number++) {
+          const sheet = await value.getPage(number)
+          const content = await sheet.getTextContent()
+          pages.push({ page: number, text: content.items.map(item => 'str' in item ? item.str + (item.hasEOL ? '\n' : ' ') : '').join('') })
+        }
+        if (active) setSummaryPages(pages)
+      })
     }).catch(() => { if (active) { setError('PDF 无法打开，文件可能损坏、加密或暂时不可用。可下载原文件后检查。'); setBusy(false) } })
     return () => { active = false; destroy?.() }
   }, [id, attempt])
@@ -117,6 +133,9 @@ export function PDFReader({ id, notes = [], focus, onQuote, onOpenNotes, onUnres
     const current = window.getSelection(); current?.removeAllRanges(); current?.addRange(range); capture()
   }
   const highlights = ready && rendered ? valid.filter(note => note.pdfAnchor!.page === page).map(note => ({ note, rects: note.pdfAnchor!.rects.map(rect => viewportPDFRect(rendered.viewport, rect)) })) : []
+  const summarySegments = useMemo(() => pdfSummarySegments(summaryPages), [summaryPages])
+  const summary = useSummary(id, 'pdf', undefined, undefined, undefined, summarySegments)
+  const locatePage = (target: number) => { if (target >= 1 && target <= (document?.numPages ?? 1)) setPage(target) }
 
   return <section className="pdf-reader" aria-label="PDF 阅读器" onMouseUp={event => { event.stopPropagation(); capture() }} onKeyUp={event => event.stopPropagation()}>
     <link rel="stylesheet" href="/pdfjs/text_layer.css" precedence="pdf-text-layer" />
@@ -137,5 +156,7 @@ export function PDFReader({ id, notes = [], focus, onQuote, onOpenNotes, onUnres
     {selection && onQuote && <div className="pdf-selection-tools"><button className="button button-secondary" onMouseDown={event => event.preventDefault()} onClick={() => { onQuote(selection.quote, selection); setSelection(null); window.getSelection()?.removeAllRanges() }}><Quote size={15} aria-hidden="true"/>引用 PDF 选区到批注</button><span>第 {selection.page} 页 · {Array.from(selection.quote).length} 字 · 保存后保留高亮</span></div>}
     {selectionHint && <p className="field-hint" role="status">{selectionHint}</p>}
     {document && <details className="pdf-text"><summary>查看本页文字</summary><p>{!ready ? '正在读取本页文字…' : rendered?.text || '本页未检测到可提取文字，可能是扫描图片。'}</p></details>}
+    <ReaderActions><SummaryControl summary={summary} source={{ contentId: id, title: 'PDF 文档' }}/></ReaderActions>
+    <AIInsights summary={summary} onLocatePage={locatePage} contentId={id} context={summaryPages.map(value => value.text).join('\n')} revision={summary.inspection?.settings.revision ?? 0}/>
   </section>
 }
