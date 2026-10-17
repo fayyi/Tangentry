@@ -131,6 +131,7 @@ func (s *Service) List(ctx context.Context) ([]Source, error) {
 	defer s.mu.Unlock()
 	for i := range items {
 		items[i].Active = s.active[items[i].ID]
+		ApplyHealth(&items[i], s.now().Unix())
 	}
 	return items, err
 }
@@ -142,6 +143,7 @@ func (s *Service) Get(ctx context.Context, id string) (Detail, error) {
 	s.mu.Lock()
 	detail.Source.Active = s.active[id]
 	s.mu.Unlock()
+	ApplyHealth(&detail.Source, s.now().Unix())
 	return detail, err
 }
 
@@ -206,7 +208,9 @@ func (s *Service) Rename(ctx context.Context, id string, edit Edit) (Source, err
 		return Source{}, err
 	}
 	defer release()
-	return s.repository.RenameSubscription(ctx, id, label)
+	source, err := s.repository.RenameSubscription(ctx, id, label)
+	ApplyHealth(&source, s.now().Unix())
+	return source, err
 }
 
 type AddressEdit struct {
@@ -231,7 +235,9 @@ func (s *Service) EditAddress(ctx context.Context, id string, edit AddressEdit) 
 		return Source{}, err
 	}
 	defer release()
-	return s.repository.EditSubscriptionAddress(ctx, id, expected, address, s.now().Unix())
+	source, err := s.repository.EditSubscriptionAddress(ctx, id, expected, address, s.now().Unix())
+	ApplyHealth(&source, s.now().Unix())
+	return source, err
 }
 func (s *Service) Delete(ctx context.Context, id string) error {
 	release, err := s.acquire(id)

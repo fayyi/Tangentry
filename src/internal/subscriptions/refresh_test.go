@@ -21,6 +21,32 @@ import (
 func rssSnapshot(title string) subscriptions.Snapshot {
 	return subscriptions.Snapshot{Title: "feed", Total: 1, Items: []content.Item{{ID: "rss:" + strings.Repeat("a", 64), Platform: "rss", PlatformID: strings.Repeat("a", 64), Kind: "article", Title: title, URL: "https://example.com/article"}}}
 }
+
+func TestRefreshHealthStatusMapping(t *testing.T) {
+	now := int64(1800000000)
+	cases := []struct {
+		name    string
+		state   subscriptions.RefreshState
+		updated int64
+		want    subscriptions.RefreshStatus
+	}{
+		{"paused", subscriptions.RefreshState{Enabled: false}, 0, subscriptions.StatusPaused},
+		{"never checked", subscriptions.RefreshState{Enabled: true}, 0, subscriptions.StatusNeverChecked},
+		{"healthy", subscriptions.RefreshState{Enabled: true, LastCheckedAt: now - 60}, now - 60, subscriptions.StatusHealthy},
+		{"stale", subscriptions.RefreshState{Enabled: true, LastCheckedAt: now - 60}, now - 31*24*60*60, subscriptions.StatusStale},
+		{"auth", subscriptions.RefreshState{Enabled: true, Failures: 1, Status: subscriptions.StatusAuthRequired}, now - 60, subscriptions.StatusAuthRequired},
+		{"limited", subscriptions.RefreshState{Enabled: true, Failures: 1, Status: subscriptions.StatusRateLimited}, now - 60, subscriptions.StatusRateLimited},
+		{"not found", subscriptions.RefreshState{Enabled: true, Failures: 1, Status: subscriptions.StatusNotFound}, now - 60, subscriptions.StatusNotFound},
+		{"upstream", subscriptions.RefreshState{Enabled: true, Failures: 1, Status: subscriptions.StatusUpstreamErr}, now - 60, subscriptions.StatusUpstreamErr},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := subscriptions.StatusFor(tc.state, tc.updated, now); got != tc.want {
+				t.Fatalf("status = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
 func TestRSSChecksPersistValidatorsAndOnlyChangeSnapshotWhenChanged(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "feeds.db")
@@ -105,13 +131,14 @@ func TestRSSChecksPersistValidatorsAndOnlyChangeSnapshotWhenChanged(t *testing.T
 	for _, scenario := range []struct {
 		status int
 		want   string
-	}{{401, "访问密钥"}, {403, "鉴权配置"}, {404, "HTTP 404"}, {503, "HTTP 503"}} {
+		state  subscriptions.RefreshStatus
+	}{{401, "访问密钥", subscriptions.StatusAuthRequired}, {403, "鉴权配置", subscriptions.StatusAuthRequired}, {404, "HTTP 404", subscriptions.StatusNotFound}, {429, "请求过于频繁", subscriptions.StatusRateLimited}, {503, "HTTP 503", subscriptions.StatusUpstreamErr}} {
 		failure = &feeds.FetchError{Message: "private-secret-from-upstream", StatusCode: scenario.status}
 		if _, err = service.Update(ctx, source.ID); err == nil {
 			t.Fatal("failure hidden", scenario.status)
 		}
 		cached, err = service.Get(ctx, source.ID)
-		if err != nil || !strings.Contains(cached.Source.Refresh.Message, scenario.want) || strings.Contains(cached.Source.Refresh.Message, "secret") || !reflect.DeepEqual(cached.Items, changed.Items) {
+		if err != nil || !strings.Contains(cached.Source.Refresh.Message, scenario.want) || cached.Source.Refresh.Status != scenario.state || strings.Contains(cached.Source.Refresh.Message, "secret") || !reflect.DeepEqual(cached.Items, changed.Items) {
 			t.Fatal("missing safe persisted diagnostic", scenario.status, err)
 		}
 	}
@@ -120,7 +147,7 @@ func TestRSSChecksPersistValidatorsAndOnlyChangeSnapshotWhenChanged(t *testing.T
 		t.Fatal("timeout hidden")
 	}
 	persisted, err = store.GetSubscriptionRefresh(ctx, source.ID)
-	if err != nil || !strings.Contains(persisted.State.Message, "响应超时") || strings.Contains(persisted.State.Message, "secret") {
+	if err != nil || !strings.Contains(persisted.State.Message, "响应超时") || persisted.State.Status != subscriptions.StatusUpstreamErr || strings.Contains(persisted.State.Message, "secret") {
 		t.Fatal("timeout diagnosis not safely persisted", err)
 	}
 	failure = nil

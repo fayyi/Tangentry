@@ -137,7 +137,10 @@ func (s *Store) EditSubscriptionAddress(ctx context.Context, id, expected, addre
 	}
 	record.Validators = subscriptions.Validators{}
 	record.State.LastAttemptAt, record.State.LastCheckedAt, record.State.Failures = 0, 0, 0
+	record.State.LastFailureAt = 0
 	record.State.Message, record.State.NextCheckAt = "", 0
+	record.State.Status = subscriptions.StatusNeverChecked
+	record.State.SuggestedAction = "立即更新一次，确认来源可用。"
 	if record.State.Enabled {
 		record.State.NextCheckAt = now + record.State.IntervalSeconds
 	}

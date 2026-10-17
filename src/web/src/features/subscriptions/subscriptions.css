@@ -1,6 +1,46 @@
 /* ---------- 订阅 ---------- */
 .experience[data-view='subscriptions'] .content-container { max-width: 1520px; }
 .subscription-page-header { margin-bottom: 14px; }
+.subscription-health-center { display: flex; flex-direction: column; gap: 18px; }
+.subscription-health-intro, .subscription-health-section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.subscription-health-intro { padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.subscription-health-intro h2, .subscription-health-section-heading h3 { display: flex; align-items: center; gap: 7px; margin: 0; font-size: 18px; font-weight: 650; }
+.subscription-health-section-heading h3 { font-size: 14px; }
+.subscription-health-intro p, .subscription-health-section-heading p { margin: 4px 0 0; color: var(--muted); font-size: 12.5px; }
+.subscription-health-summary { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; color: var(--accent-ink); font-size: 12px; white-space: nowrap; }
+.subscription-health-credentials, .subscription-health-list { display: flex; flex-direction: column; gap: 12px; }
+.subscription-credential-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 8px; }
+.subscription-credential { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 7px 9px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--card); font-size: 12px; }
+.subscription-credential > span:not(.subscription-health-dot) { color: var(--muted); }
+.subscription-credential small { grid-column: 2 / 4; color: var(--faint); font-size: 11px; }
+.subscription-credential .text-button { font-size: 11.5px; }
+.subscription-health-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--control-line); }
+.subscription-health-dot.healthy { background: var(--accent); }
+.subscription-health-dot.attention { background: var(--danger); }
+.subscription-health-dot.neutral, .subscription-health-dot.paused { background: var(--faint); }
+.subscription-health-rows { display: flex; flex-direction: column; gap: 8px; }
+.subscription-health-row { display: flex; flex-direction: column; gap: 9px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--card); }
+.subscription-health-row-main { display: flex; align-items: center; gap: 9px; }
+.subscription-health-row-main > div { flex: 1; min-width: 0; }
+.subscription-health-row-main h4 { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 600; }
+.subscription-health-row-main p { margin: 2px 0 0; color: var(--faint); font-size: 11.5px; }
+.subscription-health-status { padding: 3px 8px; border-radius: var(--radius-full); font-size: 11.5px; }
+.subscription-health-status.healthy { color: var(--accent-ink); background: var(--accent-soft); }
+.subscription-health-status.attention { color: var(--danger); background: var(--danger-soft); }
+.subscription-health-status.neutral, .subscription-health-status.paused { color: var(--muted); background: var(--surface); }
+.subscription-health-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 0; }
+.subscription-health-metrics div { min-width: 0; }
+.subscription-health-metrics dt { color: var(--faint); font-size: 11px; }
+.subscription-health-metrics dd { margin: 3px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); font-size: 12px; font-variant-numeric: tabular-nums; }
+.subscription-health-message, .subscription-health-action { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
+.subscription-health-message { color: var(--ink); }
+.subscription-health-row-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.subscription-health-row-actions .button { min-height: 32px; }
+.subscription-health-row-actions .text-button { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; }
+@media (max-width: 760px) {
+  .subscription-health-intro, .subscription-health-section-heading { flex-direction: column; }
+  .subscription-health-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 .subscription-more { position: relative; }
 .subscription-more > summary { list-style: none; }
 .subscription-more-panel { position: absolute; z-index: 25; top: calc(100% + 6px); right: 0; width: min(380px, calc(100vw - 32px)); padding: 16px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--card); box-shadow: var(--shadow-lg); }
