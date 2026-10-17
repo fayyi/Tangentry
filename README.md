@@ -379,6 +379,8 @@ Tangentry/
 - [gofeed](https://github.com/mmcdole/gofeed)、[modernc.org/sqlite](https://gitlab.com/cznic/sqlite)、[OpenCC](https://github.com/longbridgeapp/opencc)
 - [whisper.cpp](https://github.com/ggml-org/whisper.cpp)、[faster-whisper](https://github.com/SYSTRAN/faster-whisper)
 - [PDF.js](https://mozilla.github.io/pdf.js/)、[Lucide](https://lucide.dev/)、[Space Grotesk](https://fonts.google.com/specimen/Space+Grotesk)（OFL）
+- [Linux DO](https://linux.do)
+
 
 ## ⚖️ 免责声明
 
