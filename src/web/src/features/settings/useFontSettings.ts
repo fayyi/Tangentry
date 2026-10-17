@@ -39,6 +39,10 @@ export const readingLineHeights: Record<ReadingLineHeight, string> = { compact: 
 
 type StorageLike = Pick<Storage, 'getItem' | 'setItem'>
 
+function option<T extends string>(value: unknown, values: Record<T, string>, fallback: T): T {
+  return typeof value === 'string' && value in values ? value as T : fallback
+}
+
 function availableStorage(): StorageLike | undefined {
   try { return typeof localStorage === 'undefined' ? undefined : localStorage } catch { return undefined }
 }
@@ -46,10 +50,10 @@ function availableStorage(): StorageLike | undefined {
 export function validateFontSettings(value: unknown): FontSettings {
   const raw = (value && typeof value === 'object' ? value : {}) as Partial<FontSettings>
   return {
-    ui: raw.ui && raw.ui in uiFontStacks ? raw.ui : defaultFontSettings.ui,
-    reading: raw.reading && raw.reading in readingFontStacks ? raw.reading : defaultFontSettings.reading,
-    size: raw.size && raw.size in readingSizes ? raw.size : defaultFontSettings.size,
-    lineHeight: raw.lineHeight && raw.lineHeight in readingLineHeights ? raw.lineHeight : defaultFontSettings.lineHeight,
+    ui: option(raw.ui, uiFontStacks, defaultFontSettings.ui),
+    reading: option(raw.reading, readingFontStacks, defaultFontSettings.reading),
+    size: option(raw.size, readingSizes, defaultFontSettings.size),
+    lineHeight: option(raw.lineHeight, readingLineHeights, defaultFontSettings.lineHeight),
   }
 }
 

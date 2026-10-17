@@ -23,6 +23,7 @@ describe('font settings', () => {
 
   it('repairs invalid, partial and malformed values', () => {
     expect(validateFontSettings({ ui: 'unknown', reading: 'wenkai', size: 'tiny', lineHeight: 'relaxed' })).toEqual({ ...defaultFontSettings, reading: 'wenkai', lineHeight: 'relaxed' })
+    expect(validateFontSettings({ ui: {}, reading: [], size: null, lineHeight: 1 })).toEqual(defaultFontSettings)
     expect(readFontSettings(storage('{bad json'))).toEqual(defaultFontSettings)
     expect(readFontSettings({ getItem: key => key === fontSettingsKey ? JSON.stringify({ reading: 'noto' }) : null, setItem: () => {} })).toEqual({ ...defaultFontSettings, reading: 'noto' })
   })
