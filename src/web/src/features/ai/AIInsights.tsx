@@ -18,7 +18,8 @@ function OutlineNode({ node, onSeek, onLocateQuote, onLocatePage, citations, dep
 export function AIOutlinePanel({ summary, onSeek, onLocateQuote, onLocatePage }: { summary: ReturnType<typeof useSummary>; onSeek?: (seconds: number) => void; onLocateQuote?: (quote: string) => void; onLocatePage?: (page: number) => void }) {
   const [expanded, setExpanded] = useState<boolean | undefined>(undefined)
   const outline = summary.inspection?.result.outline ?? []
-  if (!summary.inspection?.result.complete || outline.length === 0) return <p className="ai-insight-empty">生成摘要后，这里会显示可折叠的大纲。</p>
+  if (!summary.inspection?.result.complete) return <p className="ai-insight-empty">生成摘要后，这里会显示可折叠的大纲。</p>
+  if (outline.length === 0) return <p className="ai-insight-empty">这份旧摘要没有大纲，请点击上方 AI 摘要重新生成。</p>
   const citations = new Map((summary.inspection.result.citations ?? []).map(value => [value.index, value]))
   return <><div className="ai-outline-actions"><button type="button" className="text-button" onClick={() => setExpanded(true)}>全部展开</button><button type="button" className="text-button" onClick={() => setExpanded(false)}>全部折叠</button></div><ul className="ai-outline-tree">{outline.map((node, index) => <OutlineNode key={`${node.title}-${index}`} node={node} onSeek={onSeek} onLocateQuote={onLocateQuote} onLocatePage={onLocatePage} citations={citations} expanded={expanded}/>)}</ul></>
 }

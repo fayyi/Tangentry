@@ -24,7 +24,7 @@ func normalizeSummaryInput(in SummaryInput) ([]SummarySegment, error) {
 		out := append([]SummarySegment(nil), in.Segments...)
 		bytes := 0
 		for index, segment := range out {
-			if segment.Index != index || segment.Page < 0 || math.IsNaN(segment.Start) || math.IsNaN(segment.End) || math.IsInf(segment.Start, 0) || math.IsInf(segment.End, 0) || segment.Start < 0 || segment.End < segment.Start || segment.End > 7*24*3600 || segment.End == segment.Start && segment.Page == 0 || !utf8.ValidString(segment.Text) || strings.TrimSpace(segment.Text) == "" || len(segment.Text) > 8000 {
+			if segment.Index != index || segment.Page < 0 || math.IsNaN(segment.Start) || math.IsNaN(segment.End) || math.IsInf(segment.Start, 0) || math.IsInf(segment.End, 0) || segment.Start < 0 || segment.End < segment.Start || segment.End > 7*24*3600 || !utf8.ValidString(segment.Text) || strings.TrimSpace(segment.Text) == "" || len(segment.Text) > 8000 {
 				return nil, ErrInvalid
 			}
 			if index > 0 && segment.Page == 0 && out[index-1].Page == 0 && segment.Start < out[index-1].Start {

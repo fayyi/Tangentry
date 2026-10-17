@@ -14,6 +14,8 @@ import { useReadingProgress } from '../features/progress/useReadingProgress'
 import { ReadingProgressPanel } from '../features/progress/ReadingProgressPanel'
 import { usePlaybackPosition } from '../features/player/usePlaybackPosition'
 import { useSyncReaderPlayback } from '../shared/reader/ReaderActions'
+import { AIInsights } from '../features/ai/AIInsights'
+import { useSummary } from '../features/ai/useSummary'
 
 // App composes media and captions. Feature internals stay independent.
 export function YouTubeReadingWorkspace({ id, linkedNoteId, initialItem, jobs, loading, error, onReturn, onDownloads, onRefresh }: {
@@ -38,6 +40,9 @@ export function YouTubeReadingWorkspace({ id, linkedNoteId, initialItem, jobs, l
   })), [jobs, url])
   const seek = useCallback((seconds: number) => player.current?.seek(seconds) ?? false, [])
   const assistance = useSubtitleAssistance(id, captions, ready ? seek : undefined, { contentId: id, title: initialItem?.title, url })
+  const textSummary = useSummary(id, 'content', undefined, ready ? seek : undefined, captions ? undefined : exportItem?.description)
+  const activeSummary = assistance?.summary ?? textSummary
+  const insights = <AIInsights summary={activeSummary} onSeek={ready ? seek : undefined} contentId={id} context={exportItem?.description ?? ''} revision={activeSummary.inspection?.settings.revision ?? 0}/>
   const getPosition = useCallback(() => player.current?.getPosition() ?? null, [])
   const getDownloadID = useCallback(() => player.current?.getSourceID?.() ?? null, [])
   const capture = useCallback(() => player.current?.captureFrame?.(), [])
@@ -49,5 +54,6 @@ export function YouTubeReadingWorkspace({ id, linkedNoteId, initialItem, jobs, l
   return <MediaReader id={id} initialItem={initialItem} jobs={jobs} onReturn={onReturn} onItem={setExportItem} onSeek={ready ? seek : undefined}
     video={<><ReaderCaptureAction onCapture={requestScreenshot}/>{!loading&&sources.length===0?<OnlineVideoPlayer ref={player} onPosition={setPosition} onReady={setReady} onProgress={progress.observe} onPlaying={setPlaying} platform="youtube" id={videoId} title={initialItem?.title??videoId} cover={initialItem?.thumbnailUrl} overlay={<PlayerCaptureOverlay onCapture={requestScreenshot}/>}/>:<LocalVideoPlayer ref={player} sources={sources} loading={loading} error={error} captions={captions} onReady={setReady} onPosition={setPosition} onDownloads={onDownloads} onRefresh={onRefresh} onProgress={progress.observe} onPlaying={setPlaying} overlay={<PlayerCaptureOverlay onCapture={requestScreenshot}/>} />}{(progress.saved || progress.readError || progress.writeError || position !== null) && <ReadingProgressPanel progress={progress} ready={ready} playing={playing} position={position} onSeek={seek}/>}</>}
     reading={<SubtitleReader source="youtube" item={{ platformId: videoId, url, title: exportItem?.title, author: exportItem?.author }} position={position} onSeek={ready ? seek : undefined} onTrackChange={setCaptions} assistance={assistance} onNoteAt={noteAt} />}
+    insights={insights}
     notes={<NotesPanel contentId={id} linkedNoteId={linkedNoteId} target={target} subtitleTrack={captions} captureActionRef={captureAction} getPosition={getPosition} getDownloadID={sources.length ? getDownloadID : undefined} captureFrame={captureFrame} playbackPosition={position} playbackHint={"开始写笔记时自动关联当前播放时间。"} onSeek={ready ? seek : undefined} />} />
 }

@@ -59,7 +59,8 @@ func TestLegacyJSONCachesImportOnceAndPromoteAcrossModelChanges(t *testing.T) {
 	translation := Result{Key: legacyTranslation, ContentID: in.ContentID, Language: in.Track.Language, BaseURL: old.BaseURL, Model: old.Model, Total: 3, Texts: []string{"第一句", "第二句"}, UpdatedAt: 123}
 	summary := summaryCache{Result: SummaryResult{Key: legacySummary, ContentID: summaryIn.ContentID, Source: summaryIn.Source, BaseURL: old.BaseURL, Model: old.Model, TotalCalls: 1, CompletedCalls: 1, Complete: true, Overview: "已有摘要"}}
 	summary.Result.Points = []SummaryPoint{{Text: "已保存要点", Indices: []int{0}}}
-	summary.Result.Citations = buildCitations(SummaryDraft{Overview: summary.Result.Overview, Points: summary.Result.Points}, segments)
+	summary.Result.Outline = []SummaryOutline{{Title: "已有章节", Level: 0, Indices: []int{0}}}
+	summary.Result.Citations = buildCitations(SummaryDraft{Overview: summary.Result.Overview, Points: summary.Result.Points, Outline: summary.Result.Outline}, segments)
 	for dir, value := range map[string]any{"translations/" + legacyTranslation: translation, "summaries/" + legacySummary: summary} {
 		if err := os.MkdirAll(filepath.Join(root, filepath.Dir(dir)), 0700); err != nil {
 			t.Fatal(err)
@@ -127,5 +128,35 @@ func TestLegacyJSONCachesImportOnceAndPromoteAcrossModelChanges(t *testing.T) {
 	again.Close()
 	if store.Count() != 2 {
 		t.Fatal("legacy caches imported twice", store.Count())
+	}
+}
+
+func TestCompletedSummaryWithoutOutlineIsRegenerated(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "ai")
+	provider := summaryProviderFunc(func(_ context.Context, _ Config, request SummaryRequest) (SummaryDraft, error) {
+		return SummaryDraft{Overview: "重新生成", Points: []SummaryPoint{{Text: "要点", Indices: []int{request.Segments[0].Index}}}, Outline: []SummaryOutline{{Title: "新章节", Level: 0, Indices: []int{request.Segments[0].Index}}}}, nil
+	})
+	s, err := New(root, storeFor(root), nil, provider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	status, err := s.Configure(ConfigureInput{BaseURL: "https://summary-fixture.example/v1", Model: "fixture", Key: func() *string { value := "synthetic-only-key"; return &value }(), Revision: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := SummaryInput{ContentID: "rss:legacy-outline", Source: "article", Text: "正文", Revision: status.Revision}
+	segments, err := normalizeSummaryInput(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := summaryKey(in, segments)
+	cache := summaryCache{Result: SummaryResult{Key: key, ContentID: in.ContentID, Source: in.Source, TotalCalls: 1, CompletedCalls: 1, Complete: true, Overview: "旧摘要", Points: []SummaryPoint{{Text: "旧要点", Indices: []int{0}}}, Citations: []SummaryCitation{{Index: 0, Quote: "正文"}}}}
+	if err := s.summaryWrite(context.Background(), cache); err != nil {
+		t.Fatal(err)
+	}
+	result, err := s.SummaryGenerate(context.Background(), in)
+	if err != nil || result.Overview != "重新生成" || len(result.Outline) != 1 {
+		t.Fatalf("outline-less cache was not regenerated: %#v %v", result, err)
 	}
 }

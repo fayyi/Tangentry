@@ -153,7 +153,7 @@ func TestSummaryPromptMakesLengthAndCitationLimitsExplicit(t *testing.T) {
 			w.WriteHeader(400)
 			return
 		}
-		for _, constraint := range []string{"1200 UTF-8 bytes", "600 UTF-8 bytes", "never exceed 64", "copy the original supplied index values exactly"} {
+		for _, constraint := range []string{"1200 UTF-8 bytes", "600 UTF-8 bytes", "never exceed 64", "copy the original supplied index values exactly", "outline 必须至少输出一个一级节点"} {
 			if !strings.Contains(body.Messages[0].Content, constraint) {
 				t.Error("summary omitted output constraint", constraint)
 			}
