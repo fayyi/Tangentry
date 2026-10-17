@@ -63,6 +63,7 @@ func TestDouyinFeedCaptureScriptHooksPageRequests(t *testing.T) {
 		"XMLHttpRequest.prototype.open",
 		"XMLHttpRequest.prototype.send",
 		"window.fetch",
+		"responseType === 'json'",
 		"aweme\\/(?:v1|v2)\\/",
 	} {
 		if !strings.Contains(douyinFeedCaptureScript, part) {
@@ -70,7 +71,7 @@ func TestDouyinFeedCaptureScriptHooksPageRequests(t *testing.T) {
 		}
 	}
 	code := feedCaptureScript(2)
-	for _, part := range []string{"window.scrollTo", "await wait(1200)", "splice(0, 20)", "pageUrl", "ready"} {
+	for _, part := range []string{"window.scrollTo", "await wait(1200)", "splice(0, 32)", "pageUrl", "ready"} {
 		if !strings.Contains(code, part) {
 			t.Fatalf("capture execution script does not contain %q: %s", part, code)
 		}

@@ -137,9 +137,32 @@ func TestRecommendationCaptureUsesPageOwnedFeedAndReportsRedirect(t *testing.T) 
 	}
 }
 
+func TestRecommendationCaptureMergesResponsesAndCapsBridgePages(t *testing.T) {
+	var capturedPages int
+	c := &Client{
+		Page: captureFetcherFunc(func(_ context.Context, _ string, pages int) (platformfetch.FeedCaptureResponse, error) {
+			capturedPages = pages
+			return platformfetch.FeedCaptureResponse{Responses: []platformfetch.Response{
+				{Status: http.StatusOK, Body: `{"status_code":0,"has_more":1,"aweme_list":[{"aweme_id":"6961737553342991651","desc":"第一条","video":{"duration":1000}}]}`},
+				{Status: http.StatusOK, Body: `{"status_code":0,"has_more":0,"aweme_list":[{"aweme_id":"6961737553342991651","desc":"重复","video":{"duration":2000}},{"aweme_id":"6961737553342991652","desc":"第二条","video":{"duration":3000}}]}`},
+			}}, nil
+		}),
+		Cookie: func(string) string { t.Fatal("cookie fallback should not run"); return "" },
+	}
+	feed, err := c.Recommendations(context.Background(), 10)
+	if err != nil || capturedPages != maxDouyinCapturePages || len(feed.Items) != 2 || !feed.HasMore || feed.Items[0].Title != "第一条" || feed.Items[1].Title != "第二条" {
+		t.Fatalf("merged capture failed: pages=%d feed=%+v err=%v", capturedPages, feed, err)
+	}
+}
+
 func TestRecommendationMobileFallback(t *testing.T) {
+	seenHosts := make([]string, 0, 2)
 	c := &Client{Cookie: func(string) string { return "sessionid=fixture" }, HTTP: &http.Client{Transport: trip(func(r *http.Request) (*http.Response, error) {
 		if r.URL.Path == "/aweme/v2/web/module/feed/" {
+			return &http.Response{StatusCode: http.StatusForbidden, Request: r, Body: io.NopCloser(strings.NewReader("blocked"))}, nil
+		}
+		seenHosts = append(seenHosts, r.URL.Hostname())
+		if r.URL.Hostname() == "api5-normal-c-hl.amemv.com" {
 			return &http.Response{StatusCode: http.StatusForbidden, Request: r, Body: io.NopCloser(strings.NewReader("blocked"))}, nil
 		}
 		if r.URL.Path != "/aweme/v1/feed/" || r.Method != http.MethodGet || !strings.Contains(r.Header.Get("User-Agent"), "Android") {
@@ -148,8 +171,8 @@ func TestRecommendationMobileFallback(t *testing.T) {
 		return &http.Response{StatusCode: http.StatusOK, Request: r, Body: io.NopCloser(strings.NewReader(`{"status_code":0,"has_more":0,"aweme_list":[{"aweme_id":"6961737553342991651","desc":"移动推荐","video":{"duration":3000}}]}`))}, nil
 	})}}
 	feed, err := c.Recommendations(context.Background(), 1)
-	if err != nil || len(feed.Items) != 1 || feed.SourceTitle != "抖音移动端推荐" {
-		t.Fatalf("mobile fallback failed: %+v %v", feed, err)
+	if err != nil || len(feed.Items) != 1 || feed.SourceTitle != "抖音移动端推荐" || len(seenHosts) != 2 || seenHosts[0] != "api5-normal-c-hl.amemv.com" || seenHosts[1] != "aweme.snssdk.com" {
+		t.Fatalf("mobile fallback failed: hosts=%v feed=%+v err=%v", seenHosts, feed, err)
 	}
 }
 

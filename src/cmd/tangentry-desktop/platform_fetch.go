@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -29,14 +30,15 @@ type platformPageBridge struct {
 }
 
 type platformPageSession struct {
-	mu        sync.Mutex
-	platform  string
-	origin    string
-	window    *mygo.Window
-	lastUsed  time.Time
-	closeAt   *time.Timer
-	ready     chan struct{}
-	readyOnce sync.Once
+	mu                sync.Mutex
+	platform          string
+	origin            string
+	window            *mygo.Window
+	lastUsed          time.Time
+	closeAt           *time.Timer
+	ready             chan struct{}
+	readyOnce         sync.Once
+	blockedNavigation atomic.Value
 }
 
 const douyinFeedCaptureScript = `(function(){
@@ -64,7 +66,7 @@ const douyinFeedCaptureScript = `(function(){
   const send = XMLHttpRequest.prototype.send;
   XMLHttpRequest.prototype.open = function(method, url){ this.__tangentryURL = url; return open.apply(this, arguments); };
   XMLHttpRequest.prototype.send = function(){
-    this.addEventListener('load', function(){ try { push(this.__tangentryURL || this.responseURL, this.status, this.responseText); } catch (_) {} });
+    this.addEventListener('load', function(){ try { const body = this.responseType === 'json' ? JSON.stringify(this.response) : this.responseText; push(this.__tangentryURL || this.responseURL, this.status, body); } catch (_) {} });
     return send.apply(this, arguments);
   };
 })();`
@@ -141,7 +143,7 @@ func (b *platformPageBridge) CaptureFeed(ctx context.Context, platform string, p
 	if platform != "douyin" {
 		return platformfetch.FeedCaptureResponse{}, errors.New("该平台不支持页面推荐抓取")
 	}
-	if pages < 1 || pages > 5 {
+	if pages < 1 || pages > 10 {
 		return platformfetch.FeedCaptureResponse{}, errors.New("页面推荐抓取页数无效")
 	}
 	session, err := b.session(platform, "https://www.douyin.com/")
@@ -158,6 +160,7 @@ func (b *platformPageBridge) CaptureFeed(ctx context.Context, platform string, p
 		session.closeAt.Stop()
 		session.closeAt = nil
 	}
+	session.blockedNavigation.Store("")
 	code := feedCaptureScript(pages)
 	raw, err := session.window.Page().EvalContext(ctx, code)
 	if err != nil {
@@ -200,7 +203,11 @@ func (b *platformPageBridge) CaptureFeed(ctx context.Context, platform string, p
 			}
 		})
 	}
-	return platformfetch.FeedCaptureResponse{Responses: responses, PageURL: result.PageURL, Title: result.Title, Ready: result.Ready}, nil
+	pageURL := result.PageURL
+	if blocked, ok := session.blockedNavigation.Load().(string); ok && blocked != "" {
+		pageURL = blocked
+	}
+	return platformfetch.FeedCaptureResponse{Responses: responses, PageURL: pageURL, Title: result.Title, Ready: result.Ready}, nil
 }
 
 func (b *platformPageBridge) session(platform, origin string) (*platformPageSession, error) {
@@ -214,6 +221,7 @@ func (b *platformPageBridge) session(platform, origin string) (*platformPageSess
 		return existing, nil
 	}
 	session := &platformPageSession{platform: platform, origin: origin, lastUsed: time.Now(), ready: make(chan struct{})}
+	session.blockedNavigation.Store("")
 	window := mygo.NewWindow(mygo.WindowOptions{
 		Title: "Tangentry 平台请求", Hidden: true,
 		Width: 800, Height: 600, MinWidth: 640, MinHeight: 480,
@@ -228,6 +236,7 @@ func (b *platformPageBridge) session(platform, origin string) (*platformPageSess
 	window.Page().OnDOMReady(func() { session.readyOnce.Do(func() { close(session.ready) }) })
 	window.Page().OnWillNavigate(func(event *mygo.NavigateEvent) {
 		if !platformPageURLAllowed(event.URL, platform) {
+			session.blockedNavigation.Store(event.URL)
 			event.PreventDefault()
 		}
 	})
@@ -384,7 +393,7 @@ func platformFetchScript(path string, request app.PlatformPageRequest) (string, 
 }
 
 func feedCaptureScript(pages int) string {
-	return fmt.Sprintf(`const wait = ms => new Promise(resolve => setTimeout(resolve, ms)); const count = %d; for (let i=0; i<count; i++) { window.scrollTo(0, document.body ? document.body.scrollHeight : 0); await wait(1200); } await wait(800); return {pageUrl: location.href, title: document.title || "", ready: document.readyState, responses: (window.__tangentryDouyinFeed || []).splice(0, 20)};`, pages)
+	return fmt.Sprintf(`const wait = ms => new Promise(resolve => setTimeout(resolve, ms)); const count = %d; if (window.__tangentryDouyinFeed) window.__tangentryDouyinFeed.splice(0); for (let i=0; i<count; i++) { window.scrollTo(0, document.body ? document.body.scrollHeight : 0); await wait(1200); } await wait(800); return {pageUrl: location.href, title: document.title || "", ready: document.readyState, responses: (window.__tangentryDouyinFeed || []).splice(0, 32)};`, pages)
 }
 
 func isCloudflarePage(status int, body string) bool {

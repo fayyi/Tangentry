@@ -44,7 +44,7 @@ func (c *Client) Recommendations(ctx context.Context, page int) (discovery.Feed,
 		query.Set("pull_type", "2")
 	}
 	diagnostics := make([]string, 0, 4)
-	if capture, ok := c.Page.(platformfetch.FeedCaptureFetcher); ok {
+	if capture, ok := c.Page.(platformfetch.FeedCaptureFetcher); ok && page <= maxDouyinCapturePages {
 		captured, err := capture.CaptureFeed(ctx, "douyin", page)
 		if err != nil {
 			diagnostics = append(diagnostics, "页面抓取执行失败："+err.Error())
@@ -55,19 +55,23 @@ func (c *Client) Recommendations(ctx context.Context, page int) (discovery.Feed,
 			if title := strings.TrimSpace(captured.Title); title != "" && looksLikeLoginOrChallenge(title) {
 				diagnostics = append(diagnostics, "隐藏页面标题显示为“"+title+"”")
 			}
+			capturedFeeds := make([]discovery.Feed, 0, len(captured.Responses))
 			for _, response := range captured.Responses {
 				if response.Status != http.StatusOK || response.Body == "" {
 					diagnostics = append(diagnostics, fmt.Sprintf("页面 feed 响应为 HTTP %d 或空 body", response.Status))
 					continue
 				}
 				feed, err := decodeRecommendations([]byte(response.Body), page, nil)
-				if err == nil && len(feed.Items) > 0 {
-					feed.SourceTitle = "抖音页面推荐"
-					return feed, nil
+				if err == nil {
+					capturedFeeds = append(capturedFeeds, feed)
+					continue
 				}
 				if err != nil {
 					diagnostics = append(diagnostics, "页面 feed JSON 解析失败："+err.Error())
 				}
+			}
+			if feed := mergeRecommendationFeeds(capturedFeeds, page, "抖音页面推荐"); len(feed.Items) > 0 {
+				return feed, nil
 			}
 			if len(captured.Responses) == 0 {
 				diagnostics = append(diagnostics, "页面未捕获到推荐 feed 请求（页面状态："+captured.Ready+"）")
@@ -191,39 +195,60 @@ func (c *Client) Recommendations(ctx context.Context, page int) (discovery.Feed,
 }
 
 func (c *Client) mobileRecommendations(ctx context.Context, page int, cookie string) (discovery.Feed, error) {
-	endpoint := "https://aweme.snssdk.com/aweme/v1/feed/"
-	query := url.Values{"device_platform": {"android"}, "aid": {"1128"}, "version_code": {"290000"}, "version_name": {"29.0.0"}, "count": {"20"}, "refresh_index": {strconv.Itoa(page)}}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"?"+query.Encode(), nil)
-	if err != nil {
-		return discovery.Feed{}, err
+	var lastErr error
+	for _, endpoint := range []string{
+		"https://api5-normal-c-hl.amemv.com/aweme/v1/feed/",
+		"https://aweme.snssdk.com/aweme/v1/feed/",
+	} {
+		query := url.Values{
+			"device_platform": {"android"},
+			"aid":             {"1128"},
+			"version_code":    {"290000"},
+			"version_name":    {"29.0.0"},
+			"count":           {"20"},
+			"refresh_index":   {strconv.Itoa(page)},
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"?"+query.Encode(), nil)
+		if err != nil {
+			return discovery.Feed{}, err
+		}
+		req.Header.Set("User-Agent", "com.ss.android.ugc.aweme/290000 (Linux; Android 13)")
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("Cookie", cookie)
+		client := *c.HTTP
+		client.Jar = nil
+		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		res, err := client.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		body, readErr := io.ReadAll(io.LimitReader(res.Body, (4<<20)+1))
+		res.Body.Close()
+		if readErr != nil {
+			lastErr = readErr
+			continue
+		}
+		if len(body) > 4<<20 {
+			lastErr = errors.New("响应超过大小限制")
+			continue
+		}
+		if res.StatusCode != http.StatusOK {
+			lastErr = fmt.Errorf("%s HTTP %d", endpoint, res.StatusCode)
+			continue
+		}
+		feed, decodeErr := decodeRecommendations(body, page, nil)
+		if decodeErr != nil {
+			lastErr = errors.New("响应不是可用的推荐 JSON")
+			continue
+		}
+		feed.SourceTitle = "抖音移动端推荐"
+		return feed, nil
 	}
-	req.Header.Set("User-Agent", "com.ss.android.ugc.aweme/290000 (Linux; Android 13)")
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Cookie", cookie)
-	client := *c.HTTP
-	client.Jar = nil
-	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	res, err := client.Do(req)
-	if err != nil {
-		return discovery.Feed{}, err
+	if lastErr == nil {
+		lastErr = errors.New("没有可用的移动端 feed 接口")
 	}
-	defer res.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(res.Body, (4<<20)+1))
-	if err != nil {
-		return discovery.Feed{}, err
-	}
-	if len(body) > 4<<20 {
-		return discovery.Feed{}, errors.New("响应超过大小限制")
-	}
-	if res.StatusCode != http.StatusOK {
-		return discovery.Feed{}, fmt.Errorf("HTTP %d", res.StatusCode)
-	}
-	feed, err := decodeRecommendations(body, page, nil)
-	if err != nil {
-		return discovery.Feed{}, errors.New("响应不是可用的推荐 JSON")
-	}
-	feed.SourceTitle = "抖音移动端推荐"
-	return feed, nil
+	return discovery.Feed{}, lastErr
 }
 
 func describePageResponse(status int, body string, restricted bool) string {
@@ -299,6 +324,25 @@ type feedVideo struct {
 	} `json:"video"`
 }
 
+const maxDouyinCapturePages = 10
+
+func mergeRecommendationFeeds(feeds []discovery.Feed, page int, sourceTitle string) discovery.Feed {
+	merged := discovery.Feed{Items: make([]content.Item, 0), Page: page, SourceTitle: sourceTitle}
+	seen := make(map[string]struct{})
+	for _, feed := range feeds {
+		merged.HasMore = merged.HasMore || feed.HasMore
+		for _, item := range feed.Items {
+			if _, ok := seen[item.ID]; ok {
+				continue
+			}
+			seen[item.ID] = struct{}{}
+			merged.Items = append(merged.Items, item)
+		}
+	}
+	merged.Total = len(merged.Items)
+	return merged
+}
+
 func decodeRecommendations(body []byte, page int, denied error) (discovery.Feed, error) {
 	var response struct {
 		Status *int        `json:"status_code"`
@@ -313,8 +357,16 @@ func decodeRecommendations(body []byte, page int, denied error) (discovery.Feed,
 	if json.Unmarshal(body, &response) != nil {
 		return discovery.Feed{}, decodeError(denied, "响应不是 JSON")
 	}
-	if response.Data != nil && response.Status == nil {
-		response.Status, response.Videos, response.More = response.Data.Status, response.Data.Videos, response.Data.More
+	if response.Data != nil {
+		if response.Status == nil {
+			response.Status = response.Data.Status
+		}
+		if len(response.Videos) == 0 {
+			response.Videos = response.Data.Videos
+		}
+		if response.More == 0 {
+			response.More = response.Data.More
+		}
 	}
 	if response.Status == nil || *response.Status != 0 || response.Videos == nil || len(response.Videos) > 500 {
 		return discovery.Feed{}, decodeError(denied, "推荐 JSON 状态无效或没有视频列表")
