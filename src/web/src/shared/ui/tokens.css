@@ -48,14 +48,15 @@
   --warning-soft: rgb(107 98 80 / .1);
   --success: var(--accent);
 
-  /* Platform identity: neutral marks; the label names the platform. */
-  --bilibili-blue: #8a8a92;
-  --youtube-red: #8a8a92;
-  --xiaohongshu-red: #8a8a92;
-  --xiaoyuzhou: #8a8a92;
-  --douyin: #8a8a92;
-  --rss-orange: #8a8a92;
-  --linuxdo: #8a8a92;
+  /* Platform identity: text-safe colors for light surfaces. */
+  --bilibili-blue: #fb7299;
+  --youtube-red: #ff0033;
+  --xiaohongshu-red: #ff2442;
+  --xiaoyuzhou: #2e8bff;
+  --douyin: #087f85;
+  --rss-orange: #e87500;
+  --linuxdo: #2d8a73;
+  --platform-neutral: #5d5d64;
 
   --frosted: rgb(246 246 243 / .82);
   --frosted-line: rgb(24 24 27 / .07);
@@ -121,13 +122,15 @@
   --danger-soft: rgb(217 149 141 / .1);
   --warning: #c9c0a8;
   --warning-soft: rgb(201 192 168 / .1);
-  --bilibili-blue: #77777f;
-  --youtube-red: #77777f;
-  --xiaohongshu-red: #77777f;
-  --xiaoyuzhou: #77777f;
-  --douyin: #77777f;
-  --rss-orange: #77777f;
-  --linuxdo: #77777f;
+  /* Brighter variants keep the same identities readable on dark cards. */
+  --bilibili-blue: #fb7299;
+  --youtube-red: #ff6685;
+  --xiaohongshu-red: #ff6f83;
+  --xiaoyuzhou: #82b4ff;
+  --douyin: #5bd4d3;
+  --rss-orange: #ffb45c;
+  --linuxdo: #71d2b4;
+  --platform-neutral: #b4b4bd;
   --frosted: rgb(17 17 19 / .82);
   --frosted-line: rgb(255 255 255 / .07);
   --gray-50: #18181a; --gray-100: #1e1e21; --gray-200: #26262a; --gray-300: #323237; --gray-400: #4e4e55;

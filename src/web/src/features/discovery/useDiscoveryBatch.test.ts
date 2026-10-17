@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest'
 import type { DiscoveryBatchItem } from '../../shared/api/types'
-import { appendDiscoveryBatch, appendDiscoveryItems, buildDiscoveryBatchParams, buildDiscoveryTopicParam, discoverySourceLabel } from './useDiscoveryBatch'
+import { appendDiscoveryBatch, appendDiscoveryItems, buildDiscoveryBatchParams, buildDiscoveryTopicParam, discoveryReasonType, discoverySourceLabel } from './useDiscoveryBatch'
 
 function entry(id: string, source = 'bilibili', reason = '来源更新'): DiscoveryBatchItem {
   return {
@@ -42,4 +42,11 @@ test('maps source and reason to compact Chinese labels', () => {
   expect(discoverySourceLabel('bilibili')).toBe('B站推荐')
   expect(discoverySourceLabel('unknown')).toBe('unknown 推荐')
   expect(discoverySourceLabel('youtube', '少量随机探索')).toBe('陌生探索')
+})
+
+test('maps backend reasons to discovery badge types', () => {
+  expect(discoveryReasonType('subscriptions', '最近更新')).toBe('订阅')
+  expect(discoveryReasonType('bilibili', '订阅优先')).toBe('订阅')
+  expect(discoveryReasonType('youtube', '少量随机探索')).toBe('探索')
+  expect(discoveryReasonType('linuxdo', '平台首页推荐')).toBe('推荐')
 })

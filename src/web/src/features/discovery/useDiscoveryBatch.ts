@@ -88,6 +88,14 @@ export function discoverySourceLabel(source: string, reason = '', carriedOver = 
   return sourceLabels[source] ?? (source ? `${source} 推荐` : '发现')
 }
 
+/** Classify the backend reason into the compact discovery badge. */
+export function discoveryReasonType(source: string, reason = '', carriedOver = false): '订阅' | '推荐' | '探索' {
+  if (carriedOver && source === 'subscriptions') return '订阅'
+  if (source === 'subscriptions' || /订阅优先|订阅更新/.test(reason)) return '订阅'
+  if (/陌生探索|随机探索/.test(reason)) return '探索'
+  return '推荐'
+}
+
 export const getDiscoverySourceLabel = discoverySourceLabel
 
 function randomSeed() { return Math.floor(Math.random() * 2147483647) || 1 }

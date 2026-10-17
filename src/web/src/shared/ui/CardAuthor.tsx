@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import type { ContentItem } from '../api/types'
 import { publicationText } from './ContentCard'
 import { cachedNote } from '../data/noteDetails'
 import { cachedPublication, readPublication } from '../data/publicationDetails'
 import { retryThroughProxy, sourceImageURL } from '../media/sourceImage'
-import { platformLabel } from './cardHelpers'
+import { platformColorToken, platformLabel } from './cardHelpers'
 
 export function AuthorAvatar({ item }: { item: ContentItem }) {
   const node = useRef<HTMLDivElement>(null)
@@ -32,8 +32,9 @@ export function AuthorAvatar({ item }: { item: ContentItem }) {
     : <div className="author-avatar-placeholder">{item.author ? item.author[0].toUpperCase() : '?'}</div>}</div>
 }
 
-export function AuthorName({ item, showPlatform = true }: { item: ContentItem; showPlatform?: boolean }) {
-  return <span className="card-source-line"><span className="author-name">{item.author || (item.platform === 'rss' ? '订阅来源' : '未知作者')}</span>{showPlatform && <span className="card-platform" data-platform={item.platform}>{platformLabel(item.platform)}</span>}</span>
+export function AuthorName({ item, showPlatform = true, discoveryType, discoveryReason }: { item: ContentItem; showPlatform?: boolean; discoveryType?: '订阅' | '推荐' | '探索'; discoveryReason?: string }) {
+  const platformStyle = { '--platform-color': `var(${platformColorToken(item.platform)})` } as CSSProperties
+  return <span className="card-source-line"><span className="author-name">{item.author || (item.platform === 'rss' ? '订阅来源' : '未知作者')}</span>{showPlatform && <span className="card-platform" data-platform={item.platform} style={platformStyle}>{platformLabel(item.platform)}</span>}{discoveryType && <span className="discovery-reason-badge" title={discoveryReason || undefined}>{discoveryType}</span>}</span>
 }
 
 export function AuthorPublication({ item }: { item: ContentItem }) {

@@ -7,10 +7,10 @@ import type { GalleryCardContentProps } from './types'
 import { retryThroughProxy, sourceImageURL } from '../../media/sourceImage'
 import { AuthorAvatar, AuthorName, AuthorPublication } from '../CardAuthor'
 
-export function ImageGalleryCard({ item, origin, saved, pending, onRead, onSave, status, excerpt, discovery = false }: GalleryCardContentProps) {
+export function ImageGalleryCard({ item, origin, discoveryReason, discoveryType, saved, pending, onRead, onSave, status, excerpt, discovery = false }: GalleryCardContentProps) {
   const { failed: coverFailed, setFailed: setCoverFailed } = useCardCover(item.thumbnailUrl)
   return (
-    <GalleryCardFrame item={item} origin={origin} className="card-image" onRead={onRead} status={status} discovery={discovery}>
+    <GalleryCardFrame item={item} origin={origin} discoveryReason={discoveryReason} className="card-image" onRead={onRead} status={status}>
       <button className="modern-card-thumbnail" onClick={() => onRead(item)} aria-label={`查看图集 ${item.title}`}>
         {item.thumbnailUrl && !coverFailed ? (
           <img src={sourceImageURL(item, item.thumbnailUrl)} alt="" loading="lazy" referrerPolicy="no-referrer" onError={event => retryThroughProxy(event, item, item.thumbnailUrl) || setCoverFailed(true)} />
@@ -25,7 +25,7 @@ export function ImageGalleryCard({ item, origin, saved, pending, onRead, onSave,
         <div className="modern-card-author">
           <AuthorAvatar item={item} />
           <div className="author-info">
-            <AuthorName item={item} />
+            <AuthorName item={item} discoveryType={discovery ? discoveryType : undefined} discoveryReason={discoveryReason} />
             <AuthorPublication item={item} />
           </div>
           <div className="modern-card-actions"><SaveCardAction item={item} saved={saved} pending={pending} onSave={onSave} /></div>

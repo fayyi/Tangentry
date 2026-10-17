@@ -4,15 +4,15 @@ import type { ContentItem } from '../../api/types'
 interface Props {
   item: ContentItem
   origin?: string
+  discoveryReason?: string
   className: string
   onRead: (item: ContentItem) => void
   children: ReactNode
   status?: ReactNode
   dataPlatform?: boolean
-  discovery?: boolean
 }
 
-export function GalleryCardFrame({ item, origin, className, onRead, children, status, dataPlatform = false, discovery = false }: Props) {
+export function GalleryCardFrame({ item, origin, discoveryReason, className, onRead, children, status, dataPlatform = false }: Props) {
   const openCard = (event: MouseEvent<HTMLElement>) => {
     if (item.kind === 'video' && !(event.target as Element).closest('.modern-card-content')) return
     if ((event.target as Element).closest('button, a, input, select, textarea, summary, [role="button"]') || window.getSelection()?.toString()) return
@@ -35,9 +35,8 @@ export function GalleryCardFrame({ item, origin, className, onRead, children, st
       data-testid="content-card"
       aria-label={`阅读 ${item.title}`}
       {...(dataPlatform ? { 'data-platform': item.platform } : {})}
-      title={origin}
+      title={discoveryReason || origin}
     >
-      {discovery && origin && <span className="discovery-origin-label">{origin}</span>}
       {children}
       {status}
     </article>

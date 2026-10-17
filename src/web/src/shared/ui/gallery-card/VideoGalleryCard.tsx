@@ -10,7 +10,7 @@ import { HoverVideoPreview } from '../../media/HoverVideoPreview'
 import { retryThroughProxy, sourceImageURL } from '../../media/sourceImage'
 import { AuthorAvatar, AuthorName, AuthorPublication } from '../CardAuthor'
 
-export function VideoGalleryCard({ item, origin, saved, pending, onRead, onSave, onDownload, progress, status, discovery = false, excerpt }: GalleryCardContentProps) {
+export function VideoGalleryCard({ item, origin, discoveryReason, discoveryType, saved, pending, onRead, onSave, onDownload, progress, status, discovery = false, excerpt }: GalleryCardContentProps) {
   const { failed: coverFailed, setFailed: setCoverFailed } = useCardCover(item.thumbnailUrl)
   const [hoverPreview, setHoverPreview] = useState(false)
   const [previewVisit, setPreviewVisit] = useState(0)
@@ -20,7 +20,7 @@ export function VideoGalleryCard({ item, origin, saved, pending, onRead, onSave,
   const actions = <VideoCardActions item={item} saved={saved} pending={pending} onSave={onSave} onDownload={onDownload} />
 
   return (
-    <GalleryCardFrame item={item} origin={origin} className="card-video" onRead={onRead} status={status} dataPlatform discovery={discovery}>
+    <GalleryCardFrame item={item} origin={origin} discoveryReason={discoveryReason} className="card-video" onRead={onRead} status={status} dataPlatform>
       <div
         className="modern-card-thumbnail"
         onPointerEnter={event => {
@@ -68,14 +68,14 @@ export function VideoGalleryCard({ item, origin, saved, pending, onRead, onSave,
         )}
       </div>
       <div className="modern-card-content">
-        {discovery && <div className="discovery-card-meta"><span className="discovery-card-labels"><span className="card-platform" data-platform={item.platform}>{({ bilibili: 'B站', youtube: 'YouTube', douyin: '抖音', xiaohongshu: '小红书' } as Record<string, string>)[item.platform] ?? item.platform}</span>{item.durationSeconds > 0 && <span className="discovery-card-duration">{formatDuration(item.durationSeconds)}</span>}</span>{actions}</div>}
+        {discovery && <div className="discovery-card-meta"><span className="discovery-card-labels">{item.durationSeconds > 0 && <span className="discovery-card-duration">{formatDuration(item.durationSeconds)}</span>}</span>{actions}</div>}
         <GalleryCardTitle item={item} onRead={onRead} />
         {excerpt}
         {item.likeCount ? <div className="discovery-card-stats">{item.likeCount} 赞</div> : null}
         <div className="modern-card-author">
           <AuthorAvatar item={item} />
           <div className="author-info">
-            <AuthorName item={item} showPlatform={!discovery} />
+            <AuthorName item={item} discoveryType={discovery ? discoveryType : undefined} discoveryReason={discoveryReason} />
             <AuthorPublication item={item} />
           </div>
           {!discovery && actions}
