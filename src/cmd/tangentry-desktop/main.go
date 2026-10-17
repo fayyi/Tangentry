@@ -90,6 +90,12 @@ func desktopCredentialKey() ([]byte, error) {
 		return key, nil
 	}
 	if !errors.Is(err, mygo.ErrSecretNotFound) {
+		if errors.Is(err, errors.ErrUnsupported) {
+			// Minimal Linux desktops may not run Secret Service. Keep the
+			// existing 0600 credential file path so the app remains usable;
+			// packaged desktops use the keyring-backed encrypted path above.
+			return nil, nil
+		}
 		return nil, fmt.Errorf("无法访问系统凭据存储：%w", err)
 	}
 	key = make([]byte, 32)
@@ -97,6 +103,9 @@ func desktopCredentialKey() ([]byte, error) {
 		return nil, fmt.Errorf("无法生成桌面凭据密钥：%w", err)
 	}
 	if err := mygo.Secrets.Set(keyName, key); err != nil {
+		if errors.Is(err, errors.ErrUnsupported) {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("无法保存系统凭据密钥：%w", err)
 	}
 	return key, nil
