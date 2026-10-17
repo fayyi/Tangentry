@@ -76,6 +76,33 @@ func TestPlatformFetchRequestAndResponseLimits(t *testing.T) {
 	if err := validatePlatformFetchResponse(platformFetchResult{Body: strings.Repeat("x", platformFetchMaxBody+1)}); err == nil {
 		t.Fatal("oversized response body accepted")
 	}
+	for _, request := range []app.PlatformPageRequest{
+		{Method: "GET", Headers: map[string]string{"X-Test": "line\nfeed"}},
+		{Method: "GET", Headers: map[string]string{"": "value"}},
+		{Method: "GET", Headers: map[string]string{"X-Test": strings.Repeat("x", 8193)}},
+	} {
+		if err := validatePlatformFetchRequest(&request); err == nil {
+			t.Fatal("invalid header accepted")
+		}
+	}
+}
+
+func TestPlatformPageURLAllowed(t *testing.T) {
+	for _, test := range []struct {
+		platform, raw string
+		allowed       bool
+	}{
+		{"linuxdo", "https://linux.do/", true},
+		{"linuxdo", "https://www.linux.do/login", true},
+		{"linuxdo", "https://challenges.cloudflare.com/", false},
+		{"douyin", "https://www.douyin.com/", true},
+		{"douyin", "https://passport.douyin.com/", false},
+		{"douyin", "https://www.douyin.com.evil.example/", false},
+	} {
+		if got := platformPageURLAllowed(test.raw, test.platform); got != test.allowed {
+			t.Fatalf("platformPageURLAllowed(%q, %q) = %v, want %v", test.raw, test.platform, got, test.allowed)
+		}
+	}
 }
 
 const httpStatusOK = 200

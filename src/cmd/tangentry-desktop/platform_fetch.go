@@ -125,7 +125,7 @@ func (b *platformPageBridge) session(platform, origin string) (*platformPageSess
 	window.Page().OnPageTitleUpdated(func(event *mygo.TitleEvent) { event.PreventDefault() })
 	window.Page().OnDOMReady(func() { session.readyOnce.Do(func() { close(session.ready) }) })
 	window.Page().OnWillNavigate(func(event *mygo.NavigateEvent) {
-		if !platformLoginURLAllowed(event.URL, platform) {
+		if !platformPageURLAllowed(event.URL, platform) {
 			event.PreventDefault()
 		}
 	})
@@ -218,7 +218,33 @@ func validatePlatformFetchRequest(request *app.PlatformPageRequest) error {
 	if len(request.Body) > 256<<10 || len(request.Headers) > 16 {
 		return errors.New("页面请求参数过大")
 	}
+	total := 0
+	for name, value := range request.Headers {
+		if name == "" || len(name) > 128 || len(value) > 8192 || strings.ContainsAny(name, "\r\n") || strings.ContainsAny(value, "\r\n") {
+			return errors.New("页面请求标头无效")
+		}
+		total += len(name) + len(value)
+	}
+	if total > 64<<10 {
+		return errors.New("页面请求标头过大")
+	}
 	return nil
+}
+
+func platformPageURLAllowed(raw, platform string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.User != nil || u.Port() != "" {
+		return false
+	}
+	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+	switch platform {
+	case "linuxdo":
+		return host == "linux.do" || host == "www.linux.do"
+	case "douyin":
+		return host == "douyin.com" || host == "www.douyin.com"
+	default:
+		return false
+	}
 }
 
 func validatePlatformFetchResponse(result platformFetchResult) error {
@@ -252,7 +278,7 @@ func platformFetchScript(path string, request app.PlatformPageRequest) (string, 
 	if request.Method != "GET" && request.Method != "HEAD" {
 		bodyOption = ", body:" + string(body)
 	}
-	return fmt.Sprintf(`const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), %d); try { return await fetch(location.origin + %s, {method:%s, headers:%s, credentials:"include"%s, signal:controller.signal}).then(async response => { const body = await response.text(); return {status: response.status, body: body.length > %d ? "" : body, tooLarge: body.length > %d}; }); } finally { clearTimeout(timer); }`, platformFetchTimeout.Milliseconds(), pathJSON, method, headers, bodyOption, platformFetchMaxBody, platformFetchMaxBody), nil
+	return fmt.Sprintf(`const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), %d); try { return await fetch(location.origin + %s, {method:%s, headers:%s, credentials:"include"%s, signal:controller.signal}).then(async response => { const max=%d; if (!response.body) { const body=await response.text(); return {status:response.status, body:body.length>max?"":body, tooLarge:body.length>max}; } const reader=response.body.getReader(); const decoder=new TextDecoder(); let body="", bytes=0; try { for (;;) { const part=await reader.read(); if (part.done) break; bytes+=part.value.byteLength; if (bytes>max) { await reader.cancel(); return {status:response.status, body:"", tooLarge:true}; } body+=decoder.decode(part.value,{stream:true}); } body+=decoder.decode(); return {status:response.status, body:body, tooLarge:false}; } finally { reader.releaseLock(); } }); } finally { clearTimeout(timer); }`, platformFetchTimeout.Milliseconds(), pathJSON, method, headers, bodyOption, platformFetchMaxBody), nil
 }
 
 func isCloudflarePage(status int, body string) bool {
