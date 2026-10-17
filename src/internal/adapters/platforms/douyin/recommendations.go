@@ -109,7 +109,7 @@ func cookieValue(header, name string) string {
 
 func looksLikeChallenge(body []byte) bool {
 	value := strings.ToLower(string(body))
-	return strings.Contains(value, "verify_center") || strings.Contains(value, "verify_page") || strings.Contains(value, "captcha") || strings.Contains(value, "secsdk") || strings.Contains(value, "byted_acrawler") || strings.Contains(value, "slide_verify")
+	return strings.Contains(value, "verify_center") || strings.Contains(value, "verify_page") || strings.Contains(value, "captcha") || strings.Contains(value, "secsdk") || strings.Contains(value, "byted_acrawler") || strings.Contains(value, "slide_verify") || strings.Contains(value, "just a moment") || strings.Contains(value, "cf-chl-") || strings.Contains(value, "challenge-platform") || strings.Contains(value, "cloudflare")
 }
 
 type feedVideo struct {

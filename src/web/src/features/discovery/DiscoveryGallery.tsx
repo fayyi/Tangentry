@@ -73,13 +73,34 @@ export function DiscoveryGallery({kind,onKind,origin,onOrigin,query,onClearQuery
     if (webViewPlatform) return
     setWebViewPlatform(source); setWebViewError('')
     try {
+      const before = await request<{ platforms: Array<{ platform: string; configured: boolean; updatedAt: number }> }>('/settings/cookies')
+      const previous = before.platforms.find(value => value.platform === source)
+      const previousUpdatedAt = previous?.updatedAt ?? 0
       await openDesktopPlatformLogin(source)
-      // The native shell owns the completion lifecycle. Refresh once the user
-      // has had time to finish, while keeping the explicit retry available.
-      window.setTimeout(() => gallery.retry(source), 3000)
+      // The native shell owns the completion lifecycle. Poll only the safe
+      // status marker, then refresh recommendations after the WebView saves.
+      let attempts = 0
+      const poll = async () => {
+        if (attempts++ >= 120) {
+          setWebViewPlatform('')
+          return
+        }
+        try {
+          const result = await request<{ platforms: Array<{ platform: string; configured: boolean; updatedAt: number }> }>('/settings/cookies')
+          const state = result.platforms.find(value => value.platform === source)
+          if (state?.configured && (!previous?.configured || state.updatedAt > previousUpdatedAt)) {
+            setWebViewPlatform('')
+            await gallery.retry(source)
+            return
+          }
+        } catch { /* The window may still be completing its challenge. */ }
+        window.setTimeout(() => void poll(), 1500)
+      }
+      window.setTimeout(() => void poll(), 1500)
     } catch (cause) {
       setWebViewError(cause instanceof Error ? cause.message : '无法打开应用内登录窗口。')
-    } finally { setWebViewPlatform('') }
+      setWebViewPlatform('')
+    }
   }
   const pausedSources = continuationSources.filter(source => gallery.enabled?.[source] && gallery.sources[source].feed?.hasMore &&
     (gallery.sources[source].error || gallery.sources[source].exhausted))

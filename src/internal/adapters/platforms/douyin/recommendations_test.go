@@ -63,6 +63,22 @@ func TestRecommendationRejectionsNeverRetryOrFollowRedirects(t *testing.T) {
 	}
 }
 
+func TestRecommendationCloudflareChallengeRequestsRevalidation(t *testing.T) {
+	for _, body := range []string{
+		`<!doctype html><title>Just a moment...</title><script src="/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1"></script>`,
+		`<html><body>cf-chl-xxxxxxxx cloudflare</body></html>`,
+	} {
+		c := &Client{Cookie: func(string) string { return "sessionid=fixture" }, HTTP: &http.Client{Transport: trip(func(r *http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: http.StatusOK, Request: r, Body: io.NopCloser(strings.NewReader(body))}, nil
+		})}}
+		_, err := c.Recommendations(context.Background(), 1)
+		var platform *discovery.PlatformError
+		if !errors.As(err, &platform) || !platform.Restricted || !strings.Contains(platform.Message, "重新导入浏览器 Cookie") {
+			t.Fatalf("challenge was not mapped to revalidation: %v", err)
+		}
+	}
+}
+
 func TestRecommendationNestedPayloadAndAuthorAvatar(t *testing.T) {
 	raw, err := douyinFixtures.ReadFile("testdata/recommendations.json")
 	if err != nil {
