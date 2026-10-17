@@ -35,6 +35,8 @@ type Options struct {
 	Compatibility           CompatibilityService
 	Recommendations         func(context.Context, string) (discovery.Feed, error)
 	RecommendationPage      func(context.Context, string, int) (discovery.Feed, error)
+	DiscoveryBatch          DiscoveryBatchService
+	DiscoveryTopics         DiscoveryTopicService
 	Documents               documents.Service
 	Imports                 func(context.Context, string, string) (discovery.Feed, error)
 	XiaohongshuDetail       func(context.Context, string) (content.Item, bool, error)
@@ -83,6 +85,8 @@ type DiscoveryDependencies struct {
 	RecommendationConfig    RecommendationConfig
 	Recommendations         func(context.Context, string) (discovery.Feed, error)
 	RecommendationPage      func(context.Context, string, int) (discovery.Feed, error)
+	DiscoveryBatch          DiscoveryBatchService
+	DiscoveryTopics         DiscoveryTopicService
 	Imports                 func(context.Context, string, string) (discovery.Feed, error)
 	XiaohongshuDetail       func(context.Context, string) (content.Item, bool, error)
 	XiaohongshuRefresh      func(context.Context, string, string) (content.Item, error)

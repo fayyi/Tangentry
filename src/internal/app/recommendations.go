@@ -15,6 +15,12 @@ type recommender struct {
 	override func(context.Context, string) (discovery.Feed, error)
 }
 
+// Fetch adapts the page-oriented recommendation sources to the finite batch
+// planner. The queue still owns account isolation and persistence.
+func (r *recommender) Fetch(ctx context.Context, source string, page int) (discovery.Feed, error) {
+	return r.Page(ctx, source, page)
+}
+
 // Page serves the subscription gallery directly; platform pages pass through the
 // persistent recommendation queue so fetched items survive reloads.
 func (r *recommender) Page(ctx context.Context, source string, page int) (discovery.Feed, error) {

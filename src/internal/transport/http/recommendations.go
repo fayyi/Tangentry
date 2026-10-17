@@ -27,6 +27,36 @@ func (h *discoveryHandler) recommendationSettingsRead(w http.ResponseWriter, r *
 	write(w, 200, map[string]any{"sources": values})
 }
 
+func (h *discoveryHandler) batch(w http.ResponseWriter, r *http.Request) {
+	if h.browse.DiscoveryBatch == nil {
+		fail(w, discovery.ErrUnavailable)
+		return
+	}
+	kind, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || kind != "application/json" {
+		write(w, http.StatusUnsupportedMediaType, apiError{"invalid_input", "请使用 JSON 请求发现批次。"})
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 16*1024)
+	var request discovery.BatchRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&request) != nil || decoder.Decode(new(any)) != io.EOF {
+		fail(w, discovery.ErrInvalidBatch)
+		return
+	}
+	response, err := h.browse.DiscoveryBatch.Create(r.Context(), request)
+	if err != nil {
+		if err == discovery.ErrInvalidBatch {
+			fail(w, discovery.ErrInvalidQuery)
+			return
+		}
+		fail(w, err)
+		return
+	}
+	write(w, http.StatusOK, response)
+}
+
 func (h *discoveryHandler) recommendationSettingsSave(w http.ResponseWriter, r *http.Request) {
 	if h.browse.RecommendationConfig == nil {
 		fail(w, discovery.ErrUnavailable)

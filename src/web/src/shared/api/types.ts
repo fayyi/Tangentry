@@ -57,6 +57,42 @@ export interface Feed {
   query: string
 }
 
+export type DiscoveryView = 'wander' | 'latest' | 'topic' | 'random'
+export interface DiscoveryBatchRequest {
+  view: DiscoveryView
+  size: 10 | 15 | 25
+  topic?: string
+	source?: string
+  subscriptionRatio: number
+  explorationRatio: number
+  cursor?: string
+  seed?: number
+  unreadIds?: string[]
+}
+export interface DiscoveryBatchItem {
+  item: ContentItem
+  source: string
+  reason: string
+  carriedOver: boolean
+}
+export interface DiscoveryBatchResponse {
+  batchId: string
+  nextCursor?: string
+  items: DiscoveryBatchItem[]
+  reason: string
+  hasNextBatch: boolean
+  endReason?: string
+  sourceStatus: Record<string, string>
+}
+export interface DiscoveryTopicRule {
+  id: string
+  name: string
+  keywords: string[]
+  groupId?: string
+  revision: number
+  createdAt: number
+}
+
 export interface DownloadOptions {
   mode?: 'video' | 'audio'
   container?: 'mp4' | 'mkv'
