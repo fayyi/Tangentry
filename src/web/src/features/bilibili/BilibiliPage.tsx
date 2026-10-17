@@ -56,7 +56,7 @@ export function BilibiliPage({ browser, savedIDs, pending, unavailable, notice, 
     {count > 0 ? tab === 'live'
       ? <CardCollection className="mixed-gallery" data-media="video" masonry={false} aria-label="直播列表">{state.page!.rooms!.map(room => <LiveCard key={room.id} room={room}/>)}</CardCollection>
       : <CardCollection className="mixed-gallery" data-media="video" masonry={false} aria-label="B站视频">{state.page!.items.map((item, index) => <ModernGalleryCard discovery key={item.id} item={item} saved={savedIDs.has(item.id)} pending={unavailable || pending.has(item.id)} onRead={onRead} onSave={onSave} status={tab === 'ranking' ? <span className="bilibili-rank">第 {index + 1} 名</span> : tab === 'dynamic' && item.viewCount ? <span className="bilibili-rank">{viewLabel(item.viewCount)}</span> : undefined}/>)}</CardCollection>
-      : !(tab === 'my' && profile && !profile.loggedIn) && !state.error && <p className="bilibili-empty" role="status">{state.loading ? '正在获取内容…' : empty[tab]}</p>}
+      : !((tab === 'my' || tab === 'dynamic') && profile && !profile.loggedIn) && !state.error && <p className="bilibili-empty" role="status">{state.loading ? '正在获取内容…' : empty[tab]}</p>}
     {state.page?.hasMore && <div ref={sentinel} className="load-more"><button className="button button-secondary" onClick={browser.more} disabled={state.loading}>{state.loading ? <LoaderCircle size={15} className="spin"/> : <ListVideo size={15}/>}继续浏览</button></div>}
   </section>
 }
