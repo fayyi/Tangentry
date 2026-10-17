@@ -164,13 +164,13 @@ func (c *Client) dynamic(ctx context.Context, page int, cursor string) (BrowsePa
 	if cursor != "" {
 		params.Set("offset", cursor)
 	}
+	params.Set("type", "video")
 	sign(params, key, time.Now().Unix())
 	var data struct {
 		Items   []json.RawMessage `json:"items"`
 		Offset  string            `json:"offset"`
 		HasMore json.RawMessage   `json:"has_more"`
 	}
-	params.Set("type", "video")
 	if err := c.getFrom(ctx, c.baseURL, "https://t.bilibili.com/", "/x/polymer/web-dynamic/v1/feed/all", params, &data, false); err != nil {
 		return BrowsePage{}, err
 	}

@@ -123,7 +123,7 @@ export function useDownloads() {
     try {
       await request<void>('/downloads', { method: 'DELETE', body: JSON.stringify({ deleteFiles }) })
       ++revision.current
-      setJobs([])
+      setJobs(current => current.filter(job => job.state === 'queued' || job.state === 'running'))
       setWriteError('')
       return true
     } catch (error) { setWriteError(error instanceof Error ? error.message : '无法清空下载历史。'); return false }
