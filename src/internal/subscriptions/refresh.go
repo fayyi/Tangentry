@@ -13,16 +13,36 @@ import (
 
 const DefaultInterval = int64(7200)
 
+// RefreshStatus is deliberately small and stable: it is safe to persist and
+// lets clients distinguish an empty feed from a source that needs attention.
+type RefreshStatus string
+
+const (
+	StatusHealthy      RefreshStatus = "healthy"
+	StatusNeverChecked RefreshStatus = "never_checked"
+	StatusStale        RefreshStatus = "stale"
+	StatusAuthRequired RefreshStatus = "auth_required"
+	StatusRateLimited  RefreshStatus = "rate_limited"
+	StatusNotFound     RefreshStatus = "not_found"
+	StatusUpstreamErr  RefreshStatus = "upstream_error"
+	StatusPaused       RefreshStatus = "paused"
+)
+
+const staleAfter = int64(30 * 24 * 60 * 60)
+
 // Public state contains no feed validators or network credentials.
 type RefreshState struct {
-	Enabled         bool   `json:"enabled"`
-	IntervalSeconds int64  `json:"intervalSeconds"`
-	LastAttemptAt   int64  `json:"lastAttemptAt"`
-	LastCheckedAt   int64  `json:"lastCheckedAt"`
-	NextCheckAt     int64  `json:"nextCheckAt"`
-	Failures        int    `json:"failures"`
-	Message         string `json:"message,omitempty"`
-	ContentRevision int64  `json:"contentRevision"`
+	Enabled         bool          `json:"enabled"`
+	IntervalSeconds int64         `json:"intervalSeconds"`
+	LastAttemptAt   int64         `json:"lastAttemptAt"`
+	LastFailureAt   int64         `json:"lastFailureAt"`
+	LastCheckedAt   int64         `json:"lastCheckedAt"`
+	NextCheckAt     int64         `json:"nextCheckAt"`
+	Failures        int           `json:"failures"`
+	Message         string        `json:"message,omitempty"`
+	Status          RefreshStatus `json:"status"`
+	SuggestedAction string        `json:"suggestedAction,omitempty"`
+	ContentRevision int64         `json:"contentRevision"`
 }
 type Validators struct {
 	ETag         string
@@ -35,7 +55,7 @@ type RefreshRecord struct {
 }
 
 func DefaultRefresh() RefreshRecord {
-	return RefreshRecord{State: RefreshState{IntervalSeconds: DefaultInterval}}
+	return RefreshRecord{State: RefreshState{IntervalSeconds: DefaultInterval, Status: StatusNeverChecked}}
 }
 
 // DefaultRefreshFor applies the product default to every saved source. The
@@ -44,7 +64,85 @@ func DefaultRefresh() RefreshRecord {
 func DefaultRefreshFor(id string) RefreshRecord {
 	record := DefaultRefresh()
 	record.State.Enabled = validID(id)
+	if !record.State.Enabled {
+		record.State.Status = StatusPaused
+	}
 	return record
+}
+
+// NormalizeRefreshState repairs records written before health statuses were
+// introduced and keeps disabled sources explicitly paused.
+func NormalizeRefreshState(state *RefreshState) {
+	if state.IntervalSeconds == 0 {
+		state.IntervalSeconds = DefaultInterval
+	}
+	if !state.Enabled {
+		state.Status = StatusPaused
+		state.SuggestedAction = "手动更新来源，或开启自动刷新。"
+		return
+	}
+	if state.Status == "" {
+		switch {
+		case state.Failures > 0:
+			state.Status = StatusUpstreamErr
+		case state.LastCheckedAt == 0:
+			state.Status = StatusNeverChecked
+		default:
+			state.Status = StatusHealthy
+		}
+	}
+	if state.SuggestedAction == "" {
+		state.SuggestedAction = suggestedAction(state.Status)
+	}
+}
+
+func suggestedAction(status RefreshStatus) string {
+	switch status {
+	case StatusHealthy:
+		return "无需处理，按计划检查。"
+	case StatusNeverChecked:
+		return "立即更新一次，确认来源可用。"
+	case StatusStale:
+		return "检查来源是否仍在更新，必要时打开来源页面。"
+	case StatusAuthRequired:
+		return "去设置重新验证平台登录信息。"
+	case StatusRateLimited:
+		return "等待下一次检查，避免连续手动重试。"
+	case StatusNotFound:
+		return "检查订阅地址或 RSSHub 路由。"
+	case StatusPaused:
+		return "手动更新来源，或开启自动刷新。"
+	default:
+		return "检查来源地址与网络后重试。"
+	}
+}
+
+// StatusFor returns the user-facing health category for a persisted state.
+// now is injected by callers/tests so stale classification is deterministic.
+func StatusFor(state RefreshState, lastUpdatedAt int64, now int64) RefreshStatus {
+	NormalizeRefreshState(&state)
+	if !state.Enabled {
+		return StatusPaused
+	}
+	if state.Failures > 0 && state.Status != StatusHealthy && state.Status != StatusStale && state.Status != StatusNeverChecked {
+		return state.Status
+	}
+	if state.LastCheckedAt == 0 {
+		return StatusNeverChecked
+	}
+	if lastUpdatedAt > 0 && now > lastUpdatedAt && now-lastUpdatedAt >= staleAfter {
+		return StatusStale
+	}
+	return StatusHealthy
+}
+
+func ApplyHealth(source *Source, now int64) {
+	if source == nil {
+		return
+	}
+	NormalizeRefreshState(&source.Refresh)
+	source.Refresh.Status = StatusFor(source.Refresh, source.LastUpdatedAt, now)
+	source.Refresh.SuggestedAction = suggestedAction(source.Refresh.Status)
 }
 
 type ConditionalResult struct {
@@ -85,6 +183,7 @@ func (s *Service) ConfigureRefresh(ctx context.Context, id string, policy Refres
 	if err != nil {
 		return Source{}, err
 	}
+	NormalizeRefreshState(&record.State)
 	// Saving the same policy must not postpone an already scheduled check.
 	if record.State.Enabled != policy.Enabled || record.State.IntervalSeconds != policy.IntervalSeconds {
 		previousNext := record.State.NextCheckAt
@@ -102,7 +201,15 @@ func (s *Service) ConfigureRefresh(ctx context.Context, id string, policy Refres
 			record.State.NextCheckAt = previousNext
 		}
 	}
+	if !record.State.Enabled {
+		record.State.Status = StatusPaused
+		record.State.SuggestedAction = suggestedAction(StatusPaused)
+	} else if record.State.Status == StatusPaused {
+		record.State.Status = StatusNeverChecked
+		record.State.SuggestedAction = suggestedAction(StatusNeverChecked)
+	}
 	detail, err := s.repository.CommitSubscriptionRefresh(ctx, id, nil, 0, record)
+	ApplyHealth(&detail.Source, s.now().Unix())
 	return detail.Source, err
 }
 func backoff(record RefreshRecord) int64 {
@@ -115,6 +222,7 @@ func (s *Service) updateFeed(ctx context.Context, detail Detail) (Detail, error)
 	if err != nil {
 		return Detail{}, err
 	}
+	NormalizeRefreshState(&record.State)
 	record.State.LastAttemptAt = s.now().Unix()
 	if record.State.Enabled {
 		record.State.NextCheckAt = record.State.LastAttemptAt + backoff(record)
@@ -149,27 +257,43 @@ func (s *Service) updateFeed(ctx context.Context, detail Detail) (Detail, error)
 	}
 	if err != nil {
 		record.State.Failures = min(record.State.Failures+1, 20)
+		record.State.LastFailureAt = s.now().Unix()
+		record.State.Status = StatusUpstreamErr
+		record.State.SuggestedAction = suggestedAction(StatusUpstreamErr)
 		record.State.Message = "订阅源更新失败，保留上次内容；请检查地址与网络。"
 		if strings.HasPrefix(id, "youtube:") {
 			record.State.Message = "YouTube 频道更新失败，保留上次内容；请检查频道与网络。"
 		}
 		var timeout interface{ Timeout() bool }
 		if errors.As(err, &timeout) && timeout.Timeout() {
+			record.State.Status = StatusUpstreamErr
 			record.State.Message = "等待订阅源响应超时，已有内容保留；请检查源生成耗时与上游网络，稍后再更新。"
 		}
 		var httpFailure HTTPFailure
 		if errors.As(err, &httpFailure) {
 			switch status := httpFailure.HTTPStatusCode(); {
 			case status == 401 || status == 403:
+				record.State.Status = StatusAuthRequired
+				record.State.SuggestedAction = suggestedAction(StatusAuthRequired)
 				record.State.Message = "订阅源拒绝访问，请检查访问密钥或鉴权配置。"
 			case status == 404:
+				record.State.Status = StatusNotFound
+				record.State.SuggestedAction = suggestedAction(StatusNotFound)
 				record.State.Message = "订阅源返回 HTTP 404，请检查路由与 RSSHub 版本。"
+			case status == 429:
+				record.State.Status = StatusRateLimited
+				record.State.SuggestedAction = suggestedAction(StatusRateLimited)
+				record.State.Message = "订阅源请求过于频繁，已延后检查；已有内容保留。"
 			case status >= 500 && status <= 599:
+				record.State.Status = StatusUpstreamErr
+				record.State.SuggestedAction = suggestedAction(StatusUpstreamErr)
 				record.State.Message = "订阅源返回 HTTP " + strconv.Itoa(status) + "，请检查 RSSHub 或订阅服务日志；已有内容保留。"
 			}
 		}
 		var platform *discovery.PlatformError
 		if errors.As(err, &platform) && platform.Restricted {
+			record.State.Status = StatusRateLimited
+			record.State.SuggestedAction = suggestedAction(StatusRateLimited)
 			record.State.Message = "订阅源暂时限制请求，已延后检查。"
 		}
 		delay := backoff(record)
@@ -189,8 +313,11 @@ func (s *Service) updateFeed(ctx context.Context, detail Detail) (Detail, error)
 	unchanged := result.NotModified || detail.Source.LastUpdatedAt != 0 && reflect.DeepEqual(old, result.Snapshot)
 	record.Validators = result.Validators
 	record.State.LastCheckedAt = s.now().Unix()
+	record.State.LastFailureAt = 0
 	record.State.Failures = 0
 	record.State.Message = ""
+	record.State.Status = StatusHealthy
+	record.State.SuggestedAction = suggestedAction(StatusHealthy)
 	record.State.NextCheckAt = 0
 	if record.State.Enabled {
 		record.State.NextCheckAt = record.State.LastCheckedAt + record.State.IntervalSeconds

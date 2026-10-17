@@ -211,10 +211,13 @@ export interface SubscriptionRefreshState {
   enabled: boolean
   intervalSeconds: number
   lastAttemptAt: number
+  lastFailureAt: number
   lastCheckedAt: number
   nextCheckAt: number
   failures: number
   message?: string
+  status: 'healthy' | 'never_checked' | 'stale' | 'auth_required' | 'rate_limited' | 'not_found' | 'upstream_error' | 'paused'
+  suggestedAction?: string
   contentRevision: number
 }
 export interface SubscriptionSource {

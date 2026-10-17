@@ -70,7 +70,7 @@ export function App() {
   const { view, navigate, returnHome, readerQuery, readerNoteId, readingItem, setReadingItem, readerReturn, readerSourceID, scrollPositions, viewportTarget } = navigation
   const bilibili = useBilibiliBrowse(view === 'bilibili')
   const subscriptions = useSubscriptions(view === 'subscriptions')
-  const [subscriptionMode,setSubscriptionMode] = useState<'latest'|'history'>('latest')
+  const [subscriptionMode,setSubscriptionMode] = useState<'latest'|'history'|'health'>(() => window.location.hash === '#health' ? 'health' : 'latest')
   const inbox = useSubscriptionInbox(view==='subscriptions' && subscriptionMode==='history')
   const [subscriptionFilter, setSubscriptionFilter] = useState('')
   const [subscriptionReadFilter, setSubscriptionReadFilter] = useState<'all' | 'unread' | 'read'>('all')

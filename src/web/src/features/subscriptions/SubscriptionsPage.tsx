@@ -19,12 +19,13 @@ import { SubscriptionPortability } from './SubscriptionPortability'
 import { SubscriptionAddressSettings } from './SubscriptionAddressSettings'
 import { SubscriptionSourceIcon } from './SubscriptionSourceIcon'
 import { PageHeader } from '../../shared/ui/PageHeader'
+import { SubscriptionHealthCenter } from './SubscriptionHealthCenter'
 
 type Subscriptions = ReturnType<typeof useSubscriptions>
 const updated = (seconds: number) => seconds ? new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(seconds * 1000)) : '尚未更新'
 
 export function SubscriptionsPage({ subscriptions: state, savedIDs, savingUnavailable, savingIDs, onSave, onRead, filter, onFilter, saveNotice, saveError, readStates, readFilter, onReadFilter, inbox, mode, onMode }: {
-  inbox: ReturnType<typeof useSubscriptionInbox>; mode: 'latest' | 'history'; onMode: (mode: 'latest' | 'history') => void
+  inbox: ReturnType<typeof useSubscriptionInbox>; mode: 'latest' | 'history' | 'health'; onMode: (mode: 'latest' | 'history' | 'health') => void
   readStates: ReturnType<typeof useReadState>; readFilter: 'all' | 'unread' | 'read'; onReadFilter: (value: 'all' | 'unread' | 'read') => void
   subscriptions: Subscriptions; savedIDs: Set<string>; savingUnavailable: boolean; savingIDs: Set<string>
   onSave: (item: ContentItem) => void; onRead: (item: ContentItem) => void
@@ -72,14 +73,14 @@ export function SubscriptionsPage({ subscriptions: state, savedIDs, savingUnavai
 
   return <>
     <PageHeader className="subscription-page-header" title="订阅" summary={state.loading && !state.sources.length ? '正在读取来源…' : state.sources.length ? `${state.sources.length} 个来源${groups.groups.length ? ` · ${groups.groups.length} 个分组` : ''}${mode === 'latest' && unreadCount ? ` · 当前来源 ${unreadCount} 条未读` : ''}` : '关注创作者、频道、RSS 与播客，更新会集中到这里。'} actions={<>
-      <div className="subscription-views" role="group" aria-label="订阅视图"><button aria-pressed={mode==='latest'} onClick={()=>onMode('latest')}>来源与更新</button><button aria-pressed={mode==='history'} onClick={()=>onMode('history')}>历史收件箱</button></div>
+      <div className="subscription-views" role="group" aria-label="订阅视图"><button aria-pressed={mode==='latest'} onClick={()=>onMode('latest')}>来源与更新</button><button aria-pressed={mode==='history'} onClick={()=>onMode('history')}>历史收件箱</button><button aria-pressed={mode==='health'} onClick={()=>onMode('health')}>来源健康</button></div>
       {mode === 'latest' && state.sources.length > 0 && <button className="button button-secondary subscription-update-all" disabled={busy || Boolean(state.batch?.running)} onClick={() => void state.batchUpdate(state.sources.map(item => item.id))}>{state.batch?.running && state.batch.kind === 'update' ? <LoaderCircle className="spin" size={16} /> : <RefreshCw size={16} />}<span>{state.batch?.running && state.batch.kind === 'update' ? `更新中 ${state.batch.completed}/${state.batch.total}` : '全部更新'}</span></button>}
       <details className="subscription-more"><summary className="button button-secondary"><SlidersHorizontal size={15} aria-hidden="true"/>订阅工具</summary><div className="subscription-more-panel"><SubscriptionPortability /></div></details>
       <button id="subscription-add-toggle" className="button button-primary subscription-add-toggle" type="button" aria-expanded={adding} aria-controls="subscription-add-panel" onClick={() => adding ? setAdding(false) : openAdd()}>{adding ? <X size={16}/> : <Plus size={16}/>}<span>{adding ? '收起添加' : '添加订阅'}</span></button>
     </>} aria-busy={state.loading}/>
     {state.batch && state.batch.kind === 'update' && <div className={`subscription-batch-progress ${state.batch.running ? 'running' : 'complete'}`} role="status"><div className="subscription-batch-progress-copy"><strong>{state.batch.running ? `正在更新来源 ${state.batch.completed}/${state.batch.total}` : `已完成 ${state.batch.total - state.batch.failed}/${state.batch.total} 个来源`}</strong>{state.batch.failed > 0 && <span>{state.batch.failed} 个来源失败，已保留旧内容。</span>}</div><div className="subscription-batch-progress-track"><span style={{ width: `${state.batch.total ? Math.round(state.batch.completed / state.batch.total * 100) : 0}%` }} /></div>{!state.batch.running && state.batch.failed > 0 && <button className="button button-secondary" onClick={() => void state.retryBatchFailed()}><RefreshCw size={14} aria-hidden="true" />重试失败项</button>}</div>}
     <div id="subscription-add-panel" hidden={!adding}><SubscriptionAddForm busy={busy} creating={state.pending?.kind === 'create'} inputRef={sourceInput} onCreate={(query, name, type) => state.create(query, name, type)} /></div>
-    {mode==='history'?<SubscriptionInbox inbox={inbox} sources={state.sources} groups={groups.groups} readStates={readStates} savedIDs={savedIDs} savingIDs={savingIDs} savingUnavailable={savingUnavailable} onRead={onRead} onSave={onSave} saveNotice={saveNotice} saveError={saveError}/>:<>
+    {mode==='history'?<SubscriptionInbox inbox={inbox} sources={state.sources} groups={groups.groups} readStates={readStates} savedIDs={savedIDs} savingIDs={savingIDs} savingUnavailable={savingUnavailable} onRead={onRead} onSave={onSave} saveNotice={saveNotice} saveError={saveError}/>:mode==='health'?<SubscriptionHealthCenter state={state} onOpenSource={id=>{state.select(id);onMode('latest')}}/>:<>
     {state.actionError && <div className="error-panel" role="alert"><AlertCircle size={18} /><p>{state.actionError}</p></div>}
     {state.notice && <p className="inline-feedback" role="status"><Check size={17} />{state.notice}</p>}
     {state.listError && <div className="error-panel" role="alert"><AlertCircle size={18} /><p>{state.listError} 已显示的来源可能不是最新记录。</p><button className="button button-secondary" disabled={state.loading} onClick={() => void state.reload()}>重新加载来源</button></div>}
