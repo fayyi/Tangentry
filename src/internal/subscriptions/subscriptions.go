@@ -69,6 +69,18 @@ type Repository interface {
 	CommitSubscriptionRefresh(context.Context, string, *Snapshot, int64, RefreshRecord) (Detail, error)
 	EditSubscriptionAddress(context.Context, string, string, string, int64) (Source, error)
 }
+type groupAssigner interface {
+	AssignSubscriptionGroup(context.Context, string, string, string) (Membership, error)
+}
+
+// BatchResult keeps per-source failures isolated so callers can retry only
+// failed items. Err is intentionally kept out of JSON transport responses.
+type BatchResult struct {
+	ID     string
+	Source *Source
+	Detail *Detail
+	Err    error
+}
 type Fetcher func(context.Context, string) (Snapshot, error)
 type Service struct {
 	repository     Repository
@@ -228,6 +240,95 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	}
 	defer release()
 	return s.repository.DeleteSubscription(ctx, id)
+}
+
+func batchIDs(ids []string) ([]string, error) {
+	if len(ids) == 0 || len(ids) > 200 {
+		return nil, ErrInvalid
+	}
+	seen := make(map[string]struct{}, len(ids))
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if !validID(id) {
+			return nil, ErrInvalid
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out, nil
+}
+
+func (s *Service) BatchDelete(ctx context.Context, ids []string) ([]BatchResult, error) {
+	ids, err := batchIDs(ids)
+	if err != nil {
+		return nil, err
+	}
+	results := make([]BatchResult, 0, len(ids))
+	for _, id := range ids {
+		err := s.Delete(ctx, id)
+		results = append(results, BatchResult{ID: id, Err: err})
+	}
+	return results, nil
+}
+
+func (s *Service) BatchAssignGroup(ctx context.Context, ids []string, targetGroupID, expectedGroupID string) ([]BatchResult, error) {
+	ids, err := batchIDs(ids)
+	if err != nil || (targetGroupID != "" && !groupID.MatchString(targetGroupID)) || (expectedGroupID != "" && !groupID.MatchString(expectedGroupID)) {
+		return nil, ErrInvalid
+	}
+	assigner, ok := s.repository.(groupAssigner)
+	if !ok {
+		return nil, ErrInvalid
+	}
+	results := make([]BatchResult, 0, len(ids))
+	for _, id := range ids {
+		release, acquireErr := s.acquire(id)
+		if acquireErr != nil {
+			results = append(results, BatchResult{ID: id, Err: acquireErr})
+			continue
+		}
+		_, opErr := assigner.AssignSubscriptionGroup(ctx, id, targetGroupID, expectedGroupID)
+		release()
+		results = append(results, BatchResult{ID: id, Err: opErr})
+	}
+	return results, nil
+}
+
+func (s *Service) BatchConfigureRefresh(ctx context.Context, ids []string, policy RefreshPolicy) ([]BatchResult, error) {
+	ids, err := batchIDs(ids)
+	if err != nil {
+		return nil, err
+	}
+	results := make([]BatchResult, 0, len(ids))
+	for _, id := range ids {
+		source, opErr := s.ConfigureRefresh(ctx, id, policy)
+		result := BatchResult{ID: id, Err: opErr}
+		if opErr == nil {
+			result.Source = &source
+		}
+		results = append(results, result)
+	}
+	return results, nil
+}
+
+func (s *Service) BatchUpdate(ctx context.Context, ids []string) ([]BatchResult, error) {
+	ids, err := batchIDs(ids)
+	if err != nil {
+		return nil, err
+	}
+	results := make([]BatchResult, 0, len(ids))
+	for _, id := range ids {
+		detail, opErr := s.Update(ctx, id)
+		result := BatchResult{ID: id, Err: opErr}
+		if opErr == nil {
+			result.Detail = &detail
+		}
+		results = append(results, result)
+	}
+	return results, nil
 }
 func (s *Service) Update(ctx context.Context, id string) (Detail, error) {
 	return s.update(ctx, id, nil)

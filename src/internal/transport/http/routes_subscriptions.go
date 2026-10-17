@@ -9,6 +9,7 @@ func (h *Handler) registerSubscriptionRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/subscriptions/opml", h.feeds.subscriptionOPMLExport)
 	mux.HandleFunc("POST /api/subscriptions/opml", h.feeds.subscriptionOPMLImport)
 	mux.HandleFunc("POST /api/subscriptions", h.feeds.subscriptionCreate)
+	mux.HandleFunc("POST /api/subscriptions/batch", h.feeds.subscriptionBatch)
 	mux.HandleFunc("POST /api/subscriptions/youtube/resolve", h.feeds.subscriptionResolveYouTube)
 	mux.HandleFunc("POST /api/subscriptions/resolve", h.feeds.subscriptionResolve)
 	mux.HandleFunc("GET /api/subscriptions/{id}", h.feeds.subscriptionGet)

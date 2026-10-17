@@ -107,7 +107,7 @@ func TestOPMLFoldersRoundTripAndDoNotReorganizeExistingSources(t *testing.T) {
 			if source.GroupID != "" {
 				t.Fatal("ungrouped source changed", source)
 			}
-		} else if source.GroupID == "" || source.GroupID == localGroup.ID || source.Refresh.Enabled {
+		} else if source.GroupID == "" || source.GroupID == localGroup.ID || !source.Refresh.Enabled {
 			t.Fatal("new source organization or refresh changed", source)
 		}
 	}

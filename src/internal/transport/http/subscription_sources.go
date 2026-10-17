@@ -1,10 +1,77 @@
 package httptransport
 
 import (
+	"context"
+	"errors"
 	"net/http"
 
 	"tangentry/internal/subscriptions"
 )
+
+type subscriptionBatchRequest struct {
+	Action          string   `json:"action"`
+	IDs             []string `json:"ids"`
+	GroupID         string   `json:"groupId"`
+	ExpectedGroupID string   `json:"expectedGroupId"`
+	Enabled         *bool    `json:"enabled"`
+	IntervalSeconds int64    `json:"intervalSeconds"`
+}
+
+func (h *feedsHandler) subscriptionBatch(w http.ResponseWriter, r *http.Request) {
+	if !h.subscriptionReady(w) {
+		return
+	}
+	var input subscriptionBatchRequest
+	if !decodeSubscription(w, r, &input) {
+		return
+	}
+	var (
+		results []subscriptions.BatchResult
+		err     error
+	)
+	switch input.Action {
+	case "delete":
+		results, err = h.feeds.Subscriptions.BatchDelete(r.Context(), input.IDs)
+	case "group":
+		results, err = h.feeds.Subscriptions.BatchAssignGroup(r.Context(), input.IDs, input.GroupID, input.ExpectedGroupID)
+	case "refresh-policy":
+		if input.Enabled == nil {
+			fail(w, subscriptions.ErrInvalid)
+			return
+		}
+		results, err = h.feeds.Subscriptions.BatchConfigureRefresh(r.Context(), input.IDs, subscriptions.RefreshPolicy{Enabled: *input.Enabled, IntervalSeconds: input.IntervalSeconds})
+	case "update":
+		results, err = h.feeds.Subscriptions.BatchUpdate(r.Context(), input.IDs)
+	default:
+		fail(w, subscriptions.ErrInvalid)
+		return
+	}
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	type item struct {
+		ID     string                `json:"id"`
+		OK     bool                  `json:"ok"`
+		Source *subscriptions.Source `json:"source,omitempty"`
+		Detail *subscriptions.Detail `json:"detail,omitempty"`
+		Error  string                `json:"error,omitempty"`
+	}
+	out := make([]item, 0, len(results))
+	failed := 0
+	for _, result := range results {
+		entry := item{ID: result.ID, OK: result.Err == nil, Source: result.Source, Detail: result.Detail}
+		if result.Err != nil {
+			failed++
+			entry.Error = result.Err.Error()
+			if errors.Is(result.Err, context.Canceled) {
+				entry.Error = "canceled"
+			}
+		}
+		out = append(out, entry)
+	}
+	write(w, http.StatusOK, map[string]any{"results": out, "failed": failed})
+}
 
 func (h *feedsHandler) subscriptionList(w http.ResponseWriter, r *http.Request) {
 	if !h.subscriptionReady(w) {

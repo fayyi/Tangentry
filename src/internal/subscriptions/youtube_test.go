@@ -51,7 +51,7 @@ func TestChannelResolutionAndRegistrationAreSeparateAndStable(t *testing.T) {
 		t.Fatal("handle saved without canonical identity")
 	}
 	first, created, err := service.Create(ctx, subscriptions.Input{Type: "youtube", Query: channel.ID, Name: "my channel"})
-	if err != nil || !created || first.ID != "youtube:channel:"+channelID || first.URL != channel.URL || first.Refresh.Enabled || calls != 1 {
+	if err != nil || !created || first.ID != "youtube:channel:"+channelID || first.URL != channel.URL || !first.Refresh.Enabled || first.Refresh.IntervalSeconds != subscriptions.DefaultInterval || calls != 1 {
 		t.Fatal(first, err)
 	}
 	for _, input := range []subscriptions.Input{{Type: "youtube", Query: channel.URL + "/videos", Name: "should not rename"}, {Type: "youtube", Query: discovery.YouTubeChannelFeed(channelID)}, {Type: "rss", Query: discovery.YouTubeChannelFeed(channelID)}} {

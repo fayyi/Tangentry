@@ -13,6 +13,7 @@ export function SubscriptionRefreshSettings({ source, busy, onSave }: {
   onSave: (enabled: boolean, intervalSeconds: number) => Promise<boolean>
 }) {
   const youtube = isYouTubeSource(source)
+  const bilibili = source.id.startsWith('bilibili:creator:')
   const policy = source.refresh
   const [enabled, setEnabled] = useState(policy.enabled)
   const [interval, setInterval] = useState(policy.intervalSeconds)
@@ -26,8 +27,8 @@ export function SubscriptionRefreshSettings({ source, busy, onSave }: {
 
   return <div className="subscription-refresh" title={`最近成功检查：${date(policy.lastCheckedAt)}${policy.enabled ? `；下次检查：${date(policy.nextCheckAt)}` : ''}`}>
     <form onSubmit={event => { event.preventDefault(); void onSave(enabled, interval).then(ok => { if (ok) setBaseline({ enabled, interval }) }) }}>
-      <label className="subscription-refresh-toggle"><input aria-label={youtube ? '自动刷新这个 YouTube 频道' : '自动刷新这个 RSS 来源'} type="checkbox" checked={enabled} disabled={busy} onChange={event => setEnabled(event.target.checked)} />自动更新</label>
-      <label className="subscription-field"><span>检查间隔</span><select aria-label={youtube ? "YouTube 频道检查间隔" : "RSS 检查间隔"} value={interval} disabled={busy} onChange={event => setInterval(Number(event.target.value))}>{!intervals.includes(interval) && <option value={interval}>{Math.round(interval / 60)} 分钟</option>}{intervals.map((value, index) => <option key={value} value={value}>{labels[index]}</option>)}</select></label>
+      <label className="subscription-refresh-toggle"><input aria-label={youtube ? '自动刷新这个 YouTube 频道' : bilibili ? '自动刷新这个 B 站来源' : '自动刷新这个 RSS 来源'} type="checkbox" checked={enabled} disabled={busy} onChange={event => setEnabled(event.target.checked)} />自动更新</label>
+      <label className="subscription-field"><span>检查间隔</span><select aria-label={youtube ? "YouTube 频道检查间隔" : bilibili ? "B 站来源检查间隔" : "RSS 检查间隔"} value={interval} disabled={busy} onChange={event => setInterval(Number(event.target.value))}>{!intervals.includes(interval) && <option value={interval}>{Math.round(interval / 60)} 分钟</option>}{intervals.map((value, index) => <option key={value} value={value}>{labels[index]}</option>)}</select></label>
       <button className="icon-button" aria-label="保存更新设置" title="保存更新设置" disabled={busy || !dirty}><Check size={16}/></button>
     </form>
     <span className="visually-hidden">最近成功检查 {date(policy.lastCheckedAt)}{policy.enabled && ` 下次计划检查 ${date(policy.nextCheckAt)}`}</span>

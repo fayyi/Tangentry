@@ -10,7 +10,7 @@ import (
 )
 
 func (s *Store) GetSubscriptionRefresh(ctx context.Context, id string) (subscriptions.RefreshRecord, error) {
-	record := subscriptions.DefaultRefresh()
+	record := subscriptions.DefaultRefreshFor(id)
 	var payload sql.NullString
 	err := s.db.QueryRowContext(ctx, `SELECT r.payload FROM subscriptions s LEFT JOIN subscription_refresh r ON r.id=s.id WHERE s.id=?`, id).Scan(&payload)
 	if errors.Is(err, sql.ErrNoRows) {
