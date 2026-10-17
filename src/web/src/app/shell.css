@@ -89,7 +89,8 @@
 .experience-workspace { margin-left: var(--shell-offset); min-width: 0; }
 .main-workspace { min-height: calc(100dvh - var(--header-height)); }
 .content-container { width: 100%; max-width: var(--page-max); margin: 0 auto; padding: 28px var(--page-gutter) 72px; }
-.immersive-reader .content-container { max-width: 1680px; padding-top: 16px; }
+.immersive-reader .content-container { max-width: none; padding-top: 16px; }
+.experience:is([data-view='tools'], [data-view='notes'], [data-view='podcasts']) .content-container { max-width: 1920px; }
 /* Galleries use wide screens for more columns; reading pages keep a calmer measure. */
 .experience:is([data-view='discovery'], [data-view='library'], [data-view='history'], [data-view='bilibili'], [data-view='search']) .content-container { max-width: 1920px; }
 

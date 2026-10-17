@@ -1,5 +1,5 @@
 import { ChevronLeft, ChevronRight, LoaderCircle, Quote, RotateCw, StickyNote, TextSelect, ZoomIn, ZoomOut } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PageViewport, PDFDocumentProxy, RenderTask, TextLayer } from 'pdfjs-dist'
 import type { PDFAnchor, ReadingNote } from '../../shared/api/types'
 import workerURL from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
@@ -9,6 +9,7 @@ import { useSummary } from '../ai/useSummary'
 import { SummaryControl } from '../ai/SummaryControl'
 import { AIInsights } from '../ai/AIInsights'
 import { ReaderActions } from '../../shared/reader/ReaderActions'
+import { useReadingNotebook } from '../../shared/reader/ReadingNotebook'
 import './pdf.css'
 
 export interface PDFAnnotationProps {
@@ -21,6 +22,7 @@ export interface PDFAnnotationProps {
 interface RenderedPage { page: number; rotation: number; zoom: number; width: number; viewport: PageViewport; text: string }
 
 export function PDFReader({ id, notes = [], focus, onQuote, onOpenNotes, onUnresolved }: { id: string } & PDFAnnotationProps) {
+  const notebook = useReadingNotebook()
   const navigatedFocus = useRef<{ id: string; token: number } | null>(null)
   const focusedLocation = useRef<{ id: string; token: number } | null>(null)
   const [document, setDocument] = useState<PDFDocumentProxy | null>(null)
@@ -135,7 +137,12 @@ export function PDFReader({ id, notes = [], focus, onQuote, onOpenNotes, onUnres
   const highlights = ready && rendered ? valid.filter(note => note.pdfAnchor!.page === page).map(note => ({ note, rects: note.pdfAnchor!.rects.map(rect => viewportPDFRect(rendered.viewport, rect)) })) : []
   const summarySegments = useMemo(() => pdfSummarySegments(summaryPages), [summaryPages])
   const summary = useSummary(id, 'pdf', undefined, undefined, undefined, summarySegments)
-  const locatePage = (target: number) => { if (target >= 1 && target <= (document?.numPages ?? 1)) setPage(target) }
+  const locatePage = useCallback((target: number) => { if (target >= 1 && target <= (document?.numPages ?? 1)) setPage(target) }, [document])
+  useEffect(() => {
+    if (!notebook) return
+    notebook.setAIContent(<AIInsights summary={summary} onLocatePage={locatePage} contentId={id} context={summaryPages.map(value => value.text).join('\n')} revision={summary.inspection?.settings.revision ?? 0}/>)
+    return () => notebook.setAIContent(null)
+  }, [notebook, id, locatePage, summary.inspection, summary.loading, summary.pending, summary.error, summary.notice, summaryPages])
 
   return <section className="pdf-reader" aria-label="PDF 阅读器" onMouseUp={event => { event.stopPropagation(); capture() }} onKeyUp={event => event.stopPropagation()}>
     <link rel="stylesheet" href="/pdfjs/text_layer.css" precedence="pdf-text-layer" />
@@ -157,6 +164,5 @@ export function PDFReader({ id, notes = [], focus, onQuote, onOpenNotes, onUnres
     {selectionHint && <p className="field-hint" role="status">{selectionHint}</p>}
     {document && <details className="pdf-text"><summary>查看本页文字</summary><p>{!ready ? '正在读取本页文字…' : rendered?.text || '本页未检测到可提取文字，可能是扫描图片。'}</p></details>}
     <ReaderActions><SummaryControl summary={summary} source={{ contentId: id, title: 'PDF 文档' }}/></ReaderActions>
-    <AIInsights summary={summary} onLocatePage={locatePage} contentId={id} context={summaryPages.map(value => value.text).join('\n')} revision={summary.inspection?.settings.revision ?? 0}/>
   </section>
 }

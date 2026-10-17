@@ -166,7 +166,7 @@ export function MediaReader({ id, initialItem, jobs, jobsLoading = false, video,
       onSourceUpdated(detail)
     }}/>}
     {!item&&!error&&<p role="status" className="field-hint">正在读取内容…</p>}
-      <ReadingNotebook enabled={Boolean(notes && reading && (!item || item.kind === 'video' || item.kind === 'audio'))}><div className="reader-primary" ref={body} onMouseUp={captureQuote} onKeyUp={captureQuote}>{videoLayout && videoDetails}{video}{(!item||item.kind==='video'&&Boolean(video))&&reading}
+      <ReadingNotebook enabled={Boolean(notes || insights || reading)} ai={insights}><div className="reader-primary" ref={body} onMouseUp={captureQuote} onKeyUp={captureQuote}>{videoLayout && videoDetails}{video}{(!item||item.kind==='video'&&Boolean(video))&&reading}
       {audioLayout && item && <div className="listen-heading"><PodcastArtwork key={item.id + item.thumbnailUrl} item={item} className="listen-artwork" resolveMissing={Boolean(item.mediaUrl)}/><div>{heading}</div></div>}
       {detailLoading && <p className="field-hint" role="status">正在读取笔记正文与图片…</p>}
       {detailError && <div className="error-panel reader-source-error" role="alert"><p>{detailError}</p><div className="reader-source-error-actions"><button className="button button-secondary" onClick={refreshDetails}><RotateCw size={14}/>重新获取笔记</button><button className="button button-secondary" onClick={()=>setSourceEditing(true)}>更新链接</button><a className="button button-secondary" href="/tools#accounts">检查登录</a></div></div>}
@@ -185,7 +185,7 @@ export function MediaReader({ id, initialItem, jobs, jobsLoading = false, video,
         {description ? !notes && !videoLayout && !audioLayout && description : item.kind==='article'&&item.platform==='rss'?<FullTextArticle key={item.id} item={item} notes={annotations} focus={textFocus} onQuote={quoteText} onOpenNotes={revealNotes} onUnresolved={onUnresolved} navigationTarget={notesNavigation} onReturnedToReading={returnedToReading}/>:sourceText ? !textAboveNotes && sourceText : <article className="article-reader"><h2>{item.kind==='audio'?'节目说明':'内容简介'}</h2><p>{item.description||'来源没有提供正文，可打开原内容查看。'}</p>{item.platform==='rss'&&<p className="field-hint">显示订阅源提供的文字；摘要源可能不包含全文。</p>}</article>}
       </>)}
       {quote&&onQuote&&<button className="button button-secondary reader-quote" onClick={()=>{onQuote(quote);setQuote('')}}><StickyNote size={15}/>引用选中文字到批注</button>}
-      </div>{notes&&<aside className="reading-notes" ref={notesRegion} tabIndex={-1} aria-label="当前内容笔记">{!videoLayout && !audioLayout && description}{textAboveNotes && <section className="reader-source-text" aria-label="来源正文">{sourceText}</section>}{notes}{item?.kind !== 'pdf' && insights}</aside>}</ReadingNotebook>
+      </div>{notes&&<aside className="reading-notes" ref={notesRegion} tabIndex={-1} aria-label="当前内容笔记">{!videoLayout && !audioLayout && description}{textAboveNotes && <section className="reader-source-text" aria-label="来源正文">{sourceText}</section>}{notes}</aside>}</ReadingNotebook>
     {notes && item?.kind === 'article' && <div ref={setNotesNavigation} className="mobile-reader-notes-nav" aria-label="阅读与笔记"><button ref={notesShortcut} type="button" title="笔记" onClick={openNotes}><StickyNote size={16}/>笔记</button>{notesVisited && <button type="button" className="mobile-reader-resume" onClick={resumeReading}><BookOpen size={16}/>继续阅读</button>}</div>}
 
   </section>
