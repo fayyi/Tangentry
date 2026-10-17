@@ -22,6 +22,8 @@
   max-width: none;
   margin-inline: 0;
 }
+.experience-reading .video-workspace .reader-player-resizable > .online-player,
+.experience-reading .video-workspace .reader-player-resizable > .local-player { width: 100%; max-width: none; margin-inline: 0; }
 .experience-reading .video-workspace .local-video { display: block; width: 100%; max-height: min(60dvh, 640px); }
 .experience-reading .video-workspace :is(.online-video-stage, .online-play, .online-player .platform-video, .online-video-stage .local-video) { max-height: none; }
 .experience-reading .video-workspace .watch-details { margin-block: 0 18px; min-width: 0; }
@@ -52,6 +54,8 @@
   .experience-reading .video-workspace .reading-columns { grid-template-columns: minmax(0, 1fr) minmax(360px, clamp(380px, 25vw, 480px)); gap: 16px 24px; margin-top: 12px; }
   .experience-reading .video-workspace .reader-primary > .online-player,
   .experience-reading .video-workspace .reader-primary > .local-player { width: min(100%, calc(var(--reader-player-height) * 16 / 9)); margin-inline: auto; }
+  .experience-reading .video-workspace .reader-player-resizable > .online-player,
+  .experience-reading .video-workspace .reader-player-resizable > .local-player { width: 100%; margin-inline: 0; }
   .experience-reading .video-workspace .local-video { max-height: var(--reader-player-height); }
   .experience-reading .video-workspace .watch-details { margin-bottom: 12px; }
   .experience-reading .video-workspace .watch-details .reader-description { margin-top: 10px; padding: 8px 12px; }
@@ -100,4 +104,31 @@
   .experience-reading .video-workspace .reading-notebook[data-notebook-view=captions] > .reading-notes,
   .experience-reading .video-workspace .reading-notebook[data-notebook-view=notes] > .reader-primary > .subtitle-reader,
   .experience-reading .video-workspace .reading-notebook[data-notebook-view=notes] > .reader-primary > .podcast-transcript { display: none; }
+}
+
+/* User-adjustable desktop notebook columns. The mobile drawer keeps the
+   existing stacked layout and intentionally hides these handles. */
+@media (min-width: 961px) {
+  .experience-reading .video-workspace .reading-columns.reading-notebook:has(> .reading-ai) {
+    grid-template-columns: var(--reading-ai-width, 280px) 12px minmax(0, 1fr) 12px var(--reading-notes-width, 420px);
+    gap: 16px 0;
+  }
+  .experience-reading .video-workspace .reading-columns.reading-notebook:not(:has(> .reading-ai)) {
+    grid-template-columns: minmax(0, 1fr) 12px var(--reading-notes-width, 420px);
+    gap: 16px 0;
+  }
+  .experience-reading .video-workspace .reading-columns.reading-notebook:has(> .reading-ai) > .reading-ai { grid-column: 1; }
+  .experience-reading .video-workspace .reading-columns.reading-notebook:has(> .reading-ai) > .reading-resize-ai { grid-column: 2; }
+  .experience-reading .video-workspace .reading-columns.reading-notebook:has(> .reading-ai) > .reader-primary { grid-column: 3; }
+  .experience-reading .video-workspace .reading-columns.reading-notebook:has(> .reading-ai) > .reading-resize-notes { grid-column: 4; }
+  .experience-reading .video-workspace .reading-columns.reading-notebook:has(> .reading-ai) > .reading-notes { grid-column: 5; }
+  .experience-reading .video-workspace .reading-columns.reading-notebook:not(:has(> .reading-ai)) > .reader-primary { grid-column: 1; }
+  .experience-reading .video-workspace .reading-columns.reading-notebook:not(:has(> .reading-ai)) > .reading-resize-notes { grid-column: 2; }
+  .experience-reading .video-workspace .reading-columns.reading-notebook:not(:has(> .reading-ai)) > .reading-notes { grid-column: 3; }
+  .experience-reading .video-workspace .reading-columns.reading-notebook[data-theater=true] { grid-template-columns: minmax(0, 1fr); }
+  .experience-reading .video-workspace .reading-columns.reading-notebook[data-theater=true] > .reading-resize-ai,
+  .experience-reading .video-workspace .reading-columns.reading-notebook[data-theater=true] > .reading-resize-notes { display: none; }
+}
+@media (max-width: 960px) {
+  .experience-reading .video-workspace .reading-resize-handle { display: none; }
 }

@@ -1,6 +1,6 @@
 import { ArrowLeft, BookOpen, ExternalLink, PanelRightClose, PanelRightOpen, RotateCw, StickyNote } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import type { ReactNode, RefObject } from 'react'
+import type { CSSProperties, ReactNode, RefObject } from 'react'
 import type { ContentItem, DownloadJob, ReadingNote, TextAnchor, PDFAnchor } from '../../shared/api/types'
 import { PDFReader } from '../documents/PDFReader'
 import { FeedDocumentReader } from './FeedDocumentReader'
@@ -17,7 +17,7 @@ import { NativeReadingProgress } from '../progress/NativeReadingProgress'
 import { useCompatibilityPlayback } from '../player/useCompatibilityPlayback'
 import { ReaderDescription } from './ReaderDescription'
 import { AudioControls } from './AudioControls'
-import { ReadingNotebook } from '../../shared/reader/ReadingNotebook'
+import { ReaderPlayerSizeHandle, ReadingNotebook, useReadingNotebook } from '../../shared/reader/ReadingNotebook'
 import { XiaohongshuSourceForm } from './XiaohongshuSourceForm'
 import { PodcastArtwork } from '../../shared/ui/PodcastArtwork'
 import { ReaderPublication } from './ReaderPublication'
@@ -25,6 +25,12 @@ import { useReaderContent } from './useReaderContent'
 import './reader.css'
 import './watch.css'
 import './listen.css'
+
+function ResizableReaderPlayer({ children }: { children: ReactNode }) {
+  const notebook = useReadingNotebook()
+  if (!notebook) return <>{children}</>
+  return <div className="reader-player-resizable" style={{ '--reader-player-width': `${notebook.playerWidth}%` } as CSSProperties}>{children}<ReaderPlayerSizeHandle value={notebook.playerWidth} onChange={notebook.setPlayerWidth} onReset={notebook.resetPlayerWidth}/></div>
+}
 
 export function MediaReader({ id, initialItem, jobs, jobsLoading = false, video, reading, notes, insights, mediaRef, playbackRef, onReady, onPosition, onSeek, onItem, onQuote, annotations = [], textFocus, onOpenNotes, onUnresolved, onPDFQuote, onReturn }: { id: string; initialItem?: ContentItem; jobs: DownloadJob[]; jobsLoading?: boolean; video?: ReactNode; reading?: ReactNode; notes?: ReactNode; insights?: ReactNode; mediaRef?:RefObject<HTMLMediaElement|null>; playbackRef?:RefObject<PlaybackHandle|null>; onReady?:(ready:boolean)=>void; onPosition?:(seconds:number|null)=>void; onSeek?:(seconds:number)=>void; onItem?:(item:ContentItem)=>void; onQuote?:(text:string,anchor?:TextAnchor)=>void; annotations?:ReadingNote[]; textFocus?:{id:string;token:number;allowReturn?:boolean}|null; onOpenNotes?:(ids:string[])=>void; onUnresolved?:(ids:string[])=>void; onPDFQuote?:(text:string,anchor:PDFAnchor)=>void; onReturn: () => void }) {
   const [quote,setQuote]=useState('')
@@ -157,6 +163,7 @@ export function MediaReader({ id, initialItem, jobs, jobsLoading = false, video,
   const videoLayout = Boolean(video || item?.kind === 'video')
   const audioLayout = item?.kind === 'audio'
   const heading = <>{item ? <BilingualTitle heading contentId={item.id} text={item.title}/> : <h1>内容阅读</h1>}{item && <p className="reading-meta">{item.author||'未知作者'} · <ReaderPublication key={item.id} item={item}/></p>}</>
+  const player = video ? <ResizableReaderPlayer>{video}</ResizableReaderPlayer> : null
   const videoDetails = <div className="watch-details">{heading}{description}</div>
   return <section data-focus-reading={focusReading} className={`media-reader${item?.kind === 'article' ? ' article-workspace' : ''}${item?.kind === 'pdf' ? ' document-workspace' : ''}${videoLayout ? ' video-workspace' : ''}${audioLayout ? ' audio-workspace' : ''}`}>
     <div className="reading-nav"><button className="button button-secondary" title="返回列表" onClick={onReturn}><ArrowLeft size={16}/>返回列表</button><span>{item?mediaLabel(item):'内容阅读'}</span><ReaderActionsSlot/>{notes && item && (item.kind === 'article' || item.kind === 'pdf') && <button className="button button-secondary reading-focus-toggle" aria-label={focusReading ? '展开笔记' : '专注阅读'} title={focusReading ? '展开笔记' : '专注阅读'} aria-pressed={focusReading} onClick={() => setFocusReading(value => !value)}>{focusReading ? <PanelRightOpen size={16}/> : <PanelRightClose size={16}/>}<span>{focusReading ? '展开笔记' : '专注阅读'}</span></button>}{item?.platform==='xiaohongshu'&&<button className="icon-button" aria-label="刷新笔记详情" title="刷新笔记详情" disabled={detailLoading} onClick={refreshDetails}><RotateCw size={16}/></button>}{item && <a className="button button-secondary" title={item.kind==='pdf'?'打开 PDF 原文件':'打开原内容'} href={item.platform==='pdf'?'/api/documents/'+item.platformId+'/file':item.mediaUrl&&item.kind==='pdf'?item.mediaUrl:item.url} target="_blank" rel="noopener noreferrer">{item.kind==='pdf'?'打开 PDF 原文件':'打开原内容'}<ExternalLink size={15}/></a>}</div>
@@ -166,7 +173,7 @@ export function MediaReader({ id, initialItem, jobs, jobsLoading = false, video,
       onSourceUpdated(detail)
     }}/>}
     {!item&&!error&&<p role="status" className="field-hint">正在读取内容…</p>}
-      <ReadingNotebook enabled={Boolean(notes || insights || reading)} ai={insights}><div className="reader-primary" ref={body} onMouseUp={captureQuote} onKeyUp={captureQuote}>{videoLayout && videoDetails}{video}{(!item||item.kind==='video'&&Boolean(video))&&reading}
+      <ReadingNotebook enabled={Boolean(notes || insights || reading)} ai={insights}><div className="reader-primary" ref={body} onMouseUp={captureQuote} onKeyUp={captureQuote}>{videoLayout && videoDetails}{player}{(!item||item.kind==='video'&&Boolean(video))&&reading}
       {audioLayout && item && <div className="listen-heading"><PodcastArtwork key={item.id + item.thumbnailUrl} item={item} className="listen-artwork" resolveMissing={Boolean(item.mediaUrl)}/><div>{heading}</div></div>}
       {detailLoading && <p className="field-hint" role="status">正在读取笔记正文与图片…</p>}
       {detailError && <div className="error-panel reader-source-error" role="alert"><p>{detailError}</p><div className="reader-source-error-actions"><button className="button button-secondary" onClick={refreshDetails}><RotateCw size={14}/>重新获取笔记</button><button className="button button-secondary" onClick={()=>setSourceEditing(true)}>更新链接</button><a className="button button-secondary" href="/tools#accounts">检查登录</a></div></div>}
