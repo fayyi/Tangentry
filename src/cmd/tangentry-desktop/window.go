@@ -10,15 +10,23 @@ import (
 type desktopWindows struct {
 	address string
 	origin  string
+	onClose func()
 }
 
-func newDesktopWindows(address string) *desktopWindows {
+func newDesktopWindows(address string, onClose ...func()) *desktopWindows {
 	parsed, err := url.Parse(address)
 	if err != nil {
 		slog.Error("could not parse loopback address", "address", address, "error", err)
-		return &desktopWindows{address: address}
+		return &desktopWindows{address: address, onClose: firstClose(onClose)}
 	}
-	return &desktopWindows{address: address, origin: parsed.Scheme + "://" + parsed.Host}
+	return &desktopWindows{address: address, origin: parsed.Scheme + "://" + parsed.Host, onClose: firstClose(onClose)}
+}
+
+func firstClose(callbacks []func()) func() {
+	if len(callbacks) == 0 {
+		return nil
+	}
+	return callbacks[0]
 }
 
 func (w *desktopWindows) Open() {
@@ -54,4 +62,7 @@ func (w *desktopWindows) Open() {
 		slog.Warn("webview stopped; reloading", "reason", reason)
 		window.Page().Reload()
 	})
+	if w.onClose != nil {
+		window.OnClosed(w.onClose)
+	}
 }

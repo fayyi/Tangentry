@@ -10,21 +10,58 @@ import (
 	"strings"
 	"tangentry/internal/content"
 	"tangentry/internal/discovery"
+	"tangentry/internal/platformfetch"
 )
 
-// This is the website's feed, not an Open Platform API. MyGo can provide a
-// platform WebView for login, but it does not expose response interception for
-// the page's signed feed calls. The supported server-side fallback therefore
-// reuses an explicitly imported browser Cookie and its matching User-Agent;
-// signatures are never emulated.
+// The desktop bridge executes this request in douyin.com's page context, so
+// the site's own security SDK can sign it. Headless/server builds use the
+// explicit Cookie fallback below; signatures are never emulated.
 func (c *Client) Recommendations(ctx context.Context, page int) (discovery.Feed, error) {
 	if page < 1 || page > 10000 {
 		return discovery.Feed{}, discovery.ErrInvalidQuery
 	}
 	if c.HTTP == nil {
-		return discovery.Feed{}, discovery.ErrUnavailable
+		if c.Page == nil {
+			return discovery.Feed{}, discovery.ErrUnavailable
+		}
 	}
 	const endpoint = "https://www.douyin.com/aweme/v2/web/module/feed/"
+	query := url.Values{"device_platform": {"webapp"}, "aid": {"6383"}, "channel": {"channel_pc_web"}, "module_id": {"3003101"}, "count": {"20"}, "refresh_index": {strconv.Itoa(page)}, "refer_type": {"10"}, "pull_type": {"0"}, "use_lite_type": {"2"}}
+	query.Set("update_version_code", "170400")
+	query.Set("pc_client_type", "1")
+	query.Set("browser_language", "zh-CN")
+	query.Set("browser_platform", "MacIntel")
+	query.Set("browser_name", "Chrome")
+	query.Set("browser_version", "136.0.0.0")
+	query.Set("engine_name", "Blink")
+	query.Set("engine_version", "136.0.0.0")
+	query.Set("os_name", "Mac OS")
+	query.Set("os_version", "10.15.7")
+	query.Set("platform", "PC")
+	if page > 1 {
+		query.Set("pull_type", "2")
+	}
+	if c.Page != nil {
+		response, err := c.Page.Fetch(ctx, "douyin", "/aweme/v2/web/module/feed/?"+query.Encode(), platformfetch.Request{
+			Method: http.MethodPost,
+			Headers: map[string]string{
+				"Referer":         "https://www.douyin.com/",
+				"Content-Type":    "application/x-www-form-urlencoded",
+				"Accept":          "application/json, text/plain, */*",
+				"Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+			},
+			Body: "encoded_pre_item_ids=",
+		})
+		if err == nil {
+			denied := &discovery.PlatformError{Restricted: true, Message: "抖音未提供可用的网页推荐，请在应用内完成验证后重试。"}
+			if response.Restricted || response.Status != http.StatusOK || looksLikeChallenge([]byte(response.Body)) {
+				return discovery.Feed{}, denied
+			}
+			return decodeRecommendations([]byte(response.Body), page, denied)
+		}
+		// The bridge is deliberately best-effort. A native WebView may be
+		// unavailable during startup; server-side HTTP remains the fallback.
+	}
 	cookie := ""
 	if c.Cookie != nil {
 		cookie = c.Cookie(endpoint)
@@ -32,7 +69,7 @@ func (c *Client) Recommendations(ctx context.Context, page int) (discovery.Feed,
 	if cookie == "" {
 		return discovery.Feed{}, &discovery.PlatformError{Message: "抖音网页推荐需要登录信息，请在设置中保存 Cookie。"}
 	}
-	query := url.Values{"device_platform": {"webapp"}, "aid": {"6383"}, "channel": {"channel_pc_web"}, "module_id": {"3003101"}, "count": {"20"}, "refresh_index": {strconv.Itoa(page)}, "refer_type": {"10"}, "pull_type": {"0"}, "use_lite_type": {"2"}}
+	query = url.Values{"device_platform": {"webapp"}, "aid": {"6383"}, "channel": {"channel_pc_web"}, "module_id": {"3003101"}, "count": {"20"}, "refresh_index": {strconv.Itoa(page)}, "refer_type": {"10"}, "pull_type": {"0"}, "use_lite_type": {"2"}}
 	query.Set("update_version_code", "170400")
 	query.Set("pc_client_type", "1")
 	query.Set("browser_language", "zh-CN")

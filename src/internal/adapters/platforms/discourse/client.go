@@ -14,6 +14,7 @@ import (
 	"tangentry/internal/adapters/feeds"
 	"tangentry/internal/content"
 	"tangentry/internal/discovery"
+	"tangentry/internal/platformfetch"
 )
 
 type Client struct {
@@ -22,6 +23,7 @@ type Client struct {
 	UserAgent func(string) string
 	Session   func() (string, func([]*http.Cookie) error)
 	UserKey   func() (string, string)
+	Page      platformfetch.Fetcher
 }
 
 type SessionState struct {
@@ -44,6 +46,33 @@ func setDiscourseBrowserHeaders(req *http.Request, ajax bool) {
 }
 
 func (c *Client) read(ctx context.Context, path string) ([]byte, int, error) {
+	if c.Page != nil {
+		response, err := c.Page.Fetch(ctx, "linuxdo", path, platformfetch.Request{Method: http.MethodGet, Headers: map[string]string{
+			"Accept":           "application/json, text/javascript, */*; q=0.01",
+			"X-Requested-With": "XMLHttpRequest",
+		}})
+		if err == nil {
+			raw := []byte(response.Body)
+			if response.Restricted || response.Status == http.StatusForbidden || response.Status == http.StatusUnauthorized || response.Status == http.StatusTooManyRequests || looksLikeCloudflare(raw) {
+				return nil, response.Status, linuxdoPageRestricted(response.Status)
+			}
+			if response.Status != http.StatusOK {
+				if response.Status == http.StatusNotFound {
+					return nil, response.Status, nil
+				}
+				return nil, response.Status, discovery.ErrUnavailable
+			}
+			if !json.Valid(raw) {
+				if response.Restricted || looksLikeCloudflare(raw) {
+					return nil, response.Status, linuxdoPageRestricted(response.Status)
+				}
+				return nil, response.Status, discovery.ErrUnavailable
+			}
+			return raw, response.Status, nil
+		}
+		// A native bridge is optional. If it cannot create or use a WebView,
+		// retain the server-side HTTP fallback below.
+	}
 	if c.HTTP == nil {
 		return nil, 0, discovery.ErrUnavailable
 	}
@@ -119,6 +148,16 @@ func (c *Client) read(ctx context.Context, path string) ([]byte, int, error) {
 		}
 	}
 	return raw, res.StatusCode, nil
+}
+
+func linuxdoPageRestricted(status int) error {
+	if status == http.StatusUnauthorized {
+		return &discovery.PlatformError{Message: "Linux.do 登录已失效，请在应用内完成验证后重试。", Restricted: true}
+	}
+	if status == http.StatusTooManyRequests {
+		return &discovery.PlatformError{Message: "Linux.do 暂时限制请求，请稍后在应用内重试。", Restricted: true}
+	}
+	return &discovery.PlatformError{Message: "需要在应用内完成 Linux.do 验证", Restricted: true}
 }
 
 func looksLikeCloudflare(raw []byte) bool {

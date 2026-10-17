@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"tangentry/internal/discovery"
+	"tangentry/internal/platformfetch"
 )
 
 type transportFunc func(*http.Request) (*http.Response, error)
@@ -97,6 +98,33 @@ func TestCloudflareChallengeHasActionableError(t *testing.T) {
 	var platformErr *discovery.PlatformError
 	if !errors.As(err, &platformErr) || !platformErr.Restricted || !strings.Contains(platformErr.Message, "cf_clearance") {
 		t.Fatalf("challenge error is not actionable: %v", err)
+	}
+}
+
+type pageFetcherFunc func(context.Context, string, string, platformfetch.Request) (platformfetch.Response, error)
+
+func (f pageFetcherFunc) Fetch(ctx context.Context, platform, path string, request platformfetch.Request) (platformfetch.Response, error) {
+	return f(ctx, platform, path, request)
+}
+
+func TestPageBridgeIsPreferredForTopicReads(t *testing.T) {
+	calls := 0
+	c := &Client{
+		Page: pageFetcherFunc(func(_ context.Context, platform, path string, request platformfetch.Request) (platformfetch.Response, error) {
+			calls++
+			if platform != "linuxdo" || path != "/latest.json?page=0" || request.Method != http.MethodGet {
+				t.Fatalf("unexpected page request: %s %s %+v", platform, path, request)
+			}
+			return platformfetch.Response{Status: http.StatusOK, Body: `{"topic_list":{"topics":[{"id":42,"title":"页面话题"}]}}`}, nil
+		}),
+		HTTP: &http.Client{Transport: transportFunc(func(*http.Request) (*http.Response, error) {
+			t.Fatal("HTTP fallback used despite page bridge")
+			return nil, nil
+		})},
+	}
+	feed, err := c.Latest(context.Background(), 1)
+	if err != nil || calls != 1 || len(feed.Items) != 1 {
+		t.Fatalf("page bridge read failed: %+v calls=%d err=%v", feed, calls, err)
 	}
 }
 
