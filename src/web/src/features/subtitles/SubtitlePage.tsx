@@ -41,11 +41,11 @@ export function SubtitlePage({ query, initialItem, onReturn, notes, insights, on
   return <section className="subtitle-page video-workspace">
     <div className="reading-nav"><button className="button button-secondary" onClick={onReturn}><ArrowLeft size={16} />返回列表</button><span>视频阅读 · 第一分 P</span><ReaderActionsSlot/><a className="button button-secondary" href={`https://www.bilibili.com/video/${query}/`} target="_blank" rel="noopener noreferrer">打开原视频 <ExternalLink size={15} /></a></div>
     {!valid ? <><h1 className="reading-title">视频阅读</h1><p role="alert" className="subtitle-error">阅读地址缺少正确的视频 BV 号，请返回列表选择视频。</p></> : <>
-      <ReadingNotebook enabled={Boolean(notes)}><div className="reader-primary">
+      <ReadingNotebook enabled={Boolean(notes || insights)} ai={insights}><div className="reader-primary">
         <div className="watch-details">{item ? <BilingualTitle heading contentId={item.id} text={item.title}/> : <h1 className="reading-video-title">{query}</h1>}
         {item && <p className="reading-meta">{item.author || '未知作者'} · {formatDate(item.publishedAt)}{item.durationSeconds > 0 && ` · ${formatDuration(item.durationSeconds)}`}</p>}
         {item?.description && <ReaderDescription key={item.id} item={item} onSeek={onSeek} className="watch-description"/>}</div>{player}
-        {error ? <div className="subtitle-error" role="alert"><p>{error}</p><button className="button button-secondary" onClick={() => setAttempt(value => value + 1)}>重新获取视频信息</button></div> : !item && <p className="subtitle-note" role="status"><LoaderCircle size={16} className="spin" />正在获取视频信息…</p>}<SubtitleReader key={query} item={item ?? { platformId: query, url: `https://www.bilibili.com/video/${query}/` }} onNoteAt={onNoteAt} position={position} onSeek={onSeek} onTrackChange={onTrackChange} assistance={assistance} /></div><aside className="reading-notes">{notes}{insights}</aside></ReadingNotebook>
+        {error ? <div className="subtitle-error" role="alert"><p>{error}</p><button className="button button-secondary" onClick={() => setAttempt(value => value + 1)}>重新获取视频信息</button></div> : !item && <p className="subtitle-note" role="status"><LoaderCircle size={16} className="spin" />正在获取视频信息…</p>}<SubtitleReader key={query} item={item ?? { platformId: query, url: `https://www.bilibili.com/video/${query}/` }} onNoteAt={onNoteAt} position={position} onSeek={onSeek} onTrackChange={onTrackChange} assistance={assistance} /></div><aside className="reading-notes">{notes}</aside></ReadingNotebook>
     </>}
   </section>
 }

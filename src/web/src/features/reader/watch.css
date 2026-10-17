@@ -2,7 +2,7 @@
 .experience-reading .video-workspace .reading-columns {
   height: auto;
   min-height: 0;
-  grid-template-columns: minmax(0, 1fr) minmax(280px, 320px);
+  grid-template-columns: minmax(0, 1fr) minmax(360px, clamp(380px, 25vw, 480px));
   grid-template-rows: auto;
   gap: 20px 28px;
   margin-top: 18px;
@@ -49,7 +49,7 @@
 .experience-reading .video-workspace [data-theater=true] .online-player { max-width: 1100px; margin-inline: auto; }
 .experience-reading .video-workspace [data-theater=true] .local-video { max-height: 72dvh; }
 @media (min-width: 961px) {
-  .experience-reading .video-workspace .reading-columns { grid-template-columns: minmax(0, 1fr) minmax(300px, 340px); gap: 16px 24px; margin-top: 12px; }
+  .experience-reading .video-workspace .reading-columns { grid-template-columns: minmax(0, 1fr) minmax(360px, clamp(380px, 25vw, 480px)); gap: 16px 24px; margin-top: 12px; }
   .experience-reading .video-workspace .reader-primary > .online-player,
   .experience-reading .video-workspace .reader-primary > .local-player { width: min(100%, calc(var(--reader-player-height) * 16 / 9)); margin-inline: auto; }
   .experience-reading .video-workspace .local-video { max-height: var(--reader-player-height); }

@@ -1,6 +1,7 @@
-.reading-columns { display: grid; grid-template-columns: minmax(0, 1fr) 300px; align-items: start; gap: 32px; margin-top: 28px; }
+.reading-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(360px, clamp(380px, 25vw, 480px)); align-items: start; gap: clamp(20px, 2vw, 36px); margin-top: 28px; }
 .reading-columns .subtitle-reader { margin-top: 0; }
-.reading-notes { position: sticky; top: 72px; min-width: 0; }
+.reading-notes { position: sticky; top: 72px; min-width: 0; scrollbar-width: none; }
+.reading-notes::-webkit-scrollbar { display: none; }
 .notes-panel { border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; }
 .notes-panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 16px; }
 .notes-panel-heading h2 { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 500; margin: 0; }

@@ -1,4 +1,4 @@
-.settings-layout { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 28px; max-width: 1180px; align-items: start; padding-bottom: 48px; }
+.settings-layout { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: clamp(28px, 4vw, 64px); width: 100%; align-items: start; padding-bottom: 48px; }
 .settings-nav { position: sticky; top: calc(var(--nav-height) + 20px); display: grid; gap: 2px; }
 .settings-nav button { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 56px; padding: 8px 10px; border-radius: var(--radius-md); color: var(--muted); text-align: left; transition: background-color 140ms var(--ease-out); }
 .settings-nav button:hover { color: var(--ink); background: var(--hover); }
@@ -10,7 +10,7 @@
 .settings-nav button.active .settings-category-icon { background: var(--accent-soft); color: var(--accent); }
 .settings-nav-chevron { width: 12px; margin-left: auto; opacity: 0; flex-shrink: 0; }
 .settings-nav button.active .settings-nav-chevron { opacity: 1; }
-.settings-workspace { display: block; min-width: 0; max-width: 880px; }
+.settings-workspace { display: block; min-width: 0; max-width: 1100px; }
 .settings-workspace :is(button, input, select, textarea) { scroll-margin-top: calc(var(--nav-height) + 20px); scroll-margin-bottom: calc(var(--bottom-nav-height) + 120px); }
 .settings-block { min-width: 0; padding: 22px 24px 24px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--card); }
 .settings-block[hidden] { display: none; }
