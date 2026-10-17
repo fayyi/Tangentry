@@ -4,6 +4,8 @@ import "net/http"
 
 func (h *Handler) registerMediaRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/downloads", h.media.downloadList)
+	mux.HandleFunc("DELETE /api/downloads", h.media.downloadClear)
+	mux.HandleFunc("DELETE /api/downloads/{id}", h.media.downloadDelete)
 	mux.HandleFunc("POST /api/downloads", h.media.downloadStart)
 	mux.HandleFunc("POST /api/downloads/info", h.media.downloadInfo)
 	mux.HandleFunc("GET /api/downloads/{id}/files/{name}", h.media.downloadArtifact)

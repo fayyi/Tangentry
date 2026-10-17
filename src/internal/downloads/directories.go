@@ -126,3 +126,10 @@ func (s *Service) jobDirectory(id string) string {
 	}
 	return s.originalDirectory
 }
+
+func (s *Service) jobDirectoryUnlocked(id string) string {
+	if directory := s.locations.Jobs[id]; directory != "" {
+		return directory
+	}
+	return s.originalDirectory
+}

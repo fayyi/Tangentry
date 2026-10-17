@@ -109,5 +109,25 @@ export function useDownloads() {
     } catch (error) { setWriteError(error instanceof Error ? error.message : '无法取消下载。') }
   }
 
-  return { jobs, tools, error: writeError || readError, loading, submitting, notice, reload, start, cancel, info, inspecting, infoError, inspect, clearInfo }
+  async function remove(id: string, deleteFiles = false) {
+    try {
+      await request<void>(`/downloads/${encodeURIComponent(id)}`, { method: 'DELETE', body: JSON.stringify({ deleteFiles }) })
+      ++revision.current
+      setJobs(current => current.filter(job => job.id !== id))
+      setWriteError('')
+      return true
+    } catch (error) { setWriteError(error instanceof Error ? error.message : '无法删除下载记录。'); return false }
+  }
+
+  async function clear(deleteFiles = false) {
+    try {
+      await request<void>('/downloads', { method: 'DELETE', body: JSON.stringify({ deleteFiles }) })
+      ++revision.current
+      setJobs(current => current.filter(job => job.state === 'queued' || job.state === 'running'))
+      setWriteError('')
+      return true
+    } catch (error) { setWriteError(error instanceof Error ? error.message : '无法清空下载历史。'); return false }
+  }
+
+  return { jobs, tools, error: writeError || readError, loading, submitting, notice, reload, start, cancel, remove, clear, info, inspecting, infoError, inspect, clearInfo }
 }

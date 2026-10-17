@@ -42,6 +42,7 @@ type browseVideo struct {
 	Description string `json:"desc"`
 	Duration    int    `json:"duration"`
 	Published   int64  `json:"pubdate"`
+	ViewCount   int64  `json:"view_count"`
 	Owner       struct {
 		MID  int64  `json:"mid"`
 		Name string `json:"name"`
@@ -54,7 +55,7 @@ func (v browseVideo) item() (content.Item, bool) {
 	if err != nil || kind != "video" || id != v.BVID {
 		return content.Item{}, false
 	}
-	item := content.Item{ID: "bilibili:" + v.BVID, Platform: "bilibili", PlatformID: v.BVID, Kind: "video", Title: html.UnescapeString(v.Title), Author: v.Owner.Name, URL: "https://www.bilibili.com/video/" + v.BVID + "/", ThumbnailURL: secureImage(v.Picture), AuthorAvatarURL: secureImage(v.Owner.Face), Description: v.Description, DurationSeconds: v.Duration, PublishedAt: v.Published}
+	item := content.Item{ID: "bilibili:" + v.BVID, Platform: "bilibili", PlatformID: v.BVID, Kind: "video", Title: html.UnescapeString(v.Title), Author: v.Owner.Name, URL: "https://www.bilibili.com/video/" + v.BVID + "/", ThumbnailURL: secureImage(v.Picture), AuthorAvatarURL: secureImage(v.Owner.Face), Description: v.Description, DurationSeconds: v.Duration, PublishedAt: v.Published, ViewCount: v.ViewCount}
 	if v.Owner.MID > 0 {
 		item.AuthorID = strconv.FormatInt(v.Owner.MID, 10)
 	}
@@ -163,19 +164,20 @@ func (c *Client) dynamic(ctx context.Context, page int, cursor string) (BrowsePa
 	if cursor != "" {
 		params.Set("offset", cursor)
 	}
+	params.Set("type", "video")
 	sign(params, key, time.Now().Unix())
 	var data struct {
 		Items   []json.RawMessage `json:"items"`
 		Offset  string            `json:"offset"`
 		HasMore json.RawMessage   `json:"has_more"`
 	}
-	if err := c.getFrom(ctx, c.baseURL, "https://t.bilibili.com/", "/x/polymer/web-dynamic/v1/feed/nav", params, &data, false); err != nil {
+	if err := c.getFrom(ctx, c.baseURL, "https://t.bilibili.com/", "/x/polymer/web-dynamic/v1/feed/all", params, &data, false); err != nil {
 		return BrowsePage{}, err
 	}
 	if data.Items == nil || len(data.Items) > 100 || len(data.Offset) > 256 {
 		return BrowsePage{}, discovery.ErrUnavailable
 	}
-	hasMore := string(data.HasMore) == "1" || string(data.HasMore) == "true"
+	hasMore := dynamicHasMore(data.HasMore)
 	result := BrowsePage{Items: []content.Item{}, Page: page, SourceTitle: "关注动态", HasMore: hasMore && data.Offset != "" && data.Offset != cursor, Next: data.Offset}
 	seen := map[string]bool{}
 	for _, raw := range data.Items {
@@ -185,6 +187,22 @@ func (c *Client) dynamic(ctx context.Context, page int, cursor string) (BrowsePa
 		}
 	}
 	return result, nil
+}
+
+func dynamicHasMore(raw json.RawMessage) bool {
+	var value bool
+	if json.Unmarshal(raw, &value) == nil {
+		return value
+	}
+	var number int
+	if json.Unmarshal(raw, &number) == nil {
+		return number != 0
+	}
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		return text == "1" || strings.EqualFold(text, "true")
+	}
+	return false
 }
 
 func dynamicVideo(raw json.RawMessage, depth int) (content.Item, bool) {
@@ -200,7 +218,12 @@ func dynamicVideo(raw json.RawMessage, depth int) (content.Item, bool) {
 		UID       int64           `json:"uid"`
 		Published int64           `json:"pub_ts"`
 		Duration  string          `json:"duration_text"`
-		Author    struct {
+		ViewCount int64           `json:"view_count"`
+		Stat      struct {
+			View int64 `json:"view"`
+			Play int64 `json:"play"`
+		} `json:"stat"`
+		Author struct {
 			MID  int64  `json:"mid"`
 			Name string `json:"name"`
 			Face string `json:"face"`
@@ -221,6 +244,11 @@ func dynamicVideo(raw json.RawMessage, depth int) (content.Item, bool) {
 						Cover       string `json:"cover"`
 						Description string `json:"desc"`
 						Duration    string `json:"duration_text"`
+						ViewCount   int64  `json:"view_count"`
+						Stat        struct {
+							View int64 `json:"view"`
+							Play int64 `json:"play"`
+						} `json:"stat"`
 					} `json:"archive"`
 				} `json:"major"`
 			} `json:"module_dynamic"`
@@ -246,6 +274,13 @@ func dynamicVideo(raw json.RawMessage, depth int) (content.Item, bool) {
 			}
 		}
 		v.Title, v.Picture, v.Duration, v.Published = data.Title, data.Cover, duration(data.Duration), data.Published
+		v.ViewCount = data.ViewCount
+		if v.ViewCount == 0 {
+			v.ViewCount = data.Stat.View
+		}
+		if v.ViewCount == 0 {
+			v.ViewCount = data.Stat.Play
+		}
 		v.Owner.MID, v.Owner.Name, v.Owner.Face = data.Author.MID, data.Author.Name, data.Author.Face
 		if v.Owner.MID <= 0 {
 			v.Owner.MID = data.UID
@@ -253,6 +288,13 @@ func dynamicVideo(raw json.RawMessage, depth int) (content.Item, bool) {
 	} else {
 		a := data.Modules.Dynamic.Major.Archive
 		v.BVID, v.Title, v.Picture, v.Description, v.Duration = a.BVID, a.Title, a.Cover, a.Description, duration(a.Duration)
+		v.ViewCount = a.ViewCount
+		if v.ViewCount == 0 {
+			v.ViewCount = a.Stat.View
+		}
+		if v.ViewCount == 0 {
+			v.ViewCount = a.Stat.Play
+		}
 		v.Published = data.Modules.Author.Published
 		v.Owner.MID, v.Owner.Name, v.Owner.Face = data.Modules.Author.MID, data.Modules.Author.Name, data.Modules.Author.Face
 	}

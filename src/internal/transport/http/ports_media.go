@@ -15,6 +15,8 @@ type DownloadService interface {
 	Start(context.Context, downloads.Request) (downloads.Job, error)
 	Inspect(context.Context, string) (downloads.MediaInfo, error)
 	Cancel(context.Context, string) error
+	Delete(context.Context, string, bool) error
+	Clear(context.Context, bool) error
 	File(context.Context, string) (*os.File, error)
 	Artifact(context.Context, string, string) (*os.File, error)
 	NoteFrameFile(context.Context, string, string) (*os.File, error)

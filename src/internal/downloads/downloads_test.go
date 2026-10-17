@@ -196,6 +196,85 @@ func TestCancelAndRestartPreserveHistoryWithoutAutomaticallyResuming(t *testing.
 	}
 }
 
+func TestDeleteHistoryRequiresTerminalStateAndCanRemoveFiles(t *testing.T) {
+	root := t.TempDir()
+	store, err := sqlite.Open(filepath.Join(root, "delete.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	runner := gatedRunner{make(chan struct{}, 1), make(chan struct{})}
+	directory := filepath.Join(root, "media")
+	service, err := downloads.NewService(store, runner, directory, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Close()
+	ctx := context.Background()
+	completed := downloads.Job{ID: "completed-delete", URL: "https://www.bilibili.com/video/BV17x411w7KC/", State: "completed", FileName: "video.mp4", CreatedAt: 1}
+	if err := store.SaveDownload(ctx, completed); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(directory, completed.ID), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, completed.ID, completed.FileName), []byte("file"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Delete(ctx, completed.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.GetDownload(ctx, completed.ID); !errors.Is(err, downloads.ErrNotFound) {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(directory, completed.ID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("file directory retained")
+	}
+	active, err := service.Start(ctx, downloads.Request{URL: "https://www.bilibili.com/video/BV1xx411c7mD"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Delete(ctx, active.ID, false); !errors.Is(err, downloads.ErrActive) {
+		t.Fatal(err)
+	}
+}
+
+func TestClearHistoryLeavesActiveTasksForCancellation(t *testing.T) {
+	root := t.TempDir()
+	store, err := sqlite.Open(filepath.Join(root, "clear.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	runner := gatedRunner{make(chan struct{}, 1), make(chan struct{})}
+	service, err := downloads.NewService(store, runner, filepath.Join(root, "media"), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Close()
+	ctx := context.Background()
+	terminal := downloads.Job{ID: "terminal-clear", URL: "https://www.bilibili.com/video/BV17x411w7KC/", State: "failed", CreatedAt: 1}
+	if err := store.SaveDownload(ctx, terminal); err != nil {
+		t.Fatal(err)
+	}
+	active, err := service.Start(ctx, downloads.Request{URL: "https://www.bilibili.com/video/BV1xx411c7mD"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Clear(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.GetDownload(ctx, terminal.ID); !errors.Is(err, downloads.ErrNotFound) {
+		t.Fatal("terminal history retained")
+	}
+	if _, err := store.GetDownload(ctx, active.ID); err != nil {
+		t.Fatal("active task was cleared", err)
+	}
+	if err := service.Cancel(ctx, active.ID); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestUntrustedURLsNeverReachDownloadTools(t *testing.T) {
 	store, err := sqlite.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {

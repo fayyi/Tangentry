@@ -52,3 +52,33 @@ func (s *Store) SaveDownload(ctx context.Context, job downloads.Job) error {
 	_, err = s.db.ExecContext(ctx, `INSERT INTO downloads(id,payload,created_at) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload`, job.ID, string(payload), job.CreatedAt)
 	return err
 }
+
+func (s *Store) DeleteDownload(ctx context.Context, id string) error {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM downloads WHERE id=?`, id)
+	if err != nil {
+		return err
+	}
+	if count, err := result.RowsAffected(); err != nil {
+		return err
+	} else if count == 0 {
+		return downloads.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) DeleteDownloads(ctx context.Context, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, id := range ids {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM downloads WHERE id=?`, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}

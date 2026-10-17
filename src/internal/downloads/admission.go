@@ -3,6 +3,8 @@ package downloads
 import (
 	"context"
 	"crypto/rand"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -84,4 +86,68 @@ func (s *Service) Cancel(ctx context.Context, id string) error {
 		cancel()
 	}
 	return nil
+}
+
+// Delete removes terminal history. Active jobs must be cancelled first so the
+// worker cannot recreate or overwrite a record while it is being removed.
+func (s *Service) Delete(ctx context.Context, id string, removeFiles bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	job, err := s.repo.GetDownload(ctx, id)
+	if err != nil {
+		return err
+	}
+	if job.State == "queued" || job.State == "running" {
+		return ErrActive
+	}
+	directory := s.jobDirectoryUnlocked(id)
+	if err := s.repo.DeleteDownload(ctx, id); err != nil {
+		return err
+	}
+	delete(s.locations.Jobs, id)
+	if err := s.saveDirectories(); err != nil {
+		return err
+	}
+	if removeFiles {
+		if err := os.RemoveAll(filepath.Join(directory, id)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Service) Clear(ctx context.Context, removeFiles bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	jobs, err := s.repo.ListDownloads(ctx)
+	if err != nil {
+		return err
+	}
+	ids := make([]string, 0, len(jobs))
+	terminal := make([]Job, 0, len(jobs))
+	for _, job := range jobs {
+		if job.State == "queued" || job.State == "running" {
+			continue
+		}
+		ids = append(ids, job.ID)
+		terminal = append(terminal, job)
+	}
+	if err := s.repo.DeleteDownloads(ctx, ids); err != nil {
+		return err
+	}
+	if removeFiles {
+		for _, job := range terminal {
+			directory := s.locations.Jobs[job.ID]
+			if directory == "" {
+				directory = s.originalDirectory
+			}
+			if err := os.RemoveAll(filepath.Join(directory, job.ID)); err != nil {
+				return err
+			}
+		}
+	}
+	for _, id := range ids {
+		delete(s.locations.Jobs, id)
+	}
+	return s.saveDirectories()
 }

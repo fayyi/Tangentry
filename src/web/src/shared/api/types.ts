@@ -43,6 +43,7 @@ export interface ContentItem {
   previewText?: string
   durationSeconds: number
   publishedAt: number
+  viewCount?: number
   publishedText?: string
   savedAt?: number
 }

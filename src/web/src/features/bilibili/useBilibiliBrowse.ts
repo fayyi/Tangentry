@@ -33,7 +33,7 @@ export function useBilibiliBrowse(active: boolean) {
     const controller = new AbortController(); controllers.current[identity] = controller
     setStates(previous => ({ ...previous, [identity]: { ...(previous[identity] ?? blank()), loading: true, error: '' } }))
     try {
-      if (selected === 'my' && (!append || !profileRef.current)) {
+      if ((selected === 'my' || selected === 'dynamic') && (!append || !profileRef.current)) {
         const account = await request<Profile>('/bilibili/profile', { signal: controller.signal })
         if (controller.signal.aborted) return
         setProfile(account); profileRef.current = account

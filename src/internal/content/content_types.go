@@ -23,6 +23,7 @@ type Item struct {
 	PreviewText     string         `json:"previewText,omitempty"`
 	DurationSeconds int            `json:"durationSeconds"`
 	PublishedAt     int64          `json:"publishedAt"`
+	ViewCount       int64          `json:"viewCount,omitempty"`
 	PublishedText   string         `json:"publishedText,omitempty"`
 	SavedAt         int64          `json:"savedAt,omitempty"`
 	// Partial marks a card projection: bodies, transcripts and long

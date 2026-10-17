@@ -129,3 +129,44 @@ func TestMediaUsesCompletedFileBoundaryAndHTTPRanges(t *testing.T) {
 		t.Fatal("missing file reported playable")
 	}
 }
+
+func TestDownloadHistoryDeleteHTTPContract(t *testing.T) {
+	root := t.TempDir()
+	store, err := sqlite.Open(filepath.Join(root, "delete-http.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	service, err := downloads.NewService(store, inactiveMediaRunner{}, filepath.Join(root, "media"), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Close()
+	ctx := context.Background()
+	job := downloads.Job{ID: "http-delete-job", URL: "https://www.bilibili.com/video/BV17x411w7KC/", State: "completed", FileName: "video.mp4", CreatedAt: 1}
+	if err := store.SaveDownload(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	h := New(nil, nil, nil, Options{Downloads: service})
+	request := httptest.NewRequest(http.MethodDelete, "http://127.0.0.1/api/downloads/"+job.ID, strings.NewReader(`{"deleteFiles":false}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	h.ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("delete status: %d %s", response.Code, response.Body.String())
+	}
+	if _, err := store.GetDownload(ctx, job.ID); !errors.Is(err, downloads.ErrNotFound) {
+		t.Fatalf("download record retained: %v", err)
+	}
+	active := downloads.Job{ID: "http-active-job", URL: "https://www.bilibili.com/video/BV1xx411c7mD", State: "running", FileName: "video.mp4", CreatedAt: 2}
+	if err := store.SaveDownload(ctx, active); err != nil {
+		t.Fatal(err)
+	}
+	request = httptest.NewRequest(http.MethodDelete, "http://127.0.0.1/api/downloads/"+active.ID, strings.NewReader(`{"deleteFiles":false}`))
+	request.Header.Set("Content-Type", "application/json")
+	response = httptest.NewRecorder()
+	h.ServeHTTP(response, request)
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "先取消") {
+		t.Fatalf("active delete contract: %d %s", response.Code, response.Body.String())
+	}
+}
