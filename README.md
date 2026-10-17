@@ -381,6 +381,15 @@ Tangentry/
 - [PDF.js](https://mozilla.github.io/pdf.js/)、[Lucide](https://lucide.dev/)、[Space Grotesk](https://fonts.google.com/specimen/Space+Grotesk)（OFL）
 - [Linux DO](https://linux.do)
 
+## Star History
+
+<a href="https://www.star-history.com/?repos=mu-zi-lee%2Ftangentry&type=date&releases=&legend=bottom-right">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=mu-zi-lee/tangentry&type=date&theme=dark&logscale&legend=bottom-right" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=mu-zi-lee/tangentry&type=date&logscale&legend=bottom-right" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=mu-zi-lee/tangentry&type=date&logscale&legend=bottom-right" />
+ </picture>
+</a>
 
 ## ⚖️ 免责声明
 
