@@ -94,7 +94,13 @@ func open(directory, header, file string, key []byte) (*Store, error) {
 	needsEncryption := false
 	for platform, e := range s.entries {
 		if e.Secret != "" {
-			if len(s.secretKey) == 0 || !decryptPrivate(s.secretKey, e.Secret, &e) {
+			// Headless/server mode has no desktop keyring. Keep the opaque
+			// ciphertext so the server can start and the owner can manually
+			// replace credentials; a desktop key-enabled open must decrypt it.
+			if len(s.secretKey) == 0 {
+				continue
+			}
+			if !decryptPrivate(s.secretKey, e.Secret, &e) {
 				return nil, ErrStorage
 			}
 			e.Secret = ""

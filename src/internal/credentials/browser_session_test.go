@@ -64,8 +64,9 @@ func TestEncryptedStoreDoesNotPersistBrowserSecretsAsPlaintext(t *testing.T) {
 	if err != nil || reopened.UserAgent("linuxdo") != ua || !strings.Contains(reopened.Header("linuxdo", "https://linux.do/"), "_t=encrypted-cookie") {
 		t.Fatalf("encrypted credentials did not round-trip: %v", err)
 	}
-	if _, err := Open(dir, "", ""); !errors.Is(err, ErrStorage) {
-		t.Fatalf("plaintext open unexpectedly accepted encrypted store: %v", err)
+	headless, err := Open(dir, "", "")
+	if err != nil || headless.States()[5].Configured {
+		t.Fatalf("headless open should hide opaque desktop credentials: %v", err)
 	}
 }
 
