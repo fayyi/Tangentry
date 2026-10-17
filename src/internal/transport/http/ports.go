@@ -41,6 +41,7 @@ type BrowsePage struct {
 	HasMore     bool           `json:"hasMore"`
 	Page        int            `json:"page"`
 	SourceTitle string         `json:"sourceTitle"`
+	Notice      string         `json:"notice,omitempty"`
 }
 type LiveRoom struct {
 	ID        string `json:"id"`

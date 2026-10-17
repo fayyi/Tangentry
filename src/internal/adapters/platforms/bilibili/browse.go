@@ -3,8 +3,10 @@ package bilibili
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"html"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +22,7 @@ type BrowsePage struct {
 	HasMore     bool           `json:"hasMore"`
 	Page        int            `json:"page"`
 	SourceTitle string         `json:"sourceTitle"`
+	Notice      string         `json:"notice,omitempty"`
 }
 type LiveRoom struct {
 	ID        string `json:"id"`
@@ -152,6 +155,17 @@ func (c *Client) Browse(ctx context.Context, kind string, page int, cursor strin
 	return result, nil
 }
 
+// The web feed no longer honours type=video, so a page of follow updates can
+// be all images or articles. Keep reading a few pages until there are enough
+// videos to show, and explain an empty result instead of a bare "none".
+const (
+	dynamicFeatures   = "itemOpusStyle,listOnlyfans,opusBigCover,onlyfansVote,decorationCard,onlyfansAssetsV2,forwardListHidden,ugcDelete"
+	dynamicTarget     = 6
+	dynamicMaxBatches = 4
+)
+
+var dynamicKindNames = map[string]string{"DYNAMIC_TYPE_DRAW": "图文", "DYNAMIC_TYPE_WORD": "文字", "DYNAMIC_TYPE_ARTICLE": "专栏", "DYNAMIC_TYPE_FORWARD": "转发", "DYNAMIC_TYPE_LIVE_RCMD": "直播", "DYNAMIC_TYPE_PGC": "番剧", "DYNAMIC_TYPE_COURSES_SEASON": "课程", "DYNAMIC_TYPE_MUSIC": "音频", "DYNAMIC_TYPE_COMMON_SQUARE": "装扮/活动"}
+
 func (c *Client) dynamic(ctx context.Context, page int, cursor string) (BrowsePage, error) {
 	if page > 1 && cursor == "" {
 		return BrowsePage{}, discovery.ErrInvalidQuery
@@ -160,33 +174,74 @@ func (c *Client) dynamic(ctx context.Context, page int, cursor string) (BrowsePa
 	if err != nil {
 		return BrowsePage{}, err
 	}
-	params := url.Values{}
-	if cursor != "" {
-		params.Set("offset", cursor)
-	}
-	params.Set("type", "video")
-	sign(params, key, time.Now().Unix())
-	var data struct {
-		Items   []json.RawMessage `json:"items"`
-		Offset  string            `json:"offset"`
-		HasMore json.RawMessage   `json:"has_more"`
-	}
-	if err := c.getFrom(ctx, c.baseURL, "https://t.bilibili.com/", "/x/polymer/web-dynamic/v1/feed/all", params, &data, false); err != nil {
-		return BrowsePage{}, err
-	}
-	if data.Items == nil || len(data.Items) > 100 || len(data.Offset) > 256 {
-		return BrowsePage{}, discovery.ErrUnavailable
-	}
-	hasMore := dynamicHasMore(data.HasMore)
-	result := BrowsePage{Items: []content.Item{}, Page: page, SourceTitle: "关注动态", HasMore: hasMore && data.Offset != "" && data.Offset != cursor, Next: data.Offset}
-	seen := map[string]bool{}
-	for _, raw := range data.Items {
-		if item, ok := dynamicVideo(raw, 0); ok && !seen[item.ID] {
-			result.Items = append(result.Items, item)
-			seen[item.ID] = true
+	result := BrowsePage{Items: []content.Item{}, Page: page, SourceTitle: "关注动态"}
+	seen, skipped := map[string]bool{}, map[string]int{}
+	offset, more, scanned := cursor, true, 0
+	for batch := 0; batch < dynamicMaxBatches && more && len(result.Items) < dynamicTarget; batch++ {
+		params := url.Values{"timezone_offset": {"-480"}, "type": {"video"}, "platform": {"web"}, "features": {dynamicFeatures}, "web_location": {"333.1365"}}
+		if offset != "" {
+			params.Set("offset", offset)
 		}
+		sign(params, key, time.Now().Unix())
+		var data struct {
+			Items   []json.RawMessage `json:"items"`
+			Offset  string            `json:"offset"`
+			HasMore json.RawMessage   `json:"has_more"`
+		}
+		err := c.getFrom(ctx, c.baseURL, "https://t.bilibili.com/", "/x/polymer/web-dynamic/v1/feed/all", params, &data, false)
+		if err == nil && (data.Items == nil || len(data.Items) > 100 || len(data.Offset) > 256) {
+			err = discovery.ErrUnavailable
+		}
+		if err != nil {
+			if batch > 0 {
+				break
+			}
+			return BrowsePage{}, err
+		}
+		scanned += len(data.Items)
+		for _, raw := range data.Items {
+			item, ok := dynamicVideo(raw, 0)
+			if !ok {
+				var head struct {
+					Type string `json:"type"`
+				}
+				_ = json.Unmarshal(raw, &head)
+				skipped[head.Type]++
+				continue
+			}
+			if !seen[item.ID] {
+				result.Items = append(result.Items, item)
+				seen[item.ID] = true
+			}
+		}
+		more = dynamicHasMore(data.HasMore) && data.Offset != "" && data.Offset != offset
+		offset = data.Offset
+	}
+	result.HasMore, result.Next = more, offset
+	if len(result.Items) == 0 {
+		result.Notice = dynamicNotice(scanned, skipped, more)
 	}
 	return result, nil
+}
+
+func dynamicNotice(scanned int, skipped map[string]int, more bool) string {
+	if scanned == 0 {
+		return "B站没有返回任何关注动态。请确认账号已关注 UP 主；若刚登录，可在设置里重新扫码登录后再试。"
+	}
+	kinds := make([]string, 0, len(skipped))
+	for kind, count := range skipped {
+		name := dynamicKindNames[kind]
+		if name == "" {
+			name = "其他"
+		}
+		kinds = append(kinds, fmt.Sprintf("%s %d", name, count))
+	}
+	sort.Strings(kinds)
+	notice := fmt.Sprintf("已查看最近 %d 条关注动态，其中没有视频投稿（%s）。", scanned, strings.Join(kinds, "、"))
+	if more {
+		notice += "可点「继续浏览」查看更早的动态。"
+	}
+	return notice
 }
 
 func dynamicHasMore(raw json.RawMessage) bool {

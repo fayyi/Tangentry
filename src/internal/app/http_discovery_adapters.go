@@ -23,7 +23,7 @@ func newHTTPImageVersion() func(string) string { return xhs.ImageVersion }
 
 func (b bilibiliBrowser) Browse(ctx context.Context, kind string, page int, cursor string, area int) (httptransport.BrowsePage, error) {
 	value, err := b.client.Browse(ctx, kind, page, cursor, area)
-	result := httptransport.BrowsePage{Items: value.Items, Next: value.Next, HasMore: value.HasMore, Page: value.Page, SourceTitle: value.SourceTitle}
+	result := httptransport.BrowsePage{Items: value.Items, Next: value.Next, HasMore: value.HasMore, Page: value.Page, SourceTitle: value.SourceTitle, Notice: value.Notice}
 	for _, room := range value.Rooms {
 		result.Rooms = append(result.Rooms, httptransport.LiveRoom{ID: room.ID, Title: room.Title, Author: room.Author, Thumbnail: room.Thumbnail, URL: room.URL})
 	}

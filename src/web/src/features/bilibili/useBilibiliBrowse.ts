@@ -5,7 +5,7 @@ import type { ContentItem } from '../../shared/api/types'
 
 export type BilibiliTab = 'popular' | 'ranking' | 'dynamic' | 'live' | 'my'
 export type LiveRoom = { id: string; title: string; author: string; thumbnailUrl: string; url: string }
-type Page = { items: ContentItem[]; rooms?: LiveRoom[]; page: number; next?: string; hasMore: boolean; sourceTitle: string }
+type Page = { items: ContentItem[]; rooms?: LiveRoom[]; page: number; next?: string; hasMore: boolean; sourceTitle: string; notice?: string }
 type Profile = { loggedIn: boolean; id?: string; name?: string; avatar?: string; level?: number }
 type State = { page: Page | null; loading: boolean; known: boolean; error: string }
 const blank = (): State => ({ page: null, loading: false, known: false, error: '' })
