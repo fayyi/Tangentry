@@ -8,6 +8,7 @@ import { AISettings } from '../ai/AISettings'
 import { TranscriptionSettings } from './TranscriptionSettings'
 import type { useDownloads } from '../downloads/useDownloads'
 import { GalleryLayoutSettings } from './GalleryLayoutSettings'
+import { FontSettings } from './FontSettings'
 import type { GalleryColumns } from './useGalleryLayout'
 import type { Feed } from '../../shared/api/types'
 import { StorageSettings } from './StorageSettings'
@@ -63,7 +64,7 @@ export function ToolsPage({ downloads, onCookieChanged, onYouTubeFeed, onDiscove
     void downloads.reload()
   }
   const sections = [
-    { id: 'display' as const, label: '显示', hint: '收件箱每页条数', Icon: Eye },
+    { id: 'display' as const, label: '外观', hint: '布局、字体与字号', Icon: Eye },
     { id: 'accounts' as const, label: '账号与来源', hint: '登录与内容推荐', Icon: UserRound },
     { id: 'translation' as const, label: '翻译与摘要', hint: 'AI 翻译与文章摘要', Icon: Languages },
     { id: 'transcription' as const, label: '字幕转录', hint: '本机或云端识别', Icon: Mic },
@@ -75,7 +76,7 @@ export function ToolsPage({ downloads, onCookieChanged, onYouTubeFeed, onDiscove
     <div className="settings-layout">
       <nav ref={categories} className="settings-nav" aria-label="设置类别">{sections.map(({ id, label, hint, Icon }) => <button type="button" key={id} className={section === id ? 'active' : ''} aria-current={section === id ? 'page' : undefined} aria-controls={`settings-${id}`} onClick={() => selectSection(id)}><span className="settings-category-icon" data-category={id}><Icon size={17} strokeWidth={1.7} aria-hidden="true"/></span><span><strong>{label}</strong><small>{hint}</small></span><ChevronRight size={14} className="settings-nav-chevron" aria-hidden="true"/></button>)}</nav>
       <div className="settings-workspace">
-      <div id="settings-display" className="settings-block" hidden={section !== 'display'}>{visited.has('display') && <GalleryLayoutSettings/>}</div>
+      <div id="settings-display" className="settings-block" hidden={section !== 'display'}>{visited.has('display') && <><GalleryLayoutSettings/><FontSettings/></>}</div>
       <div id="settings-storage" className="settings-block" hidden={section !== 'storage'}>{visited.has('storage') && <StorageSettings downloads={downloads} onModelDirectoryChanged={() => setModelRevision(value => value + 1)}/>}</div>
       <div id="settings-accounts" className="settings-block settings-block-wide" hidden={section !== 'accounts'}>{visited.has('accounts') && <><PlatformCookies onChanged={cookiesChanged} /><YouTubeRecommendations key={youtubeCookieRevision} tools={downloads.tools} onFeed={onYouTubeFeed} onDiscover={onDiscover}/></>}</div>
       <div id="settings-translation" className="settings-block settings-block-wide" hidden={section !== 'translation'}>{visited.has('translation') && <AISettings/>}</div>

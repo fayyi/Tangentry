@@ -378,7 +378,7 @@ Tangentry/
 - [go-readability](https://codeberg.org/readeck/go-readability) —— 网页正文提取（[MIT](docs/licenses/go-readability-v2-MIT.txt)）
 - [gofeed](https://github.com/mmcdole/gofeed)、[modernc.org/sqlite](https://gitlab.com/cznic/sqlite)、[OpenCC](https://github.com/longbridgeapp/opencc)
 - [whisper.cpp](https://github.com/ggml-org/whisper.cpp)、[faster-whisper](https://github.com/SYSTRAN/faster-whisper)
-- [PDF.js](https://mozilla.github.io/pdf.js/)、[Lucide](https://lucide.dev/)、[Space Grotesk](https://fonts.google.com/specimen/Space+Grotesk)（OFL）
+- [PDF.js](https://mozilla.github.io/pdf.js/)、[Lucide](https://lucide.dev/)、[Space Grotesk](https://fonts.google.com/specimen/Space+Grotesk)、[Inter](https://github.com/rsms/inter)、[JetBrains Mono](https://github.com/JetBrains/JetBrainsMono)、[霞鹜文楷屏幕阅读版](https://github.com/lxgw/LxgwWenKai-Screen)、[思源黑体 / Noto Sans CJK](https://github.com/notofonts/noto-cjk)（均为 OFL 1.1；许可证文本见 `docs/licenses/`）
 - [Linux DO](https://linux.do)
 
 ## Star History

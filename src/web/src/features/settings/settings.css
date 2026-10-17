@@ -135,6 +135,13 @@
 .settings-details { color: var(--muted); font-size: 12px; margin-top: 18px; max-width: 70ch; }
 .settings-details summary { cursor: pointer; color: var(--ink); padding: 8px 0; }
 .settings-details p { line-height: 1.8; }
+.font-settings { margin-top: 28px; }
+.font-preview { display: grid; gap: 8px; margin: 4px 0 8px; padding: 18px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--canvas); }
+.font-preview p, .font-preview code { margin: 0; }
+.font-preview-ui { font-family: var(--font-ui); font-size: 14px; font-weight: 600; }
+.font-preview-reading { font-family: var(--font-reading); font-size: var(--font-reading-size); line-height: var(--font-reading-line-height); }
+.font-preview-code { font-family: var(--font-mono); color: var(--muted); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.font-preference { margin-bottom: 0; }
 @media (max-width: 760px) {
   .settings-layout { grid-template-columns: minmax(0, 1fr); gap: 24px; }
   .settings-nav { position: static; display: flex; gap: 4px; overflow-x: auto; padding: 3px; border-radius: var(--radius-md); background: var(--surface); scrollbar-width: none; }

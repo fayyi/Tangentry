@@ -38,6 +38,7 @@ import { Toast } from '../shared/ui/Toast'
 import { useToast } from '../shared/hooks/useToast'
 import { useGalleryLayout } from '../features/settings/useGalleryLayout'
 import { useCardAppearance } from '../features/settings/useCardAppearance'
+import { useFontSettings } from '../features/settings/useFontSettings'
 import { PageLoadBoundary } from './PageLoadBoundary'
 import { BrandMark } from '../shared/ui/BrandMark'
 import { AppReaderActions } from './AppReaderActions'
@@ -61,6 +62,7 @@ const BilibiliPage = lazy(() => import('../features/bilibili/BilibiliPage').then
 export function App() {
   const galleryLayout = useGalleryLayout()
   useCardAppearance()
+  useFontSettings()
   const discovery = useFeed()
   const library = useLibrary()
   const viewingHistory = useViewingHistory()
