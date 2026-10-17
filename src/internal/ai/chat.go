@@ -50,6 +50,14 @@ func (s *Service) chat(ctx context.Context, in ChatRequest, emit func(string) er
 	s.mu.Lock()
 	c, provider := s.config, s.provider
 	s.mu.Unlock()
+	if in.Model != "" {
+		c.Model = in.Model
+	} else {
+		c.Model = chatModel(c)
+	}
+	if !validModel(c.Model) || (len(c.EnabledModels) > 0 && !containsModel(c.EnabledModels, c.Model)) {
+		return ChatResult{}, ErrInvalid
+	}
 	if in.Revision != c.Revision {
 		return ChatResult{}, ErrConflict
 	}
@@ -110,12 +118,21 @@ func (s *Service) chat(ctx context.Context, in ChatRequest, emit func(string) er
 	if strings.TrimSpace(answer) == "" {
 		return ChatResult{}, ErrProvider
 	}
-	history = append(history, ChatMessage{Role: "assistant", Content: strings.TrimSpace(answer)})
+	history = append(history, ChatMessage{Role: "assistant", Content: strings.TrimSpace(answer), Model: c.Model})
 	value, _ := json.Marshal(history)
 	if err := s.results.PutAIResult(ctx, StoredResult{Kind: chatResultKind, SourceHash: key, Value: string(value), Target: "", Model: c.Model, CreatedAt: time.Now().Unix()}); err != nil {
 		return ChatResult{}, ErrStorage
 	}
 	return ChatResult{ContentID: in.ContentID, Messages: history, UpdatedAt: time.Now().Unix()}, nil
+}
+
+func containsModel(models []string, model string) bool {
+	for _, value := range models {
+		if value == model {
+			return true
+		}
+	}
+	return false
 }
 
 func utf8ValidChat(contextText string, messages []ChatMessage) bool {

@@ -18,6 +18,63 @@ import (
 // decoding live in the task-specific files next to it.
 type Client struct{ HTTP *http.Client }
 
+func (c *Client) ListModels(ctx context.Context, config ai.Config) ([]string, error) {
+	if !ai.ValidEndpoint(config.BaseURL) {
+		return nil, ai.ErrInvalid
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(config.BaseURL, "/")+"/models", nil)
+	if err != nil {
+		return nil, ai.ErrProvider
+	}
+	if config.Key != "" {
+		req.Header.Set("Authorization", "Bearer "+config.Key)
+	}
+	client := c.HTTP
+	if client == nil {
+		client = New().HTTP
+	}
+	safe := *client
+	safe.Jar = nil
+	safe.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	response, err := safe.Do(req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, ai.ErrProvider
+	}
+	defer response.Body.Close()
+	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
+		return nil, ai.ErrAuth
+	}
+	if response.StatusCode == http.StatusNotFound {
+		if ai.ValidModelName(config.Model) {
+			return []string{config.Model}, nil
+		}
+		return nil, ai.ErrProvider
+	}
+	if response.StatusCode != http.StatusOK {
+		return nil, ai.ErrProvider
+	}
+	var envelope struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if json.NewDecoder(io.LimitReader(response.Body, 256<<10)).Decode(&envelope) != nil {
+		return nil, ai.ErrFormat
+	}
+	models := make([]string, 0, len(envelope.Data))
+	seen := map[string]bool{}
+	for _, item := range envelope.Data {
+		if ai.ValidModelName(item.ID) && !seen[item.ID] {
+			seen[item.ID] = true
+			models = append(models, item.ID)
+		}
+	}
+	return models, nil
+}
+
 // rejectedRequest classifies only known validation messages. Provider bodies
 // may contain credentials or private source text and are never surfaced.
 func rejectedRequest(body io.Reader) error {
@@ -92,6 +149,9 @@ func (c *Client) ChatStream(ctx context.Context, config ai.Config, source string
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
+		if response.StatusCode == http.StatusNotFound {
+			return c.responsesStream(ctx, config, chat, source, emit)
+		}
 		if response.StatusCode == http.StatusBadRequest || response.StatusCode == http.StatusUnprocessableEntity {
 			return rejectedRequest(response.Body)
 		}
@@ -104,6 +164,129 @@ func (c *Client) ChatStream(ctx context.Context, config ai.Config, source string
 		return ai.ErrProvider
 	}
 	return parseStream(response.Body, emit)
+}
+
+func (c *Client) responsesStream(ctx context.Context, config ai.Config, chat []map[string]string, source string, emit func(string) error) error {
+	input := append([]map[string]string{{"role": "system", "content": "你是 Tangentry 阅读助手。根据给定内容回答问题，无法确定时明确说明。" + source}}, chat[1:]...)
+	body, _ := json.Marshal(map[string]any{"model": config.Model, "stream": true, "input": input})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(config.BaseURL, "/")+"/responses", bytes.NewReader(body))
+	if err != nil {
+		return ai.ErrProvider
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	if config.Key != "" {
+		req.Header.Set("Authorization", "Bearer "+config.Key)
+	}
+	client := c.HTTP
+	if client == nil {
+		client = New().HTTP
+	}
+	safe := *client
+	safe.Jar = nil
+	safe.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	response, err := safe.Do(req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return ai.ErrProvider
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return ai.ErrProvider
+	}
+	return parseResponsesStream(response.Body, emit)
+}
+
+func parseResponsesStream(body io.Reader, emit func(string) error) error {
+	reader := bufio.NewScanner(io.LimitReader(body, (256<<10)+1))
+	reader.Buffer(make([]byte, 4096), 64<<10)
+	emitted := false
+	for reader.Scan() {
+		line := strings.TrimSpace(reader.Text())
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		value := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if value == "[DONE]" {
+			break
+		}
+		var event struct {
+			Type  string `json:"type"`
+			Delta string `json:"delta"`
+		}
+		if json.Unmarshal([]byte(value), &event) != nil {
+			return ai.ErrFormat
+		}
+		if event.Type == "response.output_text.delta" && event.Delta != "" {
+			emitted = true
+			if err := emit(event.Delta); err != nil {
+				return err
+			}
+		}
+	}
+	if err := reader.Err(); err != nil {
+		return err
+	}
+	if !emitted {
+		return ai.ErrFormat
+	}
+	return nil
+}
+
+func (c *Client) completeResponses(ctx context.Context, config ai.Config, payload map[string]any) (string, error) {
+	messages, _ := payload["messages"].([]map[string]string)
+	body, _ := json.Marshal(map[string]any{"model": payload["model"], "stream": false, "input": messages})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(config.BaseURL, "/")+"/responses", bytes.NewReader(body))
+	if err != nil {
+		return "", ai.ErrProvider
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	if config.Key != "" {
+		req.Header.Set("Authorization", "Bearer "+config.Key)
+	}
+	client := c.HTTP
+	if client == nil {
+		client = New().HTTP
+	}
+	safe := *client
+	safe.Jar = nil
+	safe.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	response, err := safe.Do(req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		return "", ai.ErrProvider
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return "", ai.ErrProvider
+	}
+	var output struct {
+		OutputText string `json:"output_text"`
+		Output     []struct {
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"output"`
+	}
+	if json.NewDecoder(io.LimitReader(response.Body, 256<<10)).Decode(&output) != nil {
+		return "", ai.ErrFormat
+	}
+	if output.OutputText != "" {
+		return output.OutputText, nil
+	}
+	for _, item := range output.Output {
+		for _, content := range item.Content {
+			if content.Text != "" {
+				return content.Text, nil
+			}
+		}
+	}
+	return "", ai.ErrFormat
 }
 
 // parseStream is deliberately small and line-oriented: OpenAI-compatible
@@ -190,6 +373,9 @@ func (c *Client) complete(ctx context.Context, config ai.Config, payload map[str
 		return "", ai.ErrProvider
 	}
 	defer response.Body.Close()
+	if response.StatusCode == http.StatusNotFound {
+		return c.completeResponses(ctx, config, payload)
+	}
 	switch response.StatusCode {
 	case http.StatusBadRequest, http.StatusUnprocessableEntity:
 		return "", rejectedRequest(response.Body)

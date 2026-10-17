@@ -33,6 +33,16 @@ func New(root string, results ResultStore, provider Translator, summarizers ...S
 	if c.Protocol == "" {
 		c.Protocol = "openai"
 	}
+	if c.ChatModel == "" {
+		c.ChatModel = c.Model
+	}
+	if len(c.EnabledModels) == 0 && c.Model != "" {
+		c.EnabledModels = []string{c.Model}
+		c.AvailableModels = []string{c.Model}
+	}
+	if !validConfig(c) {
+		return nil, ErrStorage
+	}
 	var summarizer Summarizer
 	if len(summarizers) > 0 {
 		summarizer = summarizers[0]
