@@ -1,8 +1,11 @@
 package credentials
 
 import (
+	"crypto/rand"
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -33,6 +36,36 @@ func TestDouyinBrowserLoginPersistsSessionAndUA(t *testing.T) {
 	reopened, err := Open(dir, "", "")
 	if err != nil || reopened.UserAgent("douyin") != ua {
 		t.Fatalf("UA persistence failed: %v", err)
+	}
+}
+
+func TestEncryptedStoreDoesNotPersistBrowserSecretsAsPlaintext(t *testing.T) {
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(t.TempDir(), "credentials")
+	s, err := OpenWithKey(dir, "", "", key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ua := "Mozilla/5.0 (fixture)"
+	if err := s.PrepareLinuxdoBrowserLogin()([]*http.Cookie{{Name: "_t", Value: "encrypted-cookie", Domain: ".linux.do", Path: "/", Secure: true}}, ua); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "cookies.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "encrypted-cookie") || strings.Contains(string(raw), ua) {
+		t.Fatalf("credential plaintext persisted: %s", raw)
+	}
+	reopened, err := OpenWithKey(dir, "", "", key)
+	if err != nil || reopened.UserAgent("linuxdo") != ua || !strings.Contains(reopened.Header("linuxdo", "https://linux.do/"), "_t=encrypted-cookie") {
+		t.Fatalf("encrypted credentials did not round-trip: %v", err)
+	}
+	if _, err := Open(dir, "", ""); !errors.Is(err, ErrStorage) {
+		t.Fatalf("plaintext open unexpectedly accepted encrypted store: %v", err)
 	}
 }
 

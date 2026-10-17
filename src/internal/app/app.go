@@ -36,6 +36,9 @@ type Options struct {
 	Recommendations     func(context.Context, string) (discovery.Feed, error)
 	Platform            discovery.Provider
 	PublicHTTP          *http.Client
+	// CredentialKey is supplied by a native shell from its system credential
+	// store. A nil key keeps headless/server storage compatible with older data.
+	CredentialKey []byte
 }
 
 // closers releases services in reverse start order.
