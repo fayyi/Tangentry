@@ -162,6 +162,13 @@ func (h *discoveryHandler) recommendationRead(w http.ResponseWriter, r *http.Req
 		}
 		ctx = discovery.WithRecommendationSession(ctx, session)
 	}
+	if filter := r.URL.Query().Get("filter"); filter != "" {
+		if source != "linuxdo" || (filter != "latest" && filter != "top" && filter != "new" && filter != "unread") {
+			fail(w, discovery.ErrInvalidQuery)
+			return
+		}
+		ctx = discovery.WithRecommendationFilter(ctx, filter)
+	}
 	var result discovery.Feed
 	var err error
 	if h.browse.RecommendationPage != nil {

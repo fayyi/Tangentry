@@ -2,6 +2,7 @@ package douyin
 
 import (
 	"context"
+	"embed"
 	"errors"
 	"io"
 	"net/http"
@@ -9,6 +10,11 @@ import (
 	"tangentry/internal/discovery"
 	"testing"
 )
+
+// Synthetic, credential-free response fixture for the supported nested shape.
+//
+//go:embed testdata/recommendations.json
+var douyinFixtures embed.FS
 
 func TestRecommendationMappingAndCookieIsolation(t *testing.T) {
 	calls := 0
@@ -54,5 +60,19 @@ func TestRecommendationRejectionsNeverRetryOrFollowRedirects(t *testing.T) {
 	c.Cookie = nil
 	if _, err := c.Recommendations(context.Background(), 1); err == nil || calls != 1 {
 		t.Fatal("anonymous request attempted", err)
+	}
+}
+
+func TestRecommendationNestedPayloadAndAuthorAvatar(t *testing.T) {
+	raw, err := douyinFixtures.ReadFile("testdata/recommendations.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &Client{Cookie: func(string) string { return "sessionid=fixture" }, HTTP: &http.Client{Transport: trip(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Request: r, Body: io.NopCloser(strings.NewReader(string(raw)))}, nil
+	})}}
+	feed, err := c.Recommendations(context.Background(), 1)
+	if err != nil || len(feed.Items) != 1 || feed.Items[0].LikeCount != 12 || feed.Items[0].AuthorAvatarURL == "" {
+		t.Fatalf("nested response not mapped: %+v %v", feed, err)
 	}
 }

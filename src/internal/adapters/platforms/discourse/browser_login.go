@@ -180,7 +180,7 @@ func (l *Login) redeemCallback(ctx context.Context, attempt *loginAttempt, callb
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "https://linux.do/session/csrf.json", nil)
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "Tangentry/0.1")
+	setDiscourseBrowserHeaders(req, true)
 	res, err := client.Do(req)
 	if err != nil {
 		return nil, discovery.ErrUnavailable
@@ -199,9 +199,9 @@ func (l *Login) redeemCallback(ctx context.Context, attempt *loginAttempt, callb
 	req, _ = http.NewRequestWithContext(ctx, http.MethodPost, "https://linux.do/session/otp/"+otp, nil)
 	req.Header.Set("X-CSRF-Token", csrf.Token)
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
+	setDiscourseBrowserHeaders(req, true)
 	req.Header.Set("Origin", "https://linux.do")
 	req.Header.Set("Referer", "https://linux.do/user-api-key/new")
-	req.Header.Set("User-Agent", "Tangentry/0.1")
 	res, err = client.Do(req)
 	if err != nil {
 		return nil, discovery.ErrUnavailable

@@ -41,7 +41,10 @@ func (r *recommender) platformPage(ctx context.Context, source string, page int)
 	case "xiaoyuzhou":
 		return p.discovery.podcasts.Recommendations(ctx, page, p.podcastToken())
 	case "linuxdo":
-		return p.discovery.forum.Recommendations(ctx, page)
+		if filter := discovery.RecommendationFilter(ctx); filter != "" {
+			return p.discovery.forum.Feed(ctx, filter, page)
+		}
+		return p.discovery.forum.Feed(ctx, "top", page)
 	case "xiaohongshu":
 		// The home feed has no continuation API yet; every page reads the first one.
 		return p.discovery.notes.Recommendations(ctx)

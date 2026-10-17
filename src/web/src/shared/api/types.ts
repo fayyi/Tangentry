@@ -33,6 +33,10 @@ export interface ContentItem {
   author: string
   authorId: string
   authorAvatarUrl?: string
+  category?: string
+  replyCount?: number
+  viewCount?: number
+  likeCount?: number
   url: string
   thumbnailUrl: string
   description: string

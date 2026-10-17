@@ -11,7 +11,7 @@ func Validate(item Item) error {
 	if item.Platform == "rss" && item.Kind == "article" {
 		maxDescription = 1 << 20
 	}
-	if item.ID == "" || len(item.ID) > 180 || item.PlatformID == "" || item.Platform == "" || (item.Kind != "video" && item.Kind != "article" && item.Kind != "audio" && item.Kind != "pdf" && item.Kind != "image") || strings.TrimSpace(item.Title) == "" || len(item.Title) > 2000 || len(item.Description) > maxDescription || item.DurationSeconds < 0 {
+	if item.ID == "" || len(item.ID) > 180 || item.PlatformID == "" || item.Platform == "" || (item.Kind != "video" && item.Kind != "article" && item.Kind != "audio" && item.Kind != "pdf" && item.Kind != "image") || strings.TrimSpace(item.Title) == "" || len(item.Title) > 2000 || len(item.Description) > maxDescription || item.DurationSeconds < 0 || item.ReplyCount < 0 || item.ViewCount < 0 || item.LikeCount < 0 {
 		return ErrInvalid
 	}
 	if item.ID != item.Platform+":"+item.PlatformID {

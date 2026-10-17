@@ -12,6 +12,10 @@ export function useGallery(active: boolean, scope: readonly GallerySource[] = ga
   const preferences = useRecommendationPreferences()
   const enabled = useRef(preferences.values); enabled.current = preferences.values
   const [sources,setSources] = useState<Record<GallerySource,State>>({subscriptions:initial(),bilibili:initial(),youtube:initial(),xiaohongshu:initial(),linuxdo:initial(),xiaoyuzhou:initial(),douyin:initial()})
+  const [linuxdoFilter, setLinuxdoFilterState] = useState<'latest' | 'top' | 'new' | 'unread'>('latest')
+  const previousLinuxdoFilter = useRef(linuxdoFilter)
+  const linuxdoFilterRef = useRef(linuxdoFilter)
+  linuxdoFilterRef.current = linuxdoFilter
   const current = useRef(sources);current.current=sources
   const controllers = useRef<Partial<Record<GallerySource,AbortController>>>({})
   const lastAppend = useRef<Partial<Record<GallerySource, boolean>>>({})
@@ -41,7 +45,10 @@ export function useGallery(active: boolean, scope: readonly GallerySource[] = ga
     }, 30000)
     timeout = startTimeout()
     try {
-      if ((!append && (!force || !remoteEnabled()) || append && inventory.current[source]) && source !== 'subscriptions') {
+      // Linux.do's native filter is part of the remote request; queued items
+      // are intentionally skipped so switching 最新/热门/新话题/未读 cannot
+      // surface a previously fetched category.
+      if ((!append && (!force || !remoteEnabled()) || append && inventory.current[source]) && source !== 'subscriptions' && source !== 'linuxdo') {
         const cursor = append ? inventory.current[source] : ''
         const cached = await request<{ items: { item: ContentItem }[]; next?: string }>(`/recommendations/${source}/pending?limit=60${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`, { signal: controller.signal })
           .catch(cause => { if (controller.signal.aborted || append) throw cause; return { items: [], next: '' } })
@@ -67,7 +74,10 @@ export function useGallery(active: boolean, scope: readonly GallerySource[] = ga
       if (!append) inventory.current[source] = undefined
       for (let attempt = 0; attempt < (append ? 3 : 1); attempt++) {
         const page = append ? (accumulated?.page ?? 0) + 1 : 1
-        const endpoint = append ? `/recommendations/${source}?page=${page}` : `/recommendations/${source}`
+        const params = new URLSearchParams()
+        if (append) params.set('page', String(page))
+        if (source === 'linuxdo') params.set('filter', linuxdoFilterRef.current)
+        const endpoint = `/recommendations/${source}${params.toString() ? `?${params.toString()}` : ''}`
         const feed=await request<Feed>(endpoint,{signal:controller.signal, ...(session ? { headers: { 'X-Recommendation-Session': session } } : {})})
         if(controller.signal.aborted) return false
         if (usesSession) recommendationSessions.current[source] = session
@@ -130,6 +140,11 @@ export function useGallery(active: boolean, scope: readonly GallerySource[] = ga
       setSources(previous => Object.fromEntries(gallerySources.map(source => [source, { ...previous[source], loading: false }])) as Record<GallerySource, State>)
     }
   }, [active])
+  useEffect(() => {
+    if (previousLinuxdoFilter.current === linuxdoFilter) return
+    previousLinuxdoFilter.current = linuxdoFilter
+    if (active && scope.includes('linuxdo') && enabled.current?.linuxdo) void read('linuxdo', false, true)
+  }, [linuxdoFilter, active, read, scope])
   const refresh = (selected: readonly GallerySource[] = gallerySources) => {for(const source of selected)if(source === 'subscriptions' || enabled.current?.[source])void read(source, false, true)}
   const loadMore = useCallback(async (selected: readonly GallerySource[] = gallerySources.filter(source => source !== 'subscriptions')) => {
     await Promise.all(selected.filter(source => !current.current[source].error && current.current[source].feed?.hasMore).map(source => read(source, true)))
@@ -150,5 +165,12 @@ export function useGallery(active: boolean, scope: readonly GallerySource[] = ga
     const isEnabled = Boolean(enabled.current?.[platform])
     setSources(previous => ({ ...previous, [platform]: { ...initial(), known: !isEnabled, exhausted: !isEnabled } }))
   }, [])
-  return {sources,read,refresh,loadMore,retry,accept,invalidate,enabled:preferences.values}
+  const setLinuxdoFilter = useCallback((value: 'latest' | 'top' | 'new' | 'unread') => {
+    setLinuxdoFilterState(value)
+    controllers.current.linuxdo?.abort()
+    inventory.current.linuxdo = undefined
+    delete recommendationSessions.current.linuxdo
+    setSources(previous => ({ ...previous, linuxdo: initial() }))
+  }, [])
+  return {sources,read,refresh,loadMore,retry,accept,invalidate,enabled:preferences.values,linuxdoFilter,setLinuxdoFilter}
 }

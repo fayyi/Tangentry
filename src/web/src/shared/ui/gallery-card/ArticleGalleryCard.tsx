@@ -16,6 +16,11 @@ export function ArticleGalleryCard({ item, origin, saved, pending, onRead, onSav
       <div className="modern-card-content">
         <GalleryCardTitle item={item} onRead={onRead} />
         {excerpt}
+        {(item.category || item.replyCount || item.viewCount) && <div className="modern-card-stats" aria-label="话题统计">
+          {item.category && <span>{item.category}</span>}
+          {item.replyCount ? <span>{item.replyCount} 回复</span> : null}
+          {item.viewCount ? <span>{item.viewCount} 浏览</span> : null}
+        </div>}
         <div className="modern-card-author">
           {(item.authorAvatarUrl || item.platform === 'xiaohongshu') && <AuthorAvatar item={item} />}
           <div className="author-info" style={{ flex: 1 }}>

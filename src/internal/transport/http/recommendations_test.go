@@ -164,6 +164,41 @@ func TestRecommendationPageIsValidatedAndForwarded(t *testing.T) {
 	}
 }
 
+func TestLinuxdoRecommendationFilterIsValidatedAndForwarded(t *testing.T) {
+	store, err := sqlite.Open(filepath.Join(t.TempDir(), "filter.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	var received string
+	h := New(content.NewService(store), discovery.NewService(testProvider{}), fstest.MapFS{}, Options{RecommendationPage: func(ctx context.Context, source string, page int) (discovery.Feed, error) {
+		if source != "linuxdo" || page != 2 {
+			t.Fatalf("unexpected page call: %s %d", source, page)
+		}
+		received = discovery.RecommendationFilter(ctx)
+		return discovery.Feed{Items: []content.Item{testItem}, Page: page}, nil
+	}})
+	for _, filter := range []string{"latest", "top", "new", "unread"} {
+		req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/api/recommendations/linuxdo?page=2&filter="+filter, nil)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		if w.Code != http.StatusOK || received != filter {
+			t.Fatalf("filter %s: status=%d received=%q", filter, w.Code, received)
+		}
+	}
+	for _, raw := range []string{"bad", "latest"} {
+		source := "linuxdo"
+		if raw == "latest" {
+			source = "youtube"
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "http://127.0.0.1/api/recommendations/"+source+"?filter="+raw, nil))
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("invalid filter %s/%s returned %d", source, raw, w.Code)
+		}
+	}
+}
+
 func TestRecommendationSessionHeaderIsValidatedAndScoped(t *testing.T) {
 	store, err := sqlite.Open(filepath.Join(t.TempDir(), "session.db"))
 	if err != nil {

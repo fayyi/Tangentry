@@ -54,6 +54,52 @@ func TestRankedFeedPagingFallbackAndRestrictedRequests(t *testing.T) {
 	}
 }
 
+func TestNativeFeedFiltersUseDiscourseRoutes(t *testing.T) {
+	for _, filter := range []string{"latest", "top", "new", "unread"} {
+		t.Run(filter, func(t *testing.T) {
+			c := &Client{Cookie: func(string) string { return "_t=fixture" }, HTTP: &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+				if r.URL.Path != "/"+filter+".json" || r.URL.Query().Get("page") != "1" {
+					t.Fatalf("unexpected filter request: %s", r.URL.String())
+				}
+				return response(r, 200, `{"topic_list":{"more_topics_url":"","topics":[{"id":9,"title":"话题"}]}}`), nil
+			})}}
+			feed, err := c.Feed(context.Background(), filter, 2)
+			if err != nil || len(feed.Items) != 1 || feed.Page != 2 {
+				t.Fatalf("filter %s: %+v %v", filter, feed, err)
+			}
+		})
+	}
+}
+
+func TestBrowserCookieWinsOverApiKeyForFeedRequests(t *testing.T) {
+	c := &Client{
+		Cookie:  func(string) string { return "_t=browser; cf_clearance=clearance" },
+		UserKey: func() (string, string) { return "api-key-fixture", "client-fixture" },
+		HTTP: &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+			if r.Header.Get("Cookie") != "_t=browser; cf_clearance=clearance" || r.Header.Get("User-Api-Key") != "" || r.Header.Get("User-Api-Client-Id") != "" {
+				t.Fatalf("browser session was replaced by api key: cookie=%q key=%q", r.Header.Get("Cookie"), r.Header.Get("User-Api-Key"))
+			}
+			return response(r, 200, `{"topic_list":{"topics":[{"id":9,"title":"话题"}]}}`), nil
+		})},
+	}
+	if _, err := c.Feed(context.Background(), "latest", 1); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCloudflareChallengeHasActionableError(t *testing.T) {
+	c := &Client{Cookie: func(string) string { return "_t=browser" }, HTTP: &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		res := response(r, http.StatusForbidden, `<html><title>Just a moment...</title><script src="/cdn-cgi/challenge-platform"></script></html>`)
+		res.Header.Set("cf-mitigated", "challenge")
+		return res, nil
+	})}}
+	_, err := c.Feed(context.Background(), "latest", 1)
+	var platformErr *discovery.PlatformError
+	if !errors.As(err, &platformErr) || !platformErr.Restricted || !strings.Contains(platformErr.Message, "cf_clearance") {
+		t.Fatalf("challenge error is not actionable: %v", err)
+	}
+}
+
 func TestSessionCheckAndUserAuthorization(t *testing.T) {
 	for _, raw := range []string{`{"current_user":{"id":3,"username":"reader"}}`, `{"current_user":null}`} {
 		c := &Client{HTTP: &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {

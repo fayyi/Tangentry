@@ -13,6 +13,10 @@ type Item struct {
 	Author          string         `json:"author"`
 	AuthorID        string         `json:"authorId"`
 	AuthorAvatarURL string         `json:"authorAvatarUrl,omitempty"`
+	Category        string         `json:"category,omitempty"`
+	ReplyCount      int            `json:"replyCount,omitempty"`
+	ViewCount       int            `json:"viewCount,omitempty"`
+	LikeCount       int            `json:"likeCount,omitempty"`
 	URL             string         `json:"url"`
 	ThumbnailURL    string         `json:"thumbnailUrl"`
 	Description     string         `json:"description"`

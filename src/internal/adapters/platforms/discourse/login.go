@@ -232,7 +232,7 @@ func (l *Login) post(ctx context.Context, path string, value map[string]string) 
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "Tangentry/0.1")
+	setDiscourseBrowserHeaders(req, true)
 	client := *l.HTTP
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	res, err := client.Do(req)

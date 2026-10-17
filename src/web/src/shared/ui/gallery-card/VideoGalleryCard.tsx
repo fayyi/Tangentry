@@ -71,6 +71,7 @@ export function VideoGalleryCard({ item, origin, saved, pending, onRead, onSave,
         {discovery && <div className="discovery-card-meta"><span className="discovery-card-labels"><span className="card-platform" data-platform={item.platform}>{({ bilibili: 'B站', youtube: 'YouTube', douyin: '抖音', xiaohongshu: '小红书' } as Record<string, string>)[item.platform] ?? item.platform}</span>{item.durationSeconds > 0 && <span className="discovery-card-duration">{formatDuration(item.durationSeconds)}</span>}</span>{actions}</div>}
         <GalleryCardTitle item={item} onRead={onRead} />
         {excerpt}
+        {item.likeCount ? <div className="discovery-card-stats">{item.likeCount} 赞</div> : null}
         <div className="modern-card-author">
           <AuthorAvatar item={item} />
           <div className="author-info">

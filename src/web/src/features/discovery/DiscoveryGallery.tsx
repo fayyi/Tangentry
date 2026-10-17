@@ -51,6 +51,7 @@ export function DiscoveryGallery({kind,onKind,origin,onOrigin,query,onClearQuery
   const loadingMore = continuationSources.some(source => gallery.sources[source].loading && gallery.sources[source].feed?.hasMore)
   const sentinel = useRef<HTMLDivElement>(null)
   const hasMore = continuationSources.some(source => !gallery.sources[source].error && !gallery.sources[source].exhausted && gallery.sources[source].feed?.hasMore)
+  const linuxdoOnly = enabledPlatforms.length === 1 && enabledPlatforms[0] === 'linuxdo'
   useEffect(() => {
     if (origin === 'subscriptions' || search || !hasMore || loading) return
     const node = sentinel.current
@@ -87,6 +88,9 @@ export function DiscoveryGallery({kind,onKind,origin,onOrigin,query,onClearQuery
         {origin !== 'subscriptions' && enabledPlatforms.length > 1 && <div className="discovery-platforms" role="group" aria-label="推荐平台">
           <button type="button" aria-pressed={platform === 'all'} onClick={() => setPlatform('all')}>全部平台</button>
           {enabledPlatforms.map(source => <button key={source} type="button" data-platform={source} aria-pressed={platform === source} data-state={gallery.sources[source].error ? 'error' : gallery.sources[source].loading ? 'loading' : undefined} onClick={() => setPlatform(platform === source ? 'all' : source)}><span className="platform-dot" aria-hidden="true"/>{labels[source].replace(/ ?(推荐|话题|发现)$/, '')}{gallery.sources[source].error && <span className="visually-hidden">（异常）</span>}</button>)}
+        </div>}
+        {origin !== 'subscriptions' && (platform === 'linuxdo' || linuxdoOnly) && <div className="discovery-platforms linuxdo-filters" role="group" aria-label="Linux.do 话题分类">
+          {([['latest', '最新'], ['top', '热门'], ['new', '新话题'], ['unread', '未读']] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={gallery.linuxdoFilter === value} onClick={() => gallery.setLinuxdoFilter(value)}>{label}</button>)}
         </div>}
         <span className="content-count">{items.length} 条内容</span>
       </div>

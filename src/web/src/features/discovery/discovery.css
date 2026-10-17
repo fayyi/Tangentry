@@ -28,6 +28,9 @@
 .discovery-platforms [data-platform='xiaoyuzhou'] .platform-dot { background: var(--xiaoyuzhou); }
 .discovery-platforms [data-platform='douyin'] .platform-dot { background: var(--douyin); }
 .discovery-platforms [data-platform='linuxdo'] .platform-dot { background: var(--linuxdo); }
+.linuxdo-filters { margin-left: 8px; }
+.modern-card-stats { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 0; color: var(--muted); font-size: 12px; }
+.discovery-card-stats { margin-top: 8px; color: var(--muted); font-size: 12px; }
 .discovery-platforms button[aria-pressed='true'] .platform-dot { box-shadow: 0 0 0 2px var(--inverse); }
 .discovery-platforms button[data-state='loading'] .platform-dot { animation: platform-pulse 1s ease-in-out infinite alternate; }
 .discovery-platforms button[data-state='error'] { border-color: color-mix(in srgb, var(--danger) 40%, var(--line)); }

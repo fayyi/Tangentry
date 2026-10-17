@@ -28,7 +28,12 @@ func (s *Store) PrepareLinuxdoSession() (string, func([]*http.Cookie) error) {
 		}
 		changed := false
 		for _, cookie := range cookies {
-			if cookie == nil || (cookie.Name != "_t" && cookie.Name != "_forum_session") || cookie.Value == "" || cookie.Valid() != nil || !cookie.Secure || cookie.MaxAge < 0 || !cookie.Expires.IsZero() && cookie.Expires.Before(time.Now()) {
+			if cookie == nil || !linuxdoCookieName(cookie.Name) || cookie.Value == "" || cookie.Valid() != nil || !cookie.Secure || cookie.MaxAge < 0 || !cookie.Expires.IsZero() && cookie.Expires.Before(time.Now()) {
+				continue
+			}
+			// Cloudflare clearance is minted by the browser challenge flow. Do
+			// not let an ordinary API response overwrite a still-valid token.
+			if cookie.Name == "cf_clearance" || cookie.Name == "__cf_bm" {
 				continue
 			}
 			if cookie.Domain != "" && strings.TrimPrefix(cookie.Domain, ".") != "linux.do" || cookie.Path != "" && cookie.Path != "/" {
@@ -98,7 +103,7 @@ func (s *Store) PrepareLinuxdoCookieLogin() func([]*http.Cookie) error {
 		pairs := []string{}
 		hasLogin := false
 		for _, cookie := range cookies {
-			if cookie == nil || (cookie.Name != "_t" && cookie.Name != "_forum_session") || cookie.Value == "" || cookie.Valid() != nil || !cookie.Secure || cookie.MaxAge < 0 || !cookie.Expires.IsZero() && !cookie.Expires.After(time.Now()) {
+			if cookie == nil || !linuxdoCookieName(cookie.Name) || cookie.Value == "" || cookie.Valid() != nil || !cookie.Secure || cookie.MaxAge < 0 || !cookie.Expires.IsZero() && !cookie.Expires.After(time.Now()) {
 				continue
 			}
 			if cookie.Domain != "" && strings.TrimPrefix(cookie.Domain, ".") != "linux.do" || cookie.Path != "" && cookie.Path != "/" {
@@ -120,5 +125,14 @@ func (s *Store) PrepareLinuxdoCookieLogin() func([]*http.Cookie) error {
 			return ErrChanged
 		}
 		return s.persistCredentialLocked("linuxdo", entry{Jar: jar, UpdatedAt: time.Now().Unix()})
+	}
+}
+
+func linuxdoCookieName(name string) bool {
+	switch name {
+	case "_t", "_forum_session", "cf_clearance", "__cf_bm":
+		return true
+	default:
+		return false
 	}
 }
