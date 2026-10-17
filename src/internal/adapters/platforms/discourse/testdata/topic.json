@@ -1,1 +1,1 @@
-{"id":42,"title":"讨论","reply_count":1,"post_stream":{"posts":[{"post_number":1,"username":"作者","cooked":"<p>正文</p>"},{"post_number":2,"username":"回复者","cooked":"<p>补充</p>"}]}}
+{"id":42,"title":"讨论","reply_count":1,"posts_count":2,"post_stream":{"stream":[101,102],"posts":[{"id":101,"post_number":1,"username":"作者","cooked":"<p>正文</p>"},{"id":102,"post_number":2,"username":"回复者","cooked":"<p>补充</p>"}]}}

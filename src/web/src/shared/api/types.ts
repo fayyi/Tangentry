@@ -1,11 +1,38 @@
 export interface ArticleBlock {
-  kind: 'paragraph' | 'heading' | 'quote' | 'code' | 'list' | 'image'
+  kind: 'paragraph' | 'heading' | 'quote' | 'code' | 'list' | 'table' | 'onebox' | 'details' | 'spoiler' | 'image' | 'emoji'
   level?: 2 | 3 | 4
+  group?: number
+  ordered?: boolean
   text: string
+  summary?: string
   url?: string
   alt?: string
   width?: number
   height?: number
+  inlineImages?: { offset: number; url: string; alt?: string; width?: number; height?: number }[]
+}
+
+export interface DiscussionPost {
+  id: number
+  number: number
+  username: string
+  name?: string
+  avatarUrl?: string
+  createdAt: number
+  likeCount?: number
+  replyToNumber?: number
+  replyToUser?: string
+  replyToPostId?: number
+  blocks: ArticleBlock[]
+}
+
+export interface Discussion {
+  topicId: string
+  totalPosts: number
+  loadedPosts: number
+  participatingUsers?: number
+  postIds?: number[]
+  posts: DiscussionPost[]
 }
 export interface ArticleDocument {
   contentId: string
@@ -22,6 +49,7 @@ export interface ArticleDocument {
 export interface ContentItem {
 	images?: {url:string;width?:number;height?:number;alt?:string}[]
 	articleBlocks?: ArticleBlock[]
+	discussion?: Discussion
 	// A library card without its body; read the full item before saving it.
 	partial?: boolean
   id: string
@@ -216,6 +244,8 @@ export interface TextAnchor {
   prefix: string
   suffix: string
   sourceHash: string
+  postNumber?: number
+  postId?: number
 }
 
 export interface ReadingNote {

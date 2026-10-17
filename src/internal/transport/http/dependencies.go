@@ -39,6 +39,7 @@ type Options struct {
 	DiscoveryTopics         DiscoveryTopicService
 	Documents               documents.Service
 	Imports                 func(context.Context, string, string) (discovery.Feed, error)
+	LinuxdoPosts            func(context.Context, string, []int64) (content.Discussion, error)
 	XiaohongshuDetail       func(context.Context, string) (content.Item, bool, error)
 	XiaohongshuRefresh      func(context.Context, string, string) (content.Item, error)
 	XiaohongshuImages       ImageCache
@@ -88,6 +89,7 @@ type DiscoveryDependencies struct {
 	DiscoveryBatch          DiscoveryBatchService
 	DiscoveryTopics         DiscoveryTopicService
 	Imports                 func(context.Context, string, string) (discovery.Feed, error)
+	LinuxdoPosts            func(context.Context, string, []int64) (content.Discussion, error)
 	XiaohongshuDetail       func(context.Context, string) (content.Item, bool, error)
 	XiaohongshuRefresh      func(context.Context, string, string) (content.Item, error)
 	XiaohongshuImages       ImageCache

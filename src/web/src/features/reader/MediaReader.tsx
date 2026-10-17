@@ -21,6 +21,7 @@ import { ReaderPlayerSizeHandle, ReadingNotebook, useReadingNotebook } from '../
 import { XiaohongshuSourceForm } from './XiaohongshuSourceForm'
 import { PodcastArtwork } from '../../shared/ui/PodcastArtwork'
 import { ReaderPublication } from './ReaderPublication'
+import { DiscussionReader } from './DiscussionReader'
 import { useReaderContent } from './useReaderContent'
 import './reader.css'
 import './watch.css'
@@ -158,8 +159,9 @@ export function MediaReader({ id, initialItem, jobs, jobsLoading = false, video,
     : null
   const textAboveNotes = Boolean(notes && item?.platform === 'xiaohongshu' && item.kind === 'image')
   const sourceText = item && (item.kind === 'article' || item.kind === 'image') && !(item.kind === 'article' && item.platform === 'rss')
-    ? <ArticleReader collapsible={textAboveNotes} contentId={item.description?.trim()?item.id:undefined} summarySource="article:content" sourceTitle={item.title} sourceURL={item.url} title={item.platform==='rss'?'订阅源正文':'笔记正文'} text={item.description||(item.platform==='xiaohongshu'?(detailRead?'这篇笔记没有附加文字。':detailLoading?'正在获取正文…':'正文尚未读取。'):'来源没有提供正文，可打开原内容查看。')} feed={item.platform==='rss'} notes={annotations} focus={textFocus} onQuote={item.description?quoteText:undefined} onOpenNotes={revealNotes} onUnresolved={onUnresolved} navigationTarget={notesNavigation} onReturnedToReading={returnedToReading}/>
+    ? <ArticleReader collapsible={textAboveNotes} contentId={item.description?.trim()?item.id:undefined} summarySource="article:content" sourceTitle={item.title} sourceURL={item.url} title={item.platform==='rss'?'订阅源正文':item.platform==='linuxdo'?'':'笔记正文'} text={item.description || (item.articleBlocks?.length ? item.articleBlocks.filter(block => block.kind !== 'image' && block.kind !== 'emoji').map(block => block.text).filter(Boolean).join('\n\n') : '') || (item.platform==='xiaohongshu'?(detailRead?'这篇笔记没有附加文字。':detailLoading?'正在获取正文…':'正文尚未读取。'):'来源没有提供正文，可打开原内容查看。')} blocks={item.articleBlocks} feed={item.platform==='rss'} notes={annotations} focus={textFocus} onQuote={item.description?quoteText:undefined} onOpenNotes={revealNotes} onUnresolved={onUnresolved} navigationTarget={notesNavigation} onReturnedToReading={returnedToReading}/>
     : null
+  const discussionText = item?.platform === 'linuxdo' && item.discussion ? <DiscussionReader discussion={item.discussion} topicURL={item.url} sourceURL={item.url} viewCount={item.viewCount} likeCount={item.likeCount} notes={annotations} focus={textFocus} onQuote={quoteText} onOpenNotes={revealNotes} onUnresolved={onUnresolved}/> : null
   const videoLayout = Boolean(video || item?.kind === 'video')
   const audioLayout = item?.kind === 'audio'
   const heading = <>{item ? <BilingualTitle heading contentId={item.id} text={item.title}/> : <h1>内容阅读</h1>}{item && <p className="reading-meta">{item.author||'未知作者'} · <ReaderPublication key={item.id} item={item}/></p>}</>
@@ -189,7 +191,7 @@ export function MediaReader({ id, initialItem, jobs, jobsLoading = false, video,
         {item.kind==='image'&&<ImageAlbum key={item.id} item={item} onRefresh={item.platform==='xiaohongshu'?refreshDetails:undefined} onUpdateSource={item.platform==='xiaohongshu'?()=>setSourceEditing(true):undefined} refreshing={detailLoading}/>}
 
         {item.kind==='audio'&&!reading&&<p className="field-hint">当前来源未提供可用的逐字字幕，下面显示节目说明。</p>}
-        {description ? !notes && !videoLayout && !audioLayout && description : item.kind==='article'&&item.platform==='rss'?<FullTextArticle key={item.id} item={item} notes={annotations} focus={textFocus} onQuote={quoteText} onOpenNotes={revealNotes} onUnresolved={onUnresolved} navigationTarget={notesNavigation} onReturnedToReading={returnedToReading}/>:sourceText ? !textAboveNotes && sourceText : <article className="article-reader"><h2>{item.kind==='audio'?'节目说明':'内容简介'}</h2><p>{item.description||'来源没有提供正文，可打开原内容查看。'}</p>{item.platform==='rss'&&<p className="field-hint">显示订阅源提供的文字；摘要源可能不包含全文。</p>}</article>}
+        {item?.platform === 'linuxdo' ? discussionText : description ? !notes && !videoLayout && !audioLayout && description : item.kind==='article'&&item.platform==='rss'?<FullTextArticle key={item.id} item={item} notes={annotations} focus={textFocus} onQuote={quoteText} onOpenNotes={revealNotes} onUnresolved={onUnresolved} navigationTarget={notesNavigation} onReturnedToReading={returnedToReading}/>:sourceText ? !textAboveNotes && sourceText : <article className="article-reader"><h2>{item.kind==='audio'?'节目说明':'内容简介'}</h2><p>{item.description||'来源没有提供正文，可打开原内容查看。'}</p>{item.platform==='rss'&&<p className="field-hint">显示订阅源提供的文字；摘要源可能不包含全文。</p>}</article>}
       </>)}
       {quote&&onQuote&&<button className="button button-secondary reader-quote" onClick={()=>{onQuote(quote);setQuote('')}}><StickyNote size={15}/>引用选中文字到批注</button>}
       </div>{notes&&<aside className="reading-notes" ref={notesRegion} tabIndex={-1} aria-label="当前内容笔记">{!videoLayout && !audioLayout && description}{textAboveNotes && <section className="reader-source-text" aria-label="来源正文">{sourceText}</section>}{notes}</aside>}</ReadingNotebook>

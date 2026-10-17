@@ -39,7 +39,7 @@ func TestTopicIncludesFirstPostAndReplies(t *testing.T) {
 		return response(r, 200, string(raw)), nil
 	})}}
 	item, err := c.Topic(context.Background(), "42")
-	if err != nil || item.Author != "作者" || item.ReplyCount != 1 || !strings.Contains(item.Description, "正文") || !strings.Contains(item.Description, "回复 回复者：补充") || len(item.ArticleBlocks) != 1 {
+	if err != nil || item.Author != "作者" || item.ReplyCount != 1 || !strings.Contains(item.Description, "正文") || strings.Contains(item.Description, "回复 回复者：补充") || item.Discussion == nil || len(item.Discussion.Posts) != 2 {
 		t.Fatalf("topic detail not mapped: %+v %v", item, err)
 	}
 }
@@ -60,7 +60,7 @@ func TestReadUsesStoredBrowserUserAgent(t *testing.T) {
 }
 
 func TestTopicNormalizesCookedImageURLs(t *testing.T) {
-	raw := `{"id":42,"title":"图片","post_stream":{"posts":[{"post_number":1,"username":"作者","cooked":"<p>正文</p><p><img class=\"lightbox\" data-src=\"//cdn.example.test/a.jpg\"><img src=\"upload://short-key\"></p>"}]}}`
+	raw := `{"id":42,"title":"图片","posts_count":1,"post_stream":{"stream":[99],"posts":[{"id":99,"post_number":1,"username":"作者","cooked":"<p>正文</p><p><img class=\"lightbox\" data-src=\"//cdn.example.test/a.jpg\"><img src=\"upload://short-key\"></p>"}]}}`
 	c := &Client{HTTP: &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
 		return response(r, 200, raw), nil
 	})}}
@@ -70,5 +70,18 @@ func TestTopicNormalizesCookedImageURLs(t *testing.T) {
 	}
 	if item.ArticleBlocks[1].URL != "https://cdn.example.test/a.jpg" || item.ArticleBlocks[2].URL != "https://linux.do/uploads/short-url/short-key" {
 		t.Fatalf("image URLs were not normalized: %#v", item.ArticleBlocks)
+	}
+}
+
+func TestTopicParsesReplyRelationsAndStreamIDs(t *testing.T) {
+	raw := `{"id":42,"title":"楼层","reply_count":2,"posts_count":3,"post_stream":{"stream":[201,202,203],"posts":[{"id":201,"post_number":1,"username":"楼主","cooked":"<p>主帖</p>"},{"id":202,"post_number":2,"username":"回复者","reply_to_post_number":1,"reply_to_user":"楼主","reply_to_post_id":201,"like_count":4,"cooked":"<p>回复</p>"}]}}`
+	c := &Client{HTTP: &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) { return response(r, 200, raw), nil })}}
+	item, err := c.Topic(context.Background(), "42")
+	if err != nil || item.Discussion == nil || item.Discussion.TotalPosts != 3 || len(item.Discussion.PostIDs) != 3 || len(item.Discussion.Posts) != 2 {
+		t.Fatalf("discussion metadata lost: %+v, %v", item.Discussion, err)
+	}
+	reply := item.Discussion.Posts[1]
+	if reply.ReplyToNumber != 1 || reply.ReplyToUser != "楼主" || reply.ReplyToPostID != 201 || reply.LikeCount != 4 {
+		t.Fatalf("reply relation lost: %+v", reply)
 	}
 }

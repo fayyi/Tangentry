@@ -1,5 +1,5 @@
 import { ArrowLeft, BookOpen, StickyNote, X } from 'lucide-react'
-import { Fragment, useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from 'react'
+import { Fragment, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode, type Ref } from 'react'
 import { createPortal } from 'react-dom'
 import type { ArticleBlock, ReadingNote, TextAnchor } from '../../shared/api/types'
 import { anchorSelection, hashArticle, highlightSegments, resolveTextAnchor } from '../../shared/text/textAnchors'
@@ -16,6 +16,7 @@ import { ReaderActions } from '../../shared/reader/ReaderActions'
 import { shouldRenderInlineSummary } from '../ai/summaryPresentation'
 import MarkdownRenderer from '../notes/MarkdownRenderer'
 import { isLikelyMarkdown, markdownToPlainText } from './markdownContent'
+import { proxiedImageURL } from '../../shared/media/sourceImage'
 
 export interface ArticleReaderHandle { locateQuote: (quote: string) => string | null }
 
@@ -50,14 +51,14 @@ export function ArticleReader({ ref: externalRef, contentId = '', text, blocks, 
   const returnAvailable = returnPoint?.identity === identity
   const readingPosition = useArticlePosition(root, contentId, sourceHash, annotationText.length, focus?.token)
   const paragraphs = useMemo(() => {
-    if (blocks) return blocks.map(block => block.kind === 'code' || block.kind === 'image' ? null : block.text ?? '')
+    if (blocks) return blocks.map(block => block.kind === 'code' || block.kind === 'image' || block.kind === 'emoji' ? null : block.text ?? '')
     return annotationText.split(/(\n\n+)/).filter((_, index) => index % 2 === 0)
   }, [blocks, annotationText])
   const blockOffsets = useMemo(() => {
     if (!blocks) return []
     let cursor = 0
     return blocks.map(block => {
-      if (block.kind === 'image') return { start: cursor, end: cursor }
+      if (block.kind === 'image' || block.kind === 'emoji') return { start: cursor, end: cursor }
       const value = block.text ?? ''
       const found = annotationText.indexOf(value, cursor)
       const start = found < 0 ? cursor : found
@@ -185,22 +186,39 @@ export function ArticleReader({ ref: externalRef, contentId = '', text, blocks, 
     return segment.ids.length ? <mark key={segment.start} className={`article-highlight${cited ? ' article-summary-highlight' : ''}`} role="button" tabIndex={0} data-summary-citation={cited || undefined} data-article-start={originalStart} data-article-end={originalEnd} data-note-ids={segment.ids.join(' ')} data-current={Boolean(focus && segment.ids.includes(focus.id))} aria-label={`查看对应批注：${value.slice(0, 40)}${segment.ids.length > 1 ? `，${segment.ids.length} 条笔记` : ''}`} onClick={() => open(segment.ids)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onOpenNotes?.(segment.ids) } }}>{displayed}</mark> : cited ? <mark key={segment.start} className="article-summary-highlight" tabIndex={-1} data-summary-citation="true" data-article-start={originalStart} data-article-end={originalEnd}>{displayed}</mark> : <span key={segment.start} data-article-start={originalStart} data-article-end={originalEnd}>{displayed}</span>
   })
   let offset = 0
+  const renderBlockText = (block: ArticleBlock, start: number, end: number, recognize = true) => {
+    const images = (block.inlineImages ?? []).filter(image => image.offset >= 0 && image.offset <= block.text.length).sort((a, b) => a.offset - b.offset)
+    if (!images.length) return renderSegments(start, end, recognize)
+    const parts: ReactNode[] = []
+    let cursor = 0
+    images.forEach((image, index) => {
+      if (image.offset > cursor) parts.push(<Fragment key={`text-${index}`}>{renderSegments(start + cursor, start + image.offset, recognize)}</Fragment>)
+      parts.push(<img key={`image-${index}`} className="article-inline-emoji" src={proxiedImageURL(image.url, sourceURL)} alt={image.alt ?? ''} width={image.width || undefined} height={image.height || undefined} loading="lazy" decoding="async" referrerPolicy="no-referrer" />)
+      cursor = image.offset
+    })
+    if (cursor < block.text.length) parts.push(<Fragment key="text-end">{renderSegments(start + cursor, end, recognize)}</Fragment>)
+    return parts
+  }
   return <article className="article-reader" onMouseUp={event => { event.stopPropagation(); capture() }} onKeyUp={event => { event.stopPropagation(); capture() }}>
-    <h2>{title}</h2>
+    {title && <h2>{title}</h2>}
     {contentId && summarySource && text.trim() && shouldRenderInlineSummary(feed, toolbarOwnsSummary) && <ReaderActions><SummaryControl summary={summary} source={{contentId,title:sourceTitle,url:sourceURL}} onLocateQuote={locateQuote}/></ReaderActions>}
     <div className="article-reading-tools">{contentId && pieces.length > 0 && <TextTranslationControl translation={translation} label="翻译文章"/>}{readingPosition.available && <button type="button" className="text-button article-resume" onClick={() => {
       if (collapsible && !textExpanded) { setTextExpanded(true); requestAnimationFrame(readingPosition.restore) }
       else readingPosition.restore()
     }} title="回到上次阅读的原文段落"><BookOpen size={14} aria-hidden="true"/>继续阅读</button>}</div>
     <ArticleReflowGuard root={root} contentId={contentId} text={annotationText} layout={translation.show ? translation.inspection?.result.texts : undefined} focusToken={focus?.token} beforeReflow={readingPosition.pause}>
-    <div ref={root} tabIndex={-1} onFocusCapture={() => { if (collapsible) setTextExpanded(true) }} className={`article-text${blocks ? ' article-structured' : ''}${markdown ? ' article-markdown' : ''}${collapsible && !textExpanded ? ' article-text-collapsed' : ''}`} data-anchor-ready={Boolean(sourceHash)}>{markdown ? <MarkdownRenderer imageMode="inline" imageReferrer={sourceURL}>{text}</MarkdownRenderer> : blocks ? blocks.map((block, index) => {
+      <div ref={root} tabIndex={-1} onFocusCapture={() => { if (collapsible) setTextExpanded(true) }} className={`article-text${blocks ? ' article-structured' : ''}${markdown ? ' article-markdown' : ''}${collapsible && !textExpanded ? ' article-text-collapsed' : ''}`} data-anchor-ready={Boolean(sourceHash)}>{markdown ? <MarkdownRenderer imageMode="inline" imageReferrer={sourceURL}>{text}</MarkdownRenderer> : blocks ? blocks.map((block, index) => {
       const text = block.text ?? ''
       const { start, end } = blockOffsets[index] ?? { start: offset, end: offset + text.length }
-      if (block.kind === 'image') return <ArticleImage key={index} block={block} referrer={sourceURL}/>
+      if (block.kind === 'image' || block.kind === 'emoji') return <ArticleImage key={index} block={block} referrer={sourceURL}/>
       const separator = renderSegments(offset, start, false, true)
       offset = end
-      const Tag = block.kind === 'heading' ? (block.level === 4 ? 'h4' : block.level === 3 ? 'h3' : 'h2') : block.kind === 'code' ? 'pre' : block.kind === 'quote' ? 'blockquote' : 'p'
-      return <Fragment key={index}>{separator}<Tag className={`article-block article-block-${block.kind}`}>{renderSegments(start, end, block.kind !== 'code')}</Tag>{translation.show && translatedParagraphs[index] && <p data-translation="true" className="article-translated" lang="zh-Hans">{translatedParagraphs[index]}</p>}</Fragment>
+      const Tag = block.kind === 'heading' ? (block.level === 4 ? 'h4' : block.level === 3 ? 'h3' : 'h2') : block.kind === 'code' ? 'pre' : block.kind === 'quote' ? 'blockquote' : block.kind === 'list' ? (block.ordered ? 'ol' : 'ul') : block.kind === 'details' || block.kind === 'spoiler' ? 'details' : block.kind === 'onebox' ? 'p' : 'p'
+      if (block.kind === 'details' || block.kind === 'spoiler') return <Fragment key={index}>{separator}<details className={`article-block article-block-${block.kind}`}><summary>{block.summary}</summary><p>{renderBlockText(block, start, end)}</p></details></Fragment>
+      if (block.kind === 'onebox') return <Fragment key={index}>{separator}<p className="article-block article-block-onebox"><a href={block.url} target="_blank" rel="noreferrer">{renderBlockText(block, start, end)}</a></p></Fragment>
+      if (block.kind === 'list') return <Fragment key={index}>{separator}<Tag className={`article-block article-block-list article-list-depth-${block.level ?? 0}`}><li>{renderBlockText(block, start, end)}</li></Tag></Fragment>
+      if (block.kind === 'table') return <Fragment key={index}>{separator}<p className="article-block article-block-table">{renderBlockText(block, start, end)}</p></Fragment>
+      return <Fragment key={index}>{separator}<Tag className={`article-block article-block-${block.kind}`}>{renderBlockText(block, start, end, block.kind !== 'code')}</Tag>{translation.show && translatedParagraphs[index] && <p data-translation="true" className="article-translated" lang="zh-Hans">{translatedParagraphs[index]}</p>}</Fragment>
     }).concat(renderSegments(offset, annotationText.length, false, true)) : annotationText.split(/(\n\n+)/).map((part, index) => {
       const start = offset; offset += part.length
       return <Fragment key={index}>{renderSegments(start, offset)}{index % 2 === 0 && translation.show && translatedParagraphs[index / 2] && <p data-translation="true" className="article-translated" lang="zh-Hans">{translatedParagraphs[index / 2]}</p>}</Fragment>
