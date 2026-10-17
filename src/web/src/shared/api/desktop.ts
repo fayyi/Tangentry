@@ -40,7 +40,7 @@ export async function selectDesktopPath(kind: string, current: string) {
   })
 }
 
-export type PlatformWebView = 'linuxdo' | 'douyin'
+export type PlatformWebView = 'linuxdo' | 'douyin' | 'bilibili' | 'xiaohongshu' | 'youtube'
 
 /** Ask the desktop shell to open the restricted, platform-specific login window. */
 export async function openDesktopPlatformLogin(platform: PlatformWebView) {

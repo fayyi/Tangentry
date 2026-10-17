@@ -23,11 +23,12 @@ import (
 // CredentialRefresher performs Bilibili's browser-cookie rotation protocol.
 // The callbacks keep storage policy outside the platform adapter.
 type CredentialRefresher struct {
-	HTTP  *http.Client
-	Load  func() (cookie, refresh string)
-	Save  func(oldCookie, oldRefresh, newCookie, newRefresh string) error
-	mu    sync.Mutex
-	check time.Time
+	HTTP      *http.Client
+	Load      func() (cookie, refresh string)
+	Save      func(oldCookie, oldRefresh, newCookie, newRefresh string) error
+	UserAgent func() string
+	mu        sync.Mutex
+	check     time.Time
 }
 
 var refreshCSRF = regexp.MustCompile(`<div id="1-name">([^<]+)</div>`)
@@ -74,7 +75,11 @@ func (r *CredentialRefresher) request(ctx context.Context, method, rawURL, cooki
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", userAgent)
+	requestUserAgent := userAgent
+	if r.UserAgent != nil && r.UserAgent() != "" {
+		requestUserAgent = r.UserAgent()
+	}
+	req.Header.Set("User-Agent", requestUserAgent)
 	if cookie != "" {
 		req.Header.Set("Cookie", cookie)
 	}

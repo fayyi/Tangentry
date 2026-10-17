@@ -21,17 +21,18 @@ const pageSize = 24
 const userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
 
 type Client struct {
-	http             *http.Client
-	baseURL          string
-	cookie           string
-	cookieProvider   func(string) string
-	mu               sync.Mutex
-	key              string
-	keyExpires       time.Time
-	restrictedUntil  time.Time
-	videoFallback    VideoExtractor
-	playbackFallback PlaybackExtractor
-	refresher        *CredentialRefresher
+	http              *http.Client
+	baseURL           string
+	cookie            string
+	cookieProvider    func(string) string
+	userAgentProvider func(string) string
+	mu                sync.Mutex
+	key               string
+	keyExpires        time.Time
+	restrictedUntil   time.Time
+	videoFallback     VideoExtractor
+	playbackFallback  PlaybackExtractor
+	refresher         *CredentialRefresher
 }
 
 // A generic media extractor is optional; platform failures remain errors if it also fails.
@@ -58,6 +59,8 @@ func NewClient(client *http.Client, cookie string, fallback ...VideoExtractor) *
 
 // SetCookieProvider is wired once before serving requests.
 func (c *Client) SetCookieProvider(provider func(string) string) { c.cookieProvider = provider }
+
+func (c *Client) SetUserAgentProvider(provider func(string) string) { c.userAgentProvider = provider }
 
 // SetCredentialRefresher enables best-effort, throttled Cookie rotation.
 func (c *Client) SetCredentialRefresher(refresher *CredentialRefresher) { c.refresher = refresher }

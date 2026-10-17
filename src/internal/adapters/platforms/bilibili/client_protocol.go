@@ -43,7 +43,13 @@ func (c *Client) getFrom(ctx context.Context, origin, referer, endpoint string, 
 	if err != nil {
 		return err
 	}
-	req.Header.Set("User-Agent", userAgent)
+	requestUserAgent := userAgent
+	if c.userAgentProvider != nil {
+		if value := c.userAgentProvider(req.URL.String()); value != "" {
+			requestUserAgent = value
+		}
+	}
+	req.Header.Set("User-Agent", requestUserAgent)
 	req.Header.Set("Referer", referer)
 	req.Header.Set("Accept", "application/json")
 	cookie := c.cookie

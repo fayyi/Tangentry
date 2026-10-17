@@ -41,6 +41,7 @@ func openRuntimeResources(dataDir string, configuration config.Config, option Op
 	}
 	toolkit := tools.New(configuration)
 	toolkit.SetCredentials(cookies)
+	toolkit.SetYouTubeUserAgent(func() string { return cookies.UserAgent("youtube") })
 	processing, err := downloads.NewService(store, toolkit, configuration.DownloadDir, configuration.DownloadLimit)
 	if err != nil {
 		return nil, err

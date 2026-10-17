@@ -41,7 +41,7 @@ func (b *Backend) routePlatformLogin(w http.ResponseWriter, r *http.Request) boo
 
 func validPlatformLoginPlatform(platform string) bool {
 	switch platform {
-	case "linuxdo", "douyin":
+	case "linuxdo", "douyin", "bilibili", "xiaohongshu", "youtube":
 		return true
 	default:
 		return false

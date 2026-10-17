@@ -45,6 +45,66 @@ func TestDouyinBrowserLoginPersistsSessionAndUA(t *testing.T) {
 	}
 }
 
+func TestBrowserLoginPersistsSupportedPlatformCookiesAndFiltersDomains(t *testing.T) {
+	tests := []struct {
+		platform string
+		cookies  []*http.Cookie
+		want     string
+		login    func(*Store) func([]*http.Cookie, string) error
+	}{
+		{"bilibili", []*http.Cookie{{Name: "SESSDATA", Value: "sess", Domain: ".bilibili.com", Path: "/", Secure: true}, {Name: "buvid3", Value: "buvid", Domain: ".bilibili.com", Path: "/", Secure: true}, {Name: "other", Value: "drop", Domain: ".bilibili.com", Path: "/", Secure: true}}, "SESSDATA=sess", func(s *Store) func([]*http.Cookie, string) error { return s.PrepareBilibiliBrowserLogin() }},
+		{"xiaohongshu", []*http.Cookie{{Name: "web_session", Value: "session", Domain: ".xiaohongshu.com", Path: "/", Secure: true}, {Name: "a1", Value: "a-one", Domain: ".xiaohongshu.com", Path: "/", Secure: true}}, "web_session=session", func(s *Store) func([]*http.Cookie, string) error { return s.PrepareXiaohongshuBrowserLogin() }},
+		{"youtube", []*http.Cookie{{Name: "SID", Value: "sid", Domain: ".google.com", Path: "/", Secure: true}, {Name: "SAPISID", Value: "api", Domain: ".youtube.com", Path: "/", Secure: true}}, "SAPISID=api", func(s *Store) func([]*http.Cookie, string) error { return s.PrepareYouTubeBrowserLogin() }},
+	}
+	for _, test := range tests {
+		t.Run(test.platform, func(t *testing.T) {
+			s, err := Open(t.TempDir(), "", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			ua := "Mozilla/5.0 (fixture)"
+			if err := test.login(s)(test.cookies, ua); err != nil {
+				t.Fatal(err)
+			}
+			if s.UserAgent(test.platform) != ua || !strings.Contains(s.Header(test.platform, "https://www."+map[string]string{"bilibili": "bilibili.com", "xiaohongshu": "xiaohongshu.com", "youtube": "youtube.com"}[test.platform]+"/"), test.want) {
+				t.Fatalf("saved browser credential mismatch: ua=%q header=%q", s.UserAgent(test.platform), s.Header(test.platform, "https://www."+map[string]string{"bilibili": "bilibili.com", "xiaohongshu": "xiaohongshu.com", "youtube": "youtube.com"}[test.platform]+"/"))
+			}
+			if strings.Contains(s.Header(test.platform, "https://www."+map[string]string{"bilibili": "bilibili.com", "xiaohongshu": "xiaohongshu.com", "youtube": "youtube.com"}[test.platform]+"/"), "other=drop") {
+				t.Fatal("unrelated browser cookie persisted")
+			}
+		})
+	}
+}
+
+func TestYouTubeBrowserLoginRejectsSessionlessCookies(t *testing.T) {
+	s, err := Open(t.TempDir(), "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PrepareYouTubeBrowserLogin()([]*http.Cookie{{Name: "PREF", Value: "tz=UTC", Domain: ".youtube.com", Path: "/", Secure: true}}, "Mozilla/5.0"); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("sessionless browser login accepted: %v", err)
+	}
+}
+
+func TestYouTubeGoogleCookiesStayScopedToYouTubeRequests(t *testing.T) {
+	s, err := Open(t.TempDir(), "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PrepareYouTubeBrowserLogin()([]*http.Cookie{
+		{Name: "__Secure-1PSID", Value: "private-session", Domain: ".google.com", Path: "/", Secure: true},
+		{Name: "SAPISID", Value: "youtube-api", Domain: ".youtube.com", Path: "/", Secure: true},
+	}, "Mozilla/5.0"); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Header("youtube", "https://www.youtube.com/youtubei/v1/browse"); !strings.Contains(got, "SAPISID=youtube-api") || strings.Contains(got, "private-session") {
+		t.Fatalf("Google cookie leaked into YouTube request header: %q", got)
+	}
+	if got := s.Header("youtube", "https://accounts.google.com/"); got != "" {
+		t.Fatalf("Google-domain request received YouTube credentials: %q", got)
+	}
+}
+
 func TestEncryptedStoreDoesNotPersistBrowserSecretsAsPlaintext(t *testing.T) {
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {

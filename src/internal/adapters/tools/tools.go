@@ -25,6 +25,7 @@ type Toolkit struct {
 	youtubeSessions    map[string]*youtubePageState
 	youtubeMu          sync.Mutex
 	youtubeHome        func(context.Context, string, json.RawMessage) youtube.HomeResult
+	youtubeUserAgent   func() string
 	credentials        *credentials.Store
 	config             config.Config
 	status             downloads.ToolReport
@@ -35,7 +36,14 @@ type Toolkit struct {
 }
 
 func New(c config.Config) *Toolkit {
-	t := &Toolkit{config: c, youtubeAvatars: map[string]youtubeAvatarEntry{}, youtubeAvatarSlots: make(chan struct{}, 2), youtubeHome: youtube.NewHome().Fetch}
+	t := &Toolkit{config: c, youtubeAvatars: map[string]youtubeAvatarEntry{}, youtubeAvatarSlots: make(chan struct{}, 2)}
+	t.youtubeHome = func(ctx context.Context, cookie string, continuation json.RawMessage) youtube.HomeResult {
+		home := youtube.NewHome()
+		if t.youtubeUserAgent != nil {
+			home.UserAgent = t.youtubeUserAgent()
+		}
+		return home.Fetch(ctx, cookie, continuation)
+	}
 	t.config.FFmpegPath = executable(c.FFmpegPath, "ffmpeg")
 	ytdlp := downloads.ToolStatus{Name: "yt-dlp"}
 	if c.YTDLPPath == "" && c.ToolsDir != "" {
@@ -129,6 +137,8 @@ func (t *Toolkit) Status() downloads.ToolReport {
 	return report
 }
 func (t *Toolkit) SetCredentials(value *credentials.Store) { t.credentials = value }
+
+func (t *Toolkit) SetYouTubeUserAgent(provider func() string) { t.youtubeUserAgent = provider }
 
 // Invocations snapshot their own platform jar; no shared file is passed to yt-dlp.
 func (t *Toolkit) cookieArguments(rawURL string) ([]string, func(), error) {

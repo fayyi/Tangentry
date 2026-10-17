@@ -115,12 +115,15 @@ func (b *platformLoginBridge) Complete(ctx context.Context) error {
 	if page == nil || !platformLoginURLAllowed(page.URL(), attempt.platform) {
 		return errors.New("login page is outside the platform allowlist")
 	}
-	domain := "linux.do"
-	if attempt.platform == "douyin" {
-		domain = "douyin.com"
+	var cookies []mygo.Cookie
+	for _, domain := range platformLoginCookieDomains(attempt.platform) {
+		values, err := mygo.Cookies.List(mygo.CookieFilter{Domain: domain})
+		if err != nil {
+			return errors.New("无法读取平台登录状态")
+		}
+		cookies = append(cookies, values...)
 	}
-	cookies, err := mygo.Cookies.List(mygo.CookieFilter{Domain: domain})
-	if err != nil {
+	if len(cookies) == 0 {
 		return errors.New("无法读取平台登录状态")
 	}
 	converted := make([]*http.Cookie, 0, len(cookies))
@@ -147,12 +150,35 @@ func (b *platformLoginBridge) Complete(ctx context.Context) error {
 
 func platformLoginOrigin(platform string) (string, bool) {
 	switch platform {
+	case "bilibili":
+		return "https://passport.bilibili.com/", true
 	case "linuxdo":
 		return "https://linux.do/", true
 	case "douyin":
 		return "https://www.douyin.com/", true
+	case "xiaohongshu":
+		return "https://www.xiaohongshu.com/", true
+	case "youtube":
+		return "https://accounts.google.com/", true
 	default:
 		return "", false
+	}
+}
+
+func platformLoginCookieDomains(platform string) []string {
+	switch platform {
+	case "bilibili":
+		return []string{"bilibili.com"}
+	case "linuxdo":
+		return []string{"linux.do"}
+	case "douyin":
+		return []string{"douyin.com"}
+	case "xiaohongshu":
+		return []string{"xiaohongshu.com"}
+	case "youtube":
+		return []string{"youtube.com", "google.com"}
+	default:
+		return nil
 	}
 }
 
@@ -160,12 +186,22 @@ func platformLoginTitle(platform string) string {
 	if platform == "linuxdo" {
 		return "Linux.do 登录"
 	}
-	return "抖音登录"
+	labels := map[string]string{"douyin": "抖音登录", "bilibili": "B站登录", "xiaohongshu": "小红书登录", "youtube": "YouTube 登录"}
+	return labels[platform]
 }
 
 func platformLoginTrustedOrigins(platform string) []string {
 	if platform == "linuxdo" {
 		return []string{"https://linux.do", "https://www.linux.do", "https://challenges.cloudflare.com", "https://turnstile.cloudflare.com", "https://static.cloudflareinsights.com"}
+	}
+	if platform == "bilibili" {
+		return []string{"https://bilibili.com", "https://www.bilibili.com", "https://passport.bilibili.com", "https://captcha.bilibili.com", "https://s1.hdslb.com"}
+	}
+	if platform == "xiaohongshu" {
+		return []string{"https://xiaohongshu.com", "https://www.xiaohongshu.com", "https://edith.xiaohongshu.com", "https://sso.xiaohongshu.com", "https://captcha.xiaohongshu.com"}
+	}
+	if platform == "youtube" {
+		return []string{"https://accounts.google.com", "https://www.google.com", "https://myaccount.google.com", "https://ogs.google.com", "https://accounts.youtube.com", "https://youtube.com", "https://www.youtube.com", "https://consent.youtube.com", "https://www.recaptcha.net", "https://recaptcha.net"}
 	}
 	return []string{"https://douyin.com", "https://www.douyin.com", "https://passport.douyin.com", "https://www.iesdouyin.com", "https://challenges.cloudflare.com", "https://turnstile.cloudflare.com", "https://static.cloudflareinsights.com"}
 }
@@ -182,7 +218,18 @@ func platformLoginURLAllowed(rawURL, platform string) bool {
 	if platform == "linuxdo" {
 		return host == "linux.do" || host == "www.linux.do"
 	}
-	return host == "douyin.com" || host == "www.douyin.com" || host == "passport.douyin.com" || host == "www.iesdouyin.com"
+	switch platform {
+	case "douyin":
+		return host == "douyin.com" || host == "www.douyin.com" || host == "passport.douyin.com" || host == "www.iesdouyin.com"
+	case "bilibili":
+		return host == "bilibili.com" || host == "www.bilibili.com" || host == "passport.bilibili.com" || host == "captcha.bilibili.com" || host == "s1.hdslb.com"
+	case "xiaohongshu":
+		return host == "xiaohongshu.com" || host == "www.xiaohongshu.com" || host == "edith.xiaohongshu.com" || host == "sso.xiaohongshu.com" || host == "captcha.xiaohongshu.com"
+	case "youtube":
+		return host == "accounts.google.com" || host == "www.google.com" || host == "myaccount.google.com" || host == "ogs.google.com" || host == "accounts.youtube.com" || host == "youtube.com" || host == "www.youtube.com" || host == "consent.youtube.com" || host == "www.recaptcha.net" || host == "recaptcha.net"
+	default:
+		return false
+	}
 }
 
 const platformLoginPreload = `(function(){
@@ -193,7 +240,15 @@ const platformLoginPreload = `(function(){
     const text=document.createElement('span'); text.textContent='登录或验证完成后点击此处';
     const button=document.createElement('button'); button.type='button'; button.textContent='完成登录'; button.style='border:0;border-radius:6px;padding:6px 10px;background:#fff;color:#111;cursor:pointer';
     button.addEventListener('click',async()=>{button.disabled=true;button.textContent='正在保存…';try{await mygo.call('PlatformLogin.Complete')}catch(error){button.disabled=false;button.textContent='重试';text.textContent=String(error&&error.message||'未能保存登录状态')}});
-    bar.append(text,button); document.body.appendChild(bar);
+    function checkGoogleBlock(){
+      const body=(document.body&&document.body.innerText||'').toLowerCase();
+      if(location.hostname.endsWith('google.com') && (body.includes('this browser or app may not be secure') || body.includes('此浏览器或应用可能不安全'))){
+        text.textContent='Google 拒绝了嵌入式浏览器登录，请改用浏览器 Cookie 或 OAuth。Tangentry 不会绕过此安全检查。';
+        button.disabled=true;
+      }
+    }
+    bar.append(text,button); document.body.appendChild(bar); checkGoogleBlock();
+    new MutationObserver(checkGoogleBlock).observe(document.body,{subtree:true,childList:true,characterData:true});
   }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',install,{once:true}); else install();
 })();`

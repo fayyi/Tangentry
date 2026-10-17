@@ -13,6 +13,14 @@ func allowedDomain(platform, domain string) bool {
 	return ok && (domain == root || strings.HasSuffix(domain, "."+root))
 }
 
+func allowedStorageDomain(platform, domain string) bool {
+	if allowedDomain(platform, domain) {
+		return true
+	}
+	domain = strings.ToLower(strings.TrimPrefix(domain, "."))
+	return platform == "youtube" && (domain == "google.com" || strings.HasSuffix(domain, ".google.com"))
+}
+
 func normalize(platform, format, raw string) (string, error) {
 	root, ok := domains[platform]
 	if !ok || len(raw) > 256<<10 || !utf8.ValidString(raw) {
@@ -45,7 +53,7 @@ func normalize(platform, format, raw string) (string, error) {
 				continue
 			}
 			f := strings.Split(line, "\t")
-			if len(f) != 7 || !allowedDomain(platform, f[0]) || (f[1] != "TRUE" && f[1] != "FALSE") || !strings.HasPrefix(f[2], "/") || strings.ContainsAny(f[2], "\r\n") || (f[3] != "TRUE" && f[3] != "FALSE") || !validName(f[5]) || !validValue(f[6]) {
+			if len(f) != 7 || !allowedStorageDomain(platform, f[0]) || (f[1] != "TRUE" && f[1] != "FALSE") || !strings.HasPrefix(f[2], "/") || strings.ContainsAny(f[2], "\r\n") || (f[3] != "TRUE" && f[3] != "FALSE") || !validName(f[5]) || !validValue(f[6]) {
 				return "", ErrInvalid
 			}
 			expiry, err := strconv.ParseInt(f[4], 10, 64)

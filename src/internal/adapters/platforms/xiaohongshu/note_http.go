@@ -64,7 +64,11 @@ func (c *Client) note(ctx context.Context, raw, expectedID string) (content.Item
 	}
 	fetch := func(locator string, authenticated bool) (*http.Response, error) {
 		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, locator, nil)
-		req.Header.Set("User-Agent", "Mozilla/5.0")
+		userAgent := "Mozilla/5.0"
+		if c.UserAgent != nil && c.UserAgent(locator) != "" {
+			userAgent = c.UserAgent(locator)
+		}
+		req.Header.Set("User-Agent", userAgent)
 		if authenticated && c.Cookie != nil {
 			req.Header.Set("Cookie", c.Cookie(locator))
 		}

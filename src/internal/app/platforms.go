@@ -78,7 +78,8 @@ func newPlatforms(dataDir string, configuration config.Config, toolkit *tools.To
 	}
 	client := bilibili.NewClient(&http.Client{Timeout: 15 * time.Second}, configuration.BilibiliCookie, toolkit)
 	client.SetCookieProvider(func(rawURL string) string { return cookies.Header("bilibili", rawURL) })
-	client.SetCredentialRefresher(&bilibili.CredentialRefresher{HTTP: public, Load: cookies.BilibiliPair, Save: cookies.SaveBilibiliIfCurrent})
+	client.SetUserAgentProvider(func(rawURL string) string { return cookies.UserAgent("bilibili") })
+	client.SetCredentialRefresher(&bilibili.CredentialRefresher{HTTP: public, Load: cookies.BilibiliPair, Save: cookies.SaveBilibiliIfCurrent, UserAgent: func() string { return cookies.UserAgent("bilibili") }})
 	var creators discovery.Provider = client
 	if option.Platform != nil {
 		creators = option.Platform
@@ -94,7 +95,7 @@ func newPlatforms(dataDir string, configuration config.Config, toolkit *tools.To
 	feedClient := &feeds.Client{HTTP: public}
 	youtubeClient := youtube.New(public)
 	douyinClient := &douyin.Client{HTTP: public, Cookie: cookieFor(cookies, "douyin"), UserAgent: userAgentFor(cookies, "douyin"), Page: option.PlatformPageFetcher}
-	notesClient := &xiaohongshu.Client{HTTP: public, Cookie: cookieFor(cookies, "xiaohongshu")}
+	notesClient := &xiaohongshu.Client{HTTP: public, Cookie: cookieFor(cookies, "xiaohongshu"), UserAgent: userAgentFor(cookies, "xiaohongshu")}
 	forumClient := &discourse.Client{HTTP: public, UserAgent: userAgentFor(cookies, "linuxdo"), Session: cookies.PrepareLinuxdoSession, UserKey: cookies.LinuxdoUserKey, Page: option.PlatformPageFetcher}
 	return &platforms{
 		network:       platformNetwork{public: public, cookies: cookies, toolkit: toolkit},

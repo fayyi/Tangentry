@@ -52,10 +52,11 @@ type session struct {
 // requester performs InnerTube requests for one helper invocation and keeps the
 // latest transport diagnosis, as the Node helper's fetch wrapper did.
 type requester struct {
-	http   *http.Client
-	cookie string
-	now    func() time.Time
-	code   string
+	http      *http.Client
+	cookie    string
+	now       func() time.Time
+	code      string
+	userAgent string
 }
 
 func youtubeHost(u *url.URL) bool {
@@ -174,7 +175,7 @@ func (r *requester) browse(ctx context.Context, s session, payload map[string]an
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "*/*")
 	req.Header.Set("Accept-Language", "*")
-	req.Header.Set("User-Agent", firstNonEmpty(stringAt(client, "userAgent"), innertubeUserAgent))
+	req.Header.Set("User-Agent", firstNonEmpty(stringAt(client, "userAgent"), r.userAgent, innertubeUserAgent))
 	req.Header.Set("Origin", innertubeBase)
 	req.Header.Set("X-Goog-Visitor-Id", stringAt(client, "visitorData"))
 	req.Header.Set("X-Youtube-Client-Version", stringAt(client, "clientVersion"))
@@ -215,7 +216,7 @@ func (r *requester) newSession(ctx context.Context) session {
 		return fallback
 	}
 	req.Header.Set("Accept-Language", "zh-CN")
-	req.Header.Set("User-Agent", innertubeUserAgent)
+	req.Header.Set("User-Agent", firstNonEmpty(r.userAgent, innertubeUserAgent))
 	req.Header.Set("Accept", "*/*")
 	req.Header.Set("Referer", innertubeBase+"/sw.js")
 	cookies := "PREF=tz=" + strings.Replace(zone, "/", ".", 1) + "; VISITOR_INFO1_LIVE=" + randomString(11)

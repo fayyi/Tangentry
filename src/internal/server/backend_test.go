@@ -87,7 +87,7 @@ func TestPlatformLoginRouteStartsOnlySupportedDesktopPlatform(t *testing.T) {
 ` || gotPlatform != "douyin" {
 		t.Fatalf("successful platform login: code=%d body=%q platform=%q", response.Code, response.Body.String(), gotPlatform)
 	}
-	response = request(`{"platform":"bilibili"}`)
+	response = request(`{"platform":"xiaoyuzhou"}`)
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("unsupported platform status = %d, want %d", response.Code, http.StatusBadRequest)
 	}

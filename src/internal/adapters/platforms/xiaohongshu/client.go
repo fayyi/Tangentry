@@ -9,11 +9,12 @@ import (
 )
 
 type Client struct {
-	HTTP     *http.Client
-	Cookie   func(string) string
-	mu       sync.Mutex
-	locators map[string]string
-	order    []string
+	HTTP      *http.Client
+	Cookie    func(string) string
+	UserAgent func(string) string
+	mu        sync.Mutex
+	locators  map[string]string
+	order     []string
 }
 
 // Keep successful, unsaved video locators bounded for explicit transcription in

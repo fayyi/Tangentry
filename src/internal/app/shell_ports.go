@@ -104,10 +104,16 @@ func (p PlatformCredentialsPort) PrepareBrowserLogin(platform string) func([]*ht
 		return func([]*http.Cookie, string) error { return credentials.ErrStorage }
 	}
 	switch platform {
+	case "bilibili":
+		return p.store.PrepareBilibiliBrowserLogin()
 	case "linuxdo":
 		return p.store.PrepareLinuxdoBrowserLogin()
 	case "douyin":
 		return p.store.PrepareDouyinBrowserLogin()
+	case "xiaohongshu":
+		return p.store.PrepareXiaohongshuBrowserLogin()
+	case "youtube":
+		return p.store.PrepareYouTubeBrowserLogin()
 	default:
 		return func([]*http.Cookie, string) error { return credentials.ErrInvalid }
 	}

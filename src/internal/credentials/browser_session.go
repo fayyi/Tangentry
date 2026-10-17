@@ -11,6 +11,10 @@ import (
 // normalized. In particular, tracking and unrelated account cookies are not
 // copied from the WebView's full cookie jar into the credential store.
 var browserCookieNames = map[string]map[string]bool{
+	"bilibili": {
+		"SESSDATA": true, "bili_jct": true, "DedeUserID": true, "DedeUserID__ckMd5": true,
+		"buvid3": true, "buvid4": true, "buvid_fp": true, "b_nut": true, "sid": true,
+	},
 	"linuxdo": {
 		"_t": true, "_forum_session": true, "cf_clearance": true, "__cf_bm": true,
 	},
@@ -21,16 +25,33 @@ var browserCookieNames = map[string]map[string]bool{
 		"csrf_session_id": true, "uid_tt": true, "uid_tt_ss": true, "__ac_nonce": true,
 		"__ac_signature": true,
 	},
+	"xiaohongshu": {
+		"web_session": true, "a1": true, "webId": true, "gid": true, "abRequestId": true,
+		"xsecappid": true, "webBuild": true, "customerClientId": true,
+	},
+	"youtube": {
+		"SID": true, "HSID": true, "SSID": true, "APISID": true, "SAPISID": true,
+		"__Secure-1PAPISID": true, "__Secure-3PAPISID": true, "LOGIN_INFO": true,
+		"__Secure-1PSID": true, "__Secure-3PSID": true, "__Secure-1PSIDTS": true, "__Secure-3PSIDTS": true,
+		"__Secure-1PSIDCC": true, "__Secure-3PSIDCC": true, "__Secure-1PSIDRTS": true, "__Secure-3PSIDRTS": true,
+		"PREF": true, "VISITOR_INFO1_LIVE": true, "YSC": true, "GPS": true, "__Secure-YEC": true,
+	},
 }
 
 // PrepareBrowserLogin selects the platform-specific browser cookie policy.
 // The returned saver is revision-bound and never exposes the persisted jar.
 func (s *Store) PrepareBrowserLogin(platform string) func([]*http.Cookie, string) error {
 	switch platform {
+	case "bilibili":
+		return s.PrepareBilibiliBrowserLogin()
 	case "linuxdo":
 		return s.PrepareLinuxdoBrowserLogin()
 	case "douyin":
 		return s.PrepareDouyinBrowserLogin()
+	case "xiaohongshu":
+		return s.PrepareXiaohongshuBrowserLogin()
+	case "youtube":
+		return s.PrepareYouTubeBrowserLogin()
 	default:
 		return func([]*http.Cookie, string) error { return ErrInvalid }
 	}
@@ -52,13 +73,15 @@ func browserJar(platform string, cookies []*http.Cookie, userAgent string) (stri
 		if cookie == nil || !allowed[cookie.Name] || cookie.Value == "" || cookie.Valid() != nil || !cookie.Secure || cookie.MaxAge < 0 || !cookie.Expires.IsZero() && !cookie.Expires.After(now) {
 			continue
 		}
-		if cookie.Domain != "" && !browserDomainAllowed(root, cookie.Domain) || cookie.Path != "" && !strings.HasPrefix(cookie.Path, "/") {
+		if cookie.Domain != "" && !browserCookieDomainAllowed(platform, root, cookie.Domain) || cookie.Path != "" && !strings.HasPrefix(cookie.Path, "/") {
 			continue
 		}
-		if seen[cookie.Name] {
+		domainKey := strings.ToLower(strings.TrimSpace(cookie.Domain))
+		key := domainKey + "\x00" + cookie.Path + "\x00" + cookie.Name
+		if seen[key] {
 			continue
 		}
-		seen[cookie.Name] = true
+		seen[key] = true
 		expires := int64(0)
 		if !cookie.Expires.IsZero() {
 			expires = cookie.Expires.Unix()
@@ -100,6 +123,15 @@ func browserDomainAllowed(root, domain string) bool {
 	return domain == root || strings.HasSuffix(domain, "."+root)
 }
 
+func browserCookieDomainAllowed(platform, root, domain string) bool {
+	if browserDomainAllowed(root, domain) {
+		return true
+	}
+	// Google account cookies are needed to establish a YouTube session, but
+	// remain domain-scoped and are never sent to YouTube by Header.
+	return platform == "youtube" && browserDomainAllowed("google.com", domain)
+}
+
 func browserJarHas(jar, name string) bool {
 	for _, line := range strings.Split(jar, "\n") {
 		if strings.HasPrefix(line, "#") || line == "" {
@@ -134,5 +166,59 @@ func (s *Store) PrepareDouyinBrowserLogin() func([]*http.Cookie, string) error {
 			return ErrChanged
 		}
 		return s.persistCredentialLocked("douyin", entry{Jar: jar, UserAgent: userAgent, UpdatedAt: time.Now().Unix()})
+	}
+}
+
+func (s *Store) PrepareBilibiliBrowserLogin() func([]*http.Cookie, string) error {
+	s.mu.RLock()
+	revision := s.revisions["bilibili"]
+	s.mu.RUnlock()
+	return func(cookies []*http.Cookie, userAgent string) error {
+		jar, err := browserJar("bilibili", cookies, userAgent)
+		if err != nil || !browserJarHas(jar, "SESSDATA") {
+			return ErrInvalid
+		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.revisions["bilibili"] != revision {
+			return ErrChanged
+		}
+		return s.persistCredentialLocked("bilibili", entry{Jar: jar, UserAgent: userAgent, UpdatedAt: time.Now().Unix()})
+	}
+}
+
+func (s *Store) PrepareXiaohongshuBrowserLogin() func([]*http.Cookie, string) error {
+	s.mu.RLock()
+	revision := s.revisions["xiaohongshu"]
+	s.mu.RUnlock()
+	return func(cookies []*http.Cookie, userAgent string) error {
+		jar, err := browserJar("xiaohongshu", cookies, userAgent)
+		if err != nil || !browserJarHas(jar, "web_session") && !browserJarHas(jar, "a1") {
+			return ErrInvalid
+		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.revisions["xiaohongshu"] != revision {
+			return ErrChanged
+		}
+		return s.persistCredentialLocked("xiaohongshu", entry{Jar: jar, UserAgent: userAgent, UpdatedAt: time.Now().Unix()})
+	}
+}
+
+func (s *Store) PrepareYouTubeBrowserLogin() func([]*http.Cookie, string) error {
+	s.mu.RLock()
+	revision := s.revisions["youtube"]
+	s.mu.RUnlock()
+	return func(cookies []*http.Cookie, userAgent string) error {
+		jar, err := browserJar("youtube", cookies, userAgent)
+		if err != nil || !browserJarHas(jar, "SID") && !browserJarHas(jar, "__Secure-1PSID") && !browserJarHas(jar, "__Secure-3PSID") && !browserJarHas(jar, "LOGIN_INFO") && !browserJarHas(jar, "SAPISID") && !browserJarHas(jar, "__Secure-1PAPISID") && !browserJarHas(jar, "__Secure-3PAPISID") {
+			return ErrInvalid
+		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.revisions["youtube"] != revision {
+			return ErrChanged
+		}
+		return s.persistCredentialLocked("youtube", entry{Jar: jar, UserAgent: userAgent, UpdatedAt: time.Now().Unix()})
 	}
 }

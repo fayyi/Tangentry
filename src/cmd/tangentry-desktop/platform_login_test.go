@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestPlatformLoginURLAllowlist(t *testing.T) {
 	tests := []struct {
@@ -19,6 +22,13 @@ func TestPlatformLoginURLAllowlist(t *testing.T) {
 		{"douyin", "https://www.iesdouyin.com/share", true},
 		{"douyin", "https://douyin.com.evil.example/", false},
 		{"douyin", "https://www.douyin.com:443/", false},
+		{"bilibili", "https://passport.bilibili.com/login", true},
+		{"bilibili", "https://evil.bilibili.com.evil.example/", false},
+		{"xiaohongshu", "https://www.xiaohongshu.com/explore", true},
+		{"xiaohongshu", "https://edith.xiaohongshu.com/api", true},
+		{"youtube", "https://accounts.google.com/signin", true},
+		{"youtube", "https://www.youtube.com/", true},
+		{"youtube", "https://mail.google.com/", false},
 	}
 	for _, test := range tests {
 		t.Run(test.platform+"/"+test.url, func(t *testing.T) {
@@ -26,5 +36,16 @@ func TestPlatformLoginURLAllowlist(t *testing.T) {
 				t.Fatalf("platformLoginURLAllowed(%q, %q) = %v, want %v", test.url, test.platform, got, test.allowed)
 			}
 		})
+	}
+}
+
+func TestPlatformLoginOriginsAndCookieDomains(t *testing.T) {
+	for _, platform := range []string{"bilibili", "linuxdo", "douyin", "xiaohongshu", "youtube"} {
+		if origin, ok := platformLoginOrigin(platform); !ok || !strings.HasPrefix(origin, "https://") {
+			t.Fatalf("origin unavailable for %s: %q", platform, origin)
+		}
+		if len(platformLoginCookieDomains(platform)) == 0 {
+			t.Fatalf("cookie domains unavailable for %s", platform)
+		}
 	}
 }

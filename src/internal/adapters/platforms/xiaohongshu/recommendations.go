@@ -30,7 +30,11 @@ func (c *Client) Recommendations(ctx context.Context) (discovery.Feed, error) {
 	client.Jar = nil
 	client.CheckRedirect = func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, homepage, nil)
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+	userAgent := "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+	if c.UserAgent != nil && c.UserAgent(homepage) != "" {
+		userAgent = c.UserAgent(homepage)
+	}
+	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("Cookie", c.Cookie(homepage))
 	res, err := client.Do(req)
 	if err != nil {

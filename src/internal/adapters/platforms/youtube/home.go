@@ -29,8 +29,9 @@ type HomeResult struct {
 // It keeps no session cache, player code or OAuth tokens; the caller supplies
 // the scoped cookie header for each request.
 type Home struct {
-	HTTP *http.Client
-	Now  func() time.Time
+	HTTP      *http.Client
+	Now       func() time.Time
+	UserAgent string
 }
 
 // NewHome returns a client that refuses redirects, so cookies never leave the
@@ -94,7 +95,7 @@ func (h *Home) Fetch(ctx context.Context, cookie string, continuation json.RawMe
 	if h.Now != nil {
 		now = h.Now
 	}
-	r := &requester{http: h.HTTP, cookie: cookie, now: now, code: "network"}
+	r := &requester{http: h.HTTP, cookie: cookie, now: now, code: "network", userAgent: h.UserAgent}
 	var (
 		s       session
 		entries []HomeEntry
