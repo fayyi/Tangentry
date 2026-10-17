@@ -3,10 +3,8 @@ package bilibili
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"html"
 	"net/url"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -155,16 +153,9 @@ func (c *Client) Browse(ctx context.Context, kind string, page int, cursor strin
 	return result, nil
 }
 
-// The web feed no longer honours type=video, so a page of follow updates can
-// be all images or articles. Keep reading a few pages until there are enough
-// videos to show, and explain an empty result instead of a bare "none".
-const (
-	dynamicFeatures   = "itemOpusStyle,listOnlyfans,opusBigCover,onlyfansVote,decorationCard,onlyfansAssetsV2,forwardListHidden,ugcDelete"
-	dynamicTarget     = 6
-	dynamicMaxBatches = 4
-)
+const dynamicFeatures = "itemOpusStyle,listOnlyfans,opusBigCover,onlyfansVote,decorationCard,onlyfansAssetsV2,forwardListHidden,ugcDelete"
 
-var dynamicKindNames = map[string]string{"DYNAMIC_TYPE_DRAW": "图文", "DYNAMIC_TYPE_WORD": "文字", "DYNAMIC_TYPE_ARTICLE": "专栏", "DYNAMIC_TYPE_FORWARD": "转发", "DYNAMIC_TYPE_LIVE_RCMD": "直播", "DYNAMIC_TYPE_PGC": "番剧", "DYNAMIC_TYPE_COURSES_SEASON": "课程", "DYNAMIC_TYPE_MUSIC": "音频", "DYNAMIC_TYPE_COMMON_SQUARE": "装扮/活动"}
+var dynamicKindNames = map[string]string{"DYNAMIC_TYPE_DRAW": "图文", "DYNAMIC_TYPE_WORD": "文字", "DYNAMIC_TYPE_ARTICLE": "专栏", "DYNAMIC_TYPE_FORWARD": "转发", "DYNAMIC_TYPE_LIVE_RCMD": "直播", "DYNAMIC_TYPE_PGC": "番剧", "DYNAMIC_TYPE_COURSES": "课程", "DYNAMIC_TYPE_COURSES_SEASON": "课程", "DYNAMIC_TYPE_MUSIC": "音频", "DYNAMIC_TYPE_COMMON_SQUARE": "装扮/活动"}
 
 func (c *Client) dynamic(ctx context.Context, page int, cursor string) (BrowsePage, error) {
 	if page > 1 && cursor == "" {
@@ -175,69 +166,43 @@ func (c *Client) dynamic(ctx context.Context, page int, cursor string) (BrowsePa
 		return BrowsePage{}, err
 	}
 	result := BrowsePage{Items: []content.Item{}, Page: page, SourceTitle: "关注动态"}
-	seen, skipped := map[string]bool{}, map[string]int{}
-	offset, more, scanned := cursor, true, 0
-	for batch := 0; batch < dynamicMaxBatches && more && len(result.Items) < dynamicTarget; batch++ {
-		params := url.Values{"timezone_offset": {"-480"}, "type": {"video"}, "platform": {"web"}, "features": {dynamicFeatures}, "web_location": {"333.1365"}}
-		if offset != "" {
-			params.Set("offset", offset)
-		}
-		sign(params, key, time.Now().Unix())
-		var data struct {
-			Items   []json.RawMessage `json:"items"`
-			Offset  string            `json:"offset"`
-			HasMore json.RawMessage   `json:"has_more"`
-		}
-		err := c.getFrom(ctx, c.baseURL, "https://t.bilibili.com/", "/x/polymer/web-dynamic/v1/feed/all", params, &data, false)
-		if err == nil && (data.Items == nil || len(data.Items) > 100 || len(data.Offset) > 256) {
-			err = discovery.ErrUnavailable
-		}
-		if err != nil {
-			if batch > 0 {
-				break
-			}
-			return BrowsePage{}, err
-		}
-		scanned += len(data.Items)
-		for _, raw := range data.Items {
-			item, ok := dynamicVideo(raw, 0)
-			if !ok {
-				var head struct {
-					Type string `json:"type"`
-				}
-				_ = json.Unmarshal(raw, &head)
-				skipped[head.Type]++
-				continue
-			}
-			if !seen[item.ID] {
-				result.Items = append(result.Items, item)
-				seen[item.ID] = true
-			}
-		}
-		more = dynamicHasMore(data.HasMore) && data.Offset != "" && data.Offset != offset
-		offset = data.Offset
+	params := url.Values{"timezone_offset": {"-480"}, "type": {"all"}, "platform": {"web"}, "features": {dynamicFeatures}, "web_location": {"333.1365"}}
+	if cursor != "" {
+		params.Set("offset", cursor)
 	}
-	result.HasMore, result.Next = more, offset
+	sign(params, key, time.Now().Unix())
+	var data struct {
+		Items   []json.RawMessage `json:"items"`
+		Offset  string            `json:"offset"`
+		HasMore json.RawMessage   `json:"has_more"`
+	}
+	if err := c.getFrom(ctx, c.baseURL, "https://t.bilibili.com/", "/x/polymer/web-dynamic/v1/feed/all", params, &data, false); err != nil {
+		return BrowsePage{}, err
+	}
+	if data.Items == nil || len(data.Items) > 100 || len(data.Offset) > 256 {
+		return BrowsePage{}, discovery.ErrUnavailable
+	}
+	seen := map[string]bool{}
+	for _, raw := range data.Items {
+		item, ok := dynamicItem(raw, 0)
+		if ok && !seen[item.ID] {
+			result.Items = append(result.Items, item)
+			seen[item.ID] = true
+		}
+	}
+	result.HasMore = dynamicHasMore(data.HasMore) && data.Offset != "" && data.Offset != cursor
+	result.Next = data.Offset
 	if len(result.Items) == 0 {
-		result.Notice = dynamicNotice(scanned, skipped, more)
+		result.Notice = dynamicNotice(len(data.Items), result.HasMore)
 	}
 	return result, nil
 }
 
-func dynamicNotice(scanned int, skipped map[string]int, more bool) string {
+func dynamicNotice(scanned int, more bool) string {
 	if scanned == 0 {
 		return "B站没有返回任何关注动态。请确认账号已关注 UP 主；若刚登录，可在设置里重新扫码登录后再试。"
 	}
-	kinds := make([]string, 0, len(skipped))
-	for kind, count := range skipped {
-		name := dynamicKindNames[kind]
-		if name == "" {
-			name = "其他"
-		}
-		kinds = append(kinds, fmt.Sprintf("%s %d", name, count))
-	}
-	sort.Strings(kinds)
-	notice := fmt.Sprintf("已查看最近 %d 条关注动态，其中没有视频投稿（%s）。", scanned, strings.Join(kinds, "、"))
+	notice := "暂时没有可显示的关注动态。"
 	if more {
 		notice += "可点「继续浏览」查看更早的动态。"
 	}
@@ -293,99 +258,329 @@ func (f *flexCount) UnmarshalJSON(raw []byte) error {
 }
 
 func dynamicVideo(raw json.RawMessage, depth int) (content.Item, bool) {
+	item, ok := dynamicItem(raw, depth)
+	return item, ok && item.Kind == "video"
+}
+
+// dynamicItem parses one feed entry without binding the whole payload to a
+// rigid struct. Bilibili changes number/string representations between entry
+// types, so each field is read independently and malformed fields are ignored.
+func dynamicItem(raw json.RawMessage, depth int) (content.Item, bool) {
 	if depth > 2 {
 		return content.Item{}, false
 	}
-	var data struct {
-		Type      json.RawMessage `json:"type"`
-		BVID      string          `json:"bvid"`
-		Title     string          `json:"title"`
-		Cover     string          `json:"cover"`
-		JumpURL   string          `json:"jump_url"`
-		UID       int64           `json:"uid"`
-		Published int64           `json:"pub_ts"`
-		Duration  string          `json:"duration_text"`
-		ViewCount flexCount       `json:"view_count"`
-		Stat      struct {
-			View flexCount `json:"view"`
-			Play flexCount `json:"play"`
-		} `json:"stat"`
-		Author struct {
-			MID  int64  `json:"mid"`
-			Name string `json:"name"`
-			Face string `json:"face"`
-		} `json:"author"`
-		Original json.RawMessage `json:"orig"`
-		Modules  struct {
-			Author struct {
-				MID       int64  `json:"mid"`
-				Name      string `json:"name"`
-				Face      string `json:"face"`
-				Published int64  `json:"pub_ts"`
-			} `json:"module_author"`
-			Dynamic struct {
-				Major struct {
-					Archive struct {
-						BVID        string    `json:"bvid"`
-						Title       string    `json:"title"`
-						Cover       string    `json:"cover"`
-						Description string    `json:"desc"`
-						Duration    string    `json:"duration_text"`
-						ViewCount   flexCount `json:"view_count"`
-						Stat        struct {
-							View flexCount `json:"view"`
-							Play flexCount `json:"play"`
-						} `json:"stat"`
-					} `json:"archive"`
-				} `json:"major"`
-			} `json:"module_dynamic"`
-		} `json:"modules"`
-	}
-	if json.Unmarshal(raw, &data) != nil {
+	obj := rawObject(raw)
+	if obj == nil {
 		return content.Item{}, false
 	}
-	if string(data.Type) == "1" || string(data.Type) == `"1"` || string(data.Type) == `"DYNAMIC_TYPE_FORWARD"` {
-		return dynamicVideo(data.Original, depth+1)
+	typ := rawString(obj["type"])
+	modules := rawObject(obj["modules"])
+	author := rawObject(modules["module_author"])
+	if author == nil {
+		author = rawObject(obj["author"])
 	}
-	v := browseVideo{}
-	if string(data.Type) == "8" || string(data.Type) == `"8"` {
-		v.BVID = data.BVID
-		if v.BVID == "" {
-			jump := data.JumpURL
-			if strings.HasPrefix(jump, "//") {
-				jump = "https:" + jump
+	authorID := rawInt64(author["mid"])
+	authorName, authorFace := rawString(author["name"]), secureImage(rawString(author["face"]))
+	published := rawInt64(author["pub_ts"])
+	if published == 0 {
+		published = rawInt64(obj["pub_ts"])
+	}
+	publishedText := rawString(author["pub_time"])
+	dynamic := rawObject(modules["module_dynamic"])
+	desc := dynamicText(rawObject(dynamic["desc"]))
+	if desc == "" {
+		desc = rawString(dynamic["desc"])
+	}
+	id := rawString(obj["id_str"])
+	if id == "" {
+		id = rawString(obj["id"])
+	}
+	baseURL := ""
+	major := rawObject(dynamic["major"])
+	if major == nil {
+		major = map[string]json.RawMessage{}
+	}
+	if (typ == "8" || typ == "DYNAMIC_TYPE_AV") && rawString(major["bvid"]) == "" {
+		if rawString(obj["bvid"]) != "" {
+			major = obj
+		}
+	}
+	for _, key := range []string{"archive", "article", "draw", "common", "live_rcmd", "pgc", "ugc_season", "courses", "courses_season", "music", "opus", "live", "none", "upower_common"} {
+		if value := rawObject(major[key]); value != nil {
+			major = value
+			break
+		}
+	}
+	if typ == "DYNAMIC_TYPE_LIVE_RCMD" {
+		if nested := rawObject(json.RawMessage(rawString(major["content"]))); nested != nil {
+			for _, key := range []string{"live_play_info", "live_info", "room_info"} {
+				if info := rawObject(nested[key]); info != nil {
+					for _, field := range []string{"title", "jump_url", "cover", "desc", "id"} {
+						if len(major[field]) == 0 || string(major[field]) == "null" {
+							major[field] = info[field]
+						}
+					}
+					break
+				}
 			}
-			kind, id, err := discovery.ParseQuery(jump)
-			if err == nil && kind == "video" {
-				v.BVID = id
+		}
+	}
+	if jump := rawString(major["jump_url"]); jump != "" {
+		baseURL = dynamicURL(jump)
+	}
+	if baseURL == "" {
+		baseURL = "https://t.bilibili.com/" + id
+	}
+
+	if typ == "1" || typ == "DYNAMIC_TYPE_FORWARD" {
+		forwardText := desc
+		if original, exists := obj["orig"]; exists && string(original) != "null" && len(original) > 0 {
+			if item, ok := dynamicItem(original, depth+1); ok {
+				if forwardText != "" {
+					if strings.TrimSpace(item.Description) == "" {
+						item.Description = item.Title
+					}
+					item.Description = strings.TrimSpace(forwardText + "\n\n转发内容：" + item.Description)
+				}
+				if published > 0 {
+					item.PublishedAt = published
+				}
+				if publishedText != "" {
+					item.PublishedText = publishedText
+				}
+				if authorName != "" {
+					item.Author, item.AuthorID, item.AuthorAvatarURL = authorName, strconv.FormatInt(authorID, 10), authorFace
+				}
+				return item, content.Validate(item) == nil
 			}
 		}
-		v.Title, v.Picture, v.Duration, v.Published = data.Title, data.Cover, duration(data.Duration), data.Published
-		v.ViewCount = int64(data.ViewCount)
-		if v.ViewCount == 0 {
-			v.ViewCount = int64(data.Stat.View)
+		typ = "DYNAMIC_TYPE_WORD"
+	}
+
+	if typ == "8" || typ == "DYNAMIC_TYPE_AV" {
+		bvid := rawString(major["bvid"])
+		if bvid == "" {
+			bvid = rawString(obj["bvid"])
 		}
-		if v.ViewCount == 0 {
-			v.ViewCount = int64(data.Stat.Play)
+		if bvid == "" {
+			if kind, value, err := discovery.ParseQuery(baseURL); err == nil && kind == "video" {
+				bvid = value
+			}
 		}
-		v.Owner.MID, v.Owner.Name, v.Owner.Face = data.Author.MID, data.Author.Name, data.Author.Face
-		if v.Owner.MID <= 0 {
-			v.Owner.MID = data.UID
+		if bvid == "" {
+			return content.Item{}, false
+		}
+		stat := rawObject(major["stat"])
+		viewCount := flexCountValue(stat["view"])
+		if viewCount == 0 {
+			viewCount = flexCountValue(stat["play"])
+		}
+		if viewCount == 0 {
+			viewCount = flexCountValue(major["view_count"])
+		}
+		title := html.UnescapeString(rawString(major["title"]))
+		item := content.Item{ID: "bilibili:" + bvid, Platform: "bilibili", PlatformID: bvid, Kind: "video", Title: title, Author: authorName, AuthorID: strconv.FormatInt(authorID, 10), AuthorAvatarURL: authorFace, URL: "https://www.bilibili.com/video/" + bvid + "/", ThumbnailURL: browseImage(rawString(major["cover"])), Description: rawString(major["desc"]), DurationSeconds: duration(rawString(major["duration_text"])), PublishedAt: published, PublishedText: publishedText, ViewCount: viewCount}
+		if item.AuthorID == "0" {
+			item.AuthorID = ""
+		}
+		if desc != "" {
+			item.Description = strings.TrimSpace(strings.TrimSpace(desc) + "\n\n" + item.Description)
+		}
+		return item, content.Validate(item) == nil
+	}
+
+	itemID := id
+	if itemID == "" {
+		return content.Item{}, false
+	}
+	text := desc
+	kind := "article"
+	var images []content.Image
+	title := rawString(major["title"])
+	thumbnail := ""
+	if typ == "DYNAMIC_TYPE_DRAW" {
+		kind = "image"
+		drawItems := rawArray(major["items"])
+		for _, value := range drawItems {
+			entry := rawObject(value)
+			if entry == nil {
+				continue
+			}
+			imageURL := browseImage(rawString(entry["src"]))
+			if imageURL == "" {
+				continue
+			}
+			image := content.Image{URL: imageURL, Width: int(rawInt64(entry["width"])), Height: int(rawInt64(entry["height"]))}
+			images = append(images, image)
+		}
+		if len(images) > 0 {
+			thumbnail = images[0].URL
+		}
+		if title == "" {
+			title = firstLine(text)
+		}
+	} else if typ == "DYNAMIC_TYPE_ARTICLE" {
+		thumbnail = browseImage(firstString(rawArray(major["covers"])))
+		if title == "" {
+			title = firstLine(text)
 		}
 	} else {
-		a := data.Modules.Dynamic.Major.Archive
-		v.BVID, v.Title, v.Picture, v.Description, v.Duration = a.BVID, a.Title, a.Cover, a.Description, duration(a.Duration)
-		v.ViewCount = int64(a.ViewCount)
-		if v.ViewCount == 0 {
-			v.ViewCount = int64(a.Stat.View)
+		if title == "" {
+			title = rawString(major["sub_title"])
 		}
-		if v.ViewCount == 0 {
-			v.ViewCount = int64(a.Stat.Play)
+		if title == "" {
+			title = rawString(rawObject(major["summary"])["text"])
 		}
-		v.Published = data.Modules.Author.Published
-		v.Owner.MID, v.Owner.Name, v.Owner.Face = data.Modules.Author.MID, data.Modules.Author.Name, data.Modules.Author.Face
+		if title == "" {
+			title = firstLine(text)
+		}
 	}
-	return v.item()
+	if text == "" {
+		text = rawString(rawObject(major["summary"])["text"])
+	}
+	if pics := rawArray(major["pics"]); len(pics) > 0 {
+		for _, value := range pics {
+			entry := rawObject(value)
+			if entry == nil {
+				continue
+			}
+			imageURL := browseImage(rawString(entry["src"]))
+			if imageURL == "" {
+				imageURL = browseImage(rawString(entry["img_src"]))
+			}
+			if imageURL == "" {
+				continue
+			}
+			images = append(images, content.Image{URL: imageURL, Width: int(rawInt64(entry["width"])), Height: int(rawInt64(entry["height"]))})
+		}
+		if thumbnail == "" && len(images) > 0 {
+			thumbnail = images[0].URL
+		}
+	}
+	if thumbnail == "" {
+		thumbnail = browseImage(rawString(major["cover"]))
+	}
+	if title == "" {
+		title = dynamicKindTitle(typ)
+	}
+	if text == "" {
+		text = rawString(major["desc"])
+	}
+	if len(images) > 50 {
+		images = images[:50]
+	}
+	blocks := make([]content.ArticleBlock, 0, 1+len(images))
+	if strings.TrimSpace(text) != "" {
+		blocks = append(blocks, content.ArticleBlock{Kind: "paragraph", Text: strings.TrimSpace(text)})
+	}
+	for _, image := range images {
+		blocks = append(blocks, content.ArticleBlock{Kind: "image", URL: image.URL, Width: image.Width, Height: image.Height})
+	}
+	item := content.Item{ID: "bilibili:dynamic:" + itemID, Platform: "bilibili", PlatformID: "dynamic:" + itemID, Kind: kind, Title: html.UnescapeString(title), Author: authorName, AuthorID: strconv.FormatInt(authorID, 10), AuthorAvatarURL: authorFace, URL: baseURL, ThumbnailURL: thumbnail, Description: strings.TrimSpace(text), PreviewText: strings.TrimSpace(text), ArticleBlocks: blocks, Images: images, PublishedAt: published, PublishedText: publishedText}
+	if item.AuthorID == "0" {
+		item.AuthorID = ""
+	}
+	if item.Title == "" {
+		item.Title = dynamicKindTitle(typ)
+	}
+	return item, content.Validate(item) == nil
+}
+
+func rawObject(raw json.RawMessage) map[string]json.RawMessage {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var value map[string]json.RawMessage
+	if json.Unmarshal(raw, &value) != nil {
+		return nil
+	}
+	return value
+}
+
+func rawArray(raw json.RawMessage) []json.RawMessage {
+	var value []json.RawMessage
+	if json.Unmarshal(raw, &value) != nil {
+		return nil
+	}
+	return value
+}
+
+func rawString(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		return strings.TrimSpace(text)
+	}
+	var number json.Number
+	if json.Unmarshal(raw, &number) == nil {
+		return number.String()
+	}
+	return ""
+}
+
+func rawInt64(raw json.RawMessage) int64 {
+	text := rawString(raw)
+	if text == "" {
+		return 0
+	}
+	value, _ := strconv.ParseInt(text, 10, 64)
+	return value
+}
+
+func flexCountValue(raw json.RawMessage) int64 {
+	var value flexCount
+	_ = value.UnmarshalJSON(raw)
+	return int64(value)
+}
+
+func firstString(values []json.RawMessage) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return rawString(values[0])
+}
+
+func dynamicText(value map[string]json.RawMessage) string {
+	if value == nil {
+		return ""
+	}
+	return rawString(value["text"])
+}
+
+func dynamicURL(raw string) string {
+	if strings.HasPrefix(raw, "//") {
+		raw = "https:" + raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.User != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Hostname() == "" {
+		return ""
+	}
+	return raw
+}
+
+func firstLine(text string) string {
+	text = strings.TrimSpace(text)
+	if index := strings.IndexByte(text, '\n'); index >= 0 {
+		text = text[:index]
+	}
+	runes := []rune(text)
+	return strings.TrimSpace(string(runes[:minInt(len(runes), 80)]))
+}
+
+func dynamicKindTitle(typ string) string {
+	if name := dynamicKindNames[typ]; name != "" {
+		return "B站" + name + "动态"
+	}
+	return "B站关注动态"
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func (c *Client) live(ctx context.Context, page, area int) (BrowsePage, error) {
