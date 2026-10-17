@@ -155,7 +155,7 @@ func (c *Client) Browse(ctx context.Context, kind string, page int, cursor strin
 
 const dynamicFeatures = "itemOpusStyle,listOnlyfans,opusBigCover,onlyfansVote,decorationCard,onlyfansAssetsV2,forwardListHidden,ugcDelete"
 
-var dynamicKindNames = map[string]string{"DYNAMIC_TYPE_DRAW": "图文", "DYNAMIC_TYPE_WORD": "文字", "DYNAMIC_TYPE_ARTICLE": "专栏", "DYNAMIC_TYPE_FORWARD": "转发", "DYNAMIC_TYPE_LIVE_RCMD": "直播", "DYNAMIC_TYPE_PGC": "番剧", "DYNAMIC_TYPE_COURSES_SEASON": "课程", "DYNAMIC_TYPE_MUSIC": "音频", "DYNAMIC_TYPE_COMMON_SQUARE": "装扮/活动"}
+var dynamicKindNames = map[string]string{"DYNAMIC_TYPE_DRAW": "图文", "DYNAMIC_TYPE_WORD": "文字", "DYNAMIC_TYPE_ARTICLE": "专栏", "DYNAMIC_TYPE_FORWARD": "转发", "DYNAMIC_TYPE_LIVE_RCMD": "直播", "DYNAMIC_TYPE_PGC": "番剧", "DYNAMIC_TYPE_COURSES": "课程", "DYNAMIC_TYPE_COURSES_SEASON": "课程", "DYNAMIC_TYPE_MUSIC": "音频", "DYNAMIC_TYPE_COMMON_SQUARE": "装扮/活动"}
 
 func (c *Client) dynamic(ctx context.Context, page int, cursor string) (BrowsePage, error) {
 	if page > 1 && cursor == "" {
@@ -305,10 +305,24 @@ func dynamicItem(raw json.RawMessage, depth int) (content.Item, bool) {
 			major = obj
 		}
 	}
-	for _, key := range []string{"archive", "article", "draw", "common", "live_rcmd", "pgc", "courses_season", "music"} {
+	for _, key := range []string{"archive", "article", "draw", "common", "live_rcmd", "pgc", "ugc_season", "courses", "courses_season", "music", "opus", "live", "none", "upower_common"} {
 		if value := rawObject(major[key]); value != nil {
 			major = value
 			break
+		}
+	}
+	if typ == "DYNAMIC_TYPE_LIVE_RCMD" {
+		if nested := rawObject(json.RawMessage(rawString(major["content"]))); nested != nil {
+			for _, key := range []string{"live_play_info", "live_info", "room_info"} {
+				if info := rawObject(nested[key]); info != nil {
+					for _, field := range []string{"title", "jump_url", "cover", "desc", "id"} {
+						if len(major[field]) == 0 || string(major[field]) == "null" {
+							major[field] = info[field]
+						}
+					}
+					break
+				}
+			}
 		}
 	}
 	if jump := rawString(major["jump_url"]); jump != "" {
@@ -412,8 +426,39 @@ func dynamicItem(raw json.RawMessage, depth int) (content.Item, bool) {
 		}
 	} else {
 		if title == "" {
+			title = rawString(major["sub_title"])
+		}
+		if title == "" {
+			title = rawString(rawObject(major["summary"])["text"])
+		}
+		if title == "" {
 			title = firstLine(text)
 		}
+	}
+	if text == "" {
+		text = rawString(rawObject(major["summary"])["text"])
+	}
+	if pics := rawArray(major["pics"]); len(pics) > 0 {
+		for _, value := range pics {
+			entry := rawObject(value)
+			if entry == nil {
+				continue
+			}
+			imageURL := browseImage(rawString(entry["src"]))
+			if imageURL == "" {
+				imageURL = browseImage(rawString(entry["img_src"]))
+			}
+			if imageURL == "" {
+				continue
+			}
+			images = append(images, content.Image{URL: imageURL, Width: int(rawInt64(entry["width"])), Height: int(rawInt64(entry["height"]))})
+		}
+		if thumbnail == "" && len(images) > 0 {
+			thumbnail = images[0].URL
+		}
+	}
+	if thumbnail == "" {
+		thumbnail = browseImage(rawString(major["cover"]))
 	}
 	if title == "" {
 		title = dynamicKindTitle(typ)

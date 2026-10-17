@@ -123,3 +123,25 @@ func TestDynamicVideoCompatibilityWrapperOnlyAcceptsVideos(t *testing.T) {
 		t.Fatal("dynamicVideo compatibility wrapper accepted a non-video item")
 	}
 }
+
+func TestDynamicItemMapsOtherMajorTypesToReadableCards(t *testing.T) {
+	fixtures := []struct {
+		name  string
+		raw   string
+		title string
+		url   string
+		cover string
+	}{
+		{"pgc", `{"type":"DYNAMIC_TYPE_PGC","id_str":"pgc-1","modules":{"module_author":{"mid":1,"name":"番剧作者","pub_ts":1700000400},"module_dynamic":{"major":{"pgc":{"title":"番剧标题","cover":"//i0.hdslb.com/pgc.jpg","jump_url":"//www.bilibili.com/bangumi/play/ep1"}}}}}`, "番剧标题", "https://www.bilibili.com/bangumi/play/ep1", "https://i0.hdslb.com/pgc.jpg"},
+		{"courses", `{"type":"DYNAMIC_TYPE_COURSES","id_str":"course-1","modules":{"module_author":{"mid":2,"name":"课程作者","pub_ts":"1700000500"},"module_dynamic":{"major":{"courses":{"title":"课程标题","sub_title":"课程副标题","cover":"//i0.hdslb.com/course.jpg","jump_url":"//www.bilibili.com/cheese/play/1"}}}}}`, "课程标题", "https://www.bilibili.com/cheese/play/1", "https://i0.hdslb.com/course.jpg"},
+		{"live", `{"type":"DYNAMIC_TYPE_LIVE_RCMD","id_str":"live-1","modules":{"module_author":{"mid":3,"name":"直播作者","pub_ts":1700000600},"module_dynamic":{"major":{"live_rcmd":{"content":"{\"live_play_info\":{\"title\":\"直播标题\",\"cover\":\"//i0.hdslb.com/live.jpg\",\"jump_url\":\"//live.bilibili.com/123\"}}"}}}}}`, "直播标题", "https://live.bilibili.com/123", "https://i0.hdslb.com/live.jpg"},
+	}
+	for _, fixture := range fixtures {
+		t.Run(fixture.name, func(t *testing.T) {
+			item, ok := dynamicItem(json.RawMessage(fixture.raw), 0)
+			if !ok || item.Title != fixture.title || item.URL != fixture.url || item.ThumbnailURL != fixture.cover || item.Author == "" || item.PublishedAt == 0 {
+				t.Fatalf("other dynamic type was not mapped: ok=%t item=%#v", ok, item)
+			}
+		})
+	}
+}
