@@ -65,8 +65,14 @@
 /* Task queue */
 .download-history-toolbar { flex-wrap: wrap; }
 .download-history-toolbar .download-task-filters { margin-left: auto; }
+.download-select-all, .download-row-select { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.download-delete-dialog { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 20px; background: rgb(10 15 20 / .36); }
+.download-delete-panel { width: min(440px, 100%); padding: 20px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--card); box-shadow: var(--shadow-lg); }
+.download-delete-panel h2 { margin: 0 0 8px; font-size: 17px; }
+.download-delete-panel p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.download-delete-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
 .download-list { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--card); overflow: hidden; }
-.download-row { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 12px 14px; }
+.download-row { display: grid; grid-template-columns: 22px 36px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 12px 14px; }
 .download-row + .download-row { border-top: 1px solid var(--line); }
 .download-state-icon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; background: var(--surface); color: var(--muted); }
 .state-completed .download-state-icon { background: var(--accent-soft); color: var(--accent); }
@@ -99,7 +105,7 @@
   .download-awaiting { min-height: 140px; }
   .download-submit { margin: 14px -14px -14px; padding: 12px 14px; }
   .download-submit .button { min-height: 44px; }
-  .download-row { grid-template-columns: 32px minmax(0, 1fr); padding: 12px; }
+  .download-row { grid-template-columns: 22px 32px minmax(0, 1fr); padding: 12px; }
   .download-state-icon { width: 32px; height: 32px; }
   .download-actions { grid-column: 1 / -1; justify-content: flex-end; margin-top: -4px; }
   .download-history-toolbar .download-task-filters { margin-left: 0; order: 1; width: 100%; }

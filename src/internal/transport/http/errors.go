@@ -117,6 +117,7 @@ var errorResponses = []errorResponse{
 	{err: subtitles.ErrFormat, status: http.StatusBadGateway, code: "subtitles_invalid", message: "平台返回的字幕暂时无法读取，请稍后重试。"},
 	{err: downloads.ErrInvalid, status: http.StatusBadRequest, code: "invalid_input", message: "请输入有效的 HTTP / HTTPS 视频或音频链接，并检查下载格式、画质和字幕选择。"},
 	{err: downloads.ErrNotFound, status: http.StatusNotFound, code: "not_found", message: "任务或下载文件不存在，请刷新任务列表。"},
+	{err: downloads.ErrActive, status: http.StatusConflict, code: "download_active", message: "进行中的下载不能删除，请先取消任务。"},
 	{err: downloads.ErrBusy, status: http.StatusConflict, code: "queue_busy", message: "下载队列已满，请等待已有任务完成。"},
 	{err: downloads.ErrToolBusy, status: http.StatusConflict, code: "tool_downloading", message: "正在下载所需工具，请稍候重试；工具设置中可查看进度。"},
 	{err: downloads.ErrTools, status: http.StatusServiceUnavailable, code: "tools_unavailable", message: "下载工具尚未准备好，请在工具设置中检查。"},

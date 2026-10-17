@@ -116,6 +116,56 @@ func (h *mediaHandler) downloadCancel(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (h *mediaHandler) downloadDelete(w http.ResponseWriter, r *http.Request) {
+	if h.media.Downloads == nil {
+		fail(w, downloads.ErrTools)
+		return
+	}
+	removeFiles, ok := decodeDeleteFiles(w, r)
+	if !ok {
+		return
+	}
+	if err := h.media.Downloads.Delete(r.Context(), r.PathValue("id"), removeFiles); err != nil {
+		fail(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *mediaHandler) downloadClear(w http.ResponseWriter, r *http.Request) {
+	if h.media.Downloads == nil {
+		fail(w, downloads.ErrTools)
+		return
+	}
+	removeFiles, ok := decodeDeleteFiles(w, r)
+	if !ok {
+		return
+	}
+	if err := h.media.Downloads.Clear(r.Context(), removeFiles); err != nil {
+		fail(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func decodeDeleteFiles(w http.ResponseWriter, r *http.Request) (bool, bool) {
+	if r.Header.Get("Content-Type") != "application/json" {
+		write(w, http.StatusUnsupportedMediaType, apiError{"invalid_input", "请使用 JSON 确认删除范围。"})
+		return false, false
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1024)
+	var request struct {
+		DeleteFiles bool `json:"deleteFiles"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&request) != nil || decoder.Decode(new(any)) != io.EOF {
+		fail(w, downloads.ErrInvalid)
+		return false, false
+	}
+	return request.DeleteFiles, true
+}
+
 func (h *mediaHandler) downloadFile(w http.ResponseWriter, r *http.Request) {
 	h.serveDownload(w, r, false)
 }

@@ -12,6 +12,7 @@ var (
 	ErrInvalid  = errors.New("invalid download request")
 	ErrNotFound = errors.New("download not found")
 	ErrBusy     = errors.New("download queue full")
+	ErrActive   = errors.New("download is active")
 	ErrTools    = errors.New("download tools unavailable")
 	ErrToolBusy = errors.New("tool download in progress")
 )
@@ -44,6 +45,8 @@ type Repository interface {
 	ListDownloads(context.Context) ([]Job, error)
 	SaveDownload(context.Context, Job) error
 	GetDownload(context.Context, string) (Job, error)
+	DeleteDownload(context.Context, string) error
+	DeleteDownloads(context.Context, []string) error
 }
 
 type Runner interface {
