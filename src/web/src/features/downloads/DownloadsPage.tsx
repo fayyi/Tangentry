@@ -40,7 +40,8 @@ function FormatChoices({ formats, selected, onChange, label }: { formats: Downlo
 }
 
 export function DownloadsPage({ downloads, onRead, intent }: { downloads: DownloadState; onRead: (job: DownloadJob) => void; intent?: { url: string; mode: 'video' | 'audio'; token: number } | null }) {
-  const [url, setURL] = useState(intent?.url ?? '')
+  const queryURL = new URLSearchParams(window.location.search).get('url') ?? ''
+  const [url, setURL] = useState(intent?.url ?? queryURL)
   const [height, setHeight] = useState(0)
   const [options, setOptions] = useState<DownloadOptions>(() => ({ ...defaults, mode: intent?.mode ?? 'video' }))
   const [filter, setFilter] = useState<'all' | 'active' | 'completed' | 'failed'>('all')
@@ -80,8 +81,13 @@ export function DownloadsPage({ downloads, onRead, intent }: { downloads: Downlo
       setOptions({ ...defaults, mode: intent.mode })
       setHeight(0)
       downloads.clearInfo()
+    } else if (queryURL) {
+      setURL(queryURL)
+      setOptions({ ...defaults, mode: 'video' })
+      setHeight(0)
+      downloads.clearInfo()
     }
-  }, [intent?.token])
+  }, [intent?.token, queryURL])
   useEffect(() => {
     setThumbnailFailed(false)
     if (!info) return

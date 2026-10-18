@@ -246,8 +246,11 @@ func compatibilityResolveMessage(err error, douyin bool) string {
 	if !douyin {
 		return "未能取得适合兼容播放的视频，请刷新笔记后重试。"
 	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return "抖音视频准备超时或已取消，请检查网络和抖音 Cookie 后重试。"
+	}
 	message := strings.TrimSpace(err.Error())
-	if message == "" || len(message) > 512 {
+	if message == "" || len(message) > 512 || strings.Contains(strings.ToLower(message), "context deadline") || strings.Contains(strings.ToLower(message), "context canceled") {
 		return "未能取得适合兼容播放的视频，请检查抖音 Cookie、网络和工具设置后重试。"
 	}
 	return message

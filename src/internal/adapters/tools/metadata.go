@@ -103,7 +103,7 @@ func (t *Toolkit) DouyinPlayback(ctx context.Context, raw string) (playback.Sour
 		return playback.Source{}, &discovery.PlatformError{Message: "抖音 Cookie 读取失败，请在工具设置 → 抖音 Cookie 检查后重试。"}
 	}
 	defer clean()
-	args := []string{"--ignore-config", "--no-playlist", "--no-cache-dir", "--no-warnings", "--skip-download", "--dump-single-json", "--format", "b[ext=mp4][height<=1080][vcodec!=none][acodec!=none]/b[height<=1080][vcodec!=none][acodec!=none]/b[ext=mp4][vcodec!=none][acodec!=none]", "--socket-timeout", "12", "--retries", "1"}
+	args := []string{"--ignore-config", "--no-playlist", "--no-cache-dir", "--no-warnings", "--skip-download", "--dump-single-json", "--format", "b[ext=mp4][height<=1080][vcodec!=none][acodec!=none]/b[ext=mp4][height<=1080][vcodec!=none][acodec!=none]/b[ext=mp4][vcodec!=none][acodec!=none]", "--socket-timeout", "12", "--retries", "1"}
 	args = append(args, cookieArgs...)
 	args = append(args, "--", ref.URL)
 	cmd, err := t.ytdlpCommand(ctx, args...)
@@ -114,18 +114,11 @@ func (t *Toolkit) DouyinPlayback(ctx context.Context, raw string) (playback.Sour
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	if err := cmd.Run(); err != nil || stdout.exceeded {
 		if ctx.Err() != nil {
-			return playback.Source{}, ctx.Err()
-		}
-		diagnostic := strings.Join(strings.Fields(stderr.String()), " ")
-		if len(diagnostic) > 180 {
-			diagnostic = diagnostic[len(diagnostic)-180:]
+			return playback.Source{}, &discovery.PlatformError{Message: "抖音视频解析超时，请检查网络和抖音 Cookie 后重试。"}
 		}
 		message := "抖音视频暂时无法获取，请检查网络和工具设置中的抖音 Cookie。"
 		if strings.Contains(strings.ToLower(stderr.String()), "cookie") || strings.Contains(strings.ToLower(stderr.String()), "login") {
 			message = "抖音需要有效 Cookie，请在工具设置 → 抖音 Cookie 配置后重试。"
-		}
-		if diagnostic != "" {
-			message += "（yt-dlp：" + diagnostic + "）"
 		}
 		return playback.Source{}, &discovery.PlatformError{Message: message}
 	}
