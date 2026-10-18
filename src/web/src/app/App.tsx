@@ -78,6 +78,17 @@ export function App() {
   const [subscriptionMode,setSubscriptionMode] = useState<'latest'|'history'|'health'>(() => selectedSavedViewFromURL() || new URLSearchParams(location.search).get('mode') === 'history' ? 'history' : window.location.hash === '#health' ? 'health' : 'latest')
   const inbox = useSubscriptionInbox(view==='subscriptions' && subscriptionMode==='history', subscriptionView)
   const savedViews = useSavedViews(view==='subscriptions')
+  useEffect(() => {
+    const syncSubscriptionURL = () => {
+      if (view !== 'subscriptions') return
+      const selected = selectedSavedViewFromURL()
+      const params = new URLSearchParams(location.search)
+      setSubscriptionView(selected)
+      setSubscriptionMode(selected || params.get('mode') === 'history' ? 'history' : location.hash === '#health' ? 'health' : 'latest')
+    }
+    window.addEventListener('popstate', syncSubscriptionURL)
+    return () => window.removeEventListener('popstate', syncSubscriptionURL)
+  }, [view])
   useEffect(()=>{
     if(view!=='subscriptions'||subscriptionMode!=='history'||subscriptionView||!savedViews.views.length)return
     const defaultView=savedViews.views.find(item=>item.default)
