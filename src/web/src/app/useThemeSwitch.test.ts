@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseThemePreference, readInitialPreference, readLegacyPreference, resolveTheme, subscribeSystemThemeChanges } from './useThemeSwitch'
+import { parseThemePreference, readInitialPreference, readLegacyPreference, resolveTheme, shouldApplyRemoteTheme, subscribeSystemThemeChanges } from './useThemeSwitch'
 
 describe('theme preference', () => {
   it('accepts light, dark and system and rejects unknown values', () => {
@@ -50,5 +50,10 @@ describe('theme preference', () => {
     expect(system).toEqual(['light', 'dark'])
     expect(explicitLight).toEqual(['light', 'light'])
     expect(explicitDark).toEqual(['dark', 'dark'])
+  })
+  it('does not let the startup GET overwrite a selection made this session', () => {
+    expect(shouldApplyRemoteTheme(false, 0)).toBe(true)
+    expect(shouldApplyRemoteTheme(true, 0)).toBe(false)
+    expect(shouldApplyRemoteTheme(false, 1)).toBe(false)
   })
 })

@@ -62,6 +62,17 @@ func TestPreferencesStoreReadsLegacyThemeRecord(t *testing.T) {
 	}
 }
 
+func TestPreferencesStoreReadsPreviousValuesMap(t *testing.T) {
+	path := t.TempDir() + "/preferences.json"
+	if err := os.WriteFile(path, []byte(`{"values":{"theme":"dark"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	value, saved, err := NewPreferences(path).Get(context.Background(), preferences.ThemeKey)
+	if err != nil || !saved || value != string(preferences.ThemeDark) {
+		t.Fatalf("previous map value=%q saved=%v err=%v", value, saved, err)
+	}
+}
+
 func TestPreferencesStoreReplacesLegacyThemeWhenWriting(t *testing.T) {
 	path := t.TempDir() + "/preferences.json"
 	if err := os.WriteFile(path, []byte(`{"theme":"dark"}`), 0600); err != nil {
@@ -74,5 +85,19 @@ func TestPreferencesStoreReplacesLegacyThemeWhenWriting(t *testing.T) {
 	value, saved, err := store.Get(context.Background(), preferences.ThemeKey)
 	if err != nil || !saved || value != string(preferences.ThemeLight) {
 		t.Fatalf("updated legacy preference = %q saved=%v err=%v", value, saved, err)
+	}
+}
+
+func TestPreferencesStoreRejectsOlderRevision(t *testing.T) {
+	store := NewPreferences(t.TempDir() + "/preferences.json")
+	if err := store.Set(context.Background(), preferences.ThemeKey, string(preferences.ThemeDark), 20); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Set(context.Background(), preferences.ThemeKey, string(preferences.ThemeLight), 10); err != nil {
+		t.Fatal(err)
+	}
+	value, _, err := store.Get(context.Background(), preferences.ThemeKey)
+	if err != nil || value != string(preferences.ThemeDark) {
+		t.Fatalf("older revision changed value=%q err=%v", value, err)
 	}
 }

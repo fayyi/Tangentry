@@ -19,8 +19,33 @@ type Preferences struct {
 }
 
 type preferenceRecord struct {
-	Values      map[string]string `json:"values"`
-	LegacyTheme string            `json:"theme,omitempty"`
+	Values      map[string]preferenceValue `json:"values"`
+	LegacyTheme string                     `json:"theme,omitempty"`
+}
+type preferenceValue struct {
+	Value    string `json:"value"`
+	Revision int64  `json:"revision"`
+}
+
+func decodePreferenceRecord(data []byte) preferenceRecord {
+	var record preferenceRecord
+	if json.Unmarshal(data, &record) == nil {
+		if record.Values == nil {
+			record.Values = map[string]preferenceValue{}
+		}
+		return record
+	}
+	var legacy struct {
+		Values map[string]string `json:"values"`
+	}
+	if json.Unmarshal(data, &legacy) == nil {
+		record.Values = make(map[string]preferenceValue, len(legacy.Values))
+		for key, value := range legacy.Values {
+			record.Values[key] = preferenceValue{Value: value}
+		}
+		return record
+	}
+	return preferenceRecord{Values: map[string]preferenceValue{}}
 }
 
 func NewPreferences(path string) *Preferences {
@@ -35,20 +60,14 @@ func (s *Preferences) read(ctx context.Context) (preferenceRecord, error) {
 	defer s.mu.Unlock()
 	data, err := os.ReadFile(s.path)
 	if errors.Is(err, os.ErrNotExist) {
-		return preferenceRecord{Values: map[string]string{}}, nil
+		return preferenceRecord{Values: map[string]preferenceValue{}}, nil
 	}
 	if err != nil {
 		return preferenceRecord{}, err
 	}
-	var record preferenceRecord
-	if err := json.Unmarshal(data, &record); err != nil {
-		return preferenceRecord{Values: map[string]string{}}, nil
-	}
-	if record.Values == nil {
-		record.Values = map[string]string{}
-	}
+	record := decodePreferenceRecord(data)
 	if record.LegacyTheme != "" {
-		record.Values[preferences.ThemeKey] = record.LegacyTheme
+		record.Values[preferences.ThemeKey] = preferenceValue{Value: record.LegacyTheme}
 	}
 	return record, nil
 }
@@ -61,11 +80,11 @@ func (s *Preferences) Get(ctx context.Context, key string) (string, bool, error)
 	if err != nil {
 		return "", false, err
 	}
-	value, ok := record.Values[key]
-	return value, ok, nil
+	entry, ok := record.Values[key]
+	return entry.Value, ok, nil
 }
 
-func (s *Preferences) Set(ctx context.Context, key, value string) error {
+func (s *Preferences) Set(ctx context.Context, key, value string, revisions ...int64) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -80,16 +99,23 @@ func (s *Preferences) Set(ctx context.Context, key, value string) error {
 	data, err := os.ReadFile(s.path)
 	var record preferenceRecord
 	if errors.Is(err, os.ErrNotExist) {
-		record.Values = map[string]string{}
+		record.Values = map[string]preferenceValue{}
 	} else if err != nil {
 		return err
-	} else if json.Unmarshal(data, &record) != nil {
-		record.Values = map[string]string{}
+	} else {
+		record = decodePreferenceRecord(data)
 	}
 	if record.Values == nil {
-		record.Values = map[string]string{}
+		record.Values = map[string]preferenceValue{}
 	}
-	record.Values[key] = value
+	revision := int64(0)
+	if len(revisions) > 0 {
+		revision = revisions[0]
+	}
+	if current, ok := record.Values[key]; ok && revision > 0 && current.Revision >= revision {
+		return nil
+	}
+	record.Values[key] = preferenceValue{Value: value, Revision: revision}
 	if key == preferences.ThemeKey {
 		record.LegacyTheme = ""
 	}

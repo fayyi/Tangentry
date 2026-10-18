@@ -135,6 +135,27 @@ func TestInterfacePreferenceAPIUsesValidatedKeyValueProtocol(t *testing.T) {
 	}
 }
 
+func TestInterfacePreferenceAPIRejectsOlderRevision(t *testing.T) {
+	store := filesystem.NewPreferences(filepath.Join(t.TempDir(), "preferences.json"))
+	handler := newThemeTestHandler(t, store)
+	for _, payload := range []string{`{"value":"dark","revision":20}`, `{"value":"light","revision":10}`} {
+		response := themeRequest(handler, http.MethodPut, "/api/preferences/theme", bytes.NewBufferString(payload))
+		if response.Code != http.StatusOK {
+			t.Fatalf("revision PUT status=%d body=%s", response.Code, response.Body.String())
+		}
+	}
+	response := themeRequest(handler, http.MethodGet, "/api/preferences/theme", nil)
+	var value struct {
+		Value string `json:"value"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&value); err != nil {
+		t.Fatal(err)
+	}
+	if value.Value != string(preferences.ThemeDark) {
+		t.Fatalf("older revision changed theme=%q", value.Value)
+	}
+}
+
 func TestIndexHTMLInjectsPersistedThemeBeforeAppScripts(t *testing.T) {
 	store := filesystem.NewThemePreferences(filepath.Join(t.TempDir(), "preferences.json"))
 	if err := store.Save(context.Background(), preferences.ThemeDark); err != nil {

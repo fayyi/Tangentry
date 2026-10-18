@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type MouseEvent } from 'react'
 import { flushSync } from 'react-dom'
-import { getInterfacePreference, getPendingInterfacePreference, setInterfacePreference } from '../shared/preferences/interfacePreferences'
+import { getInterfacePreference, setInterfacePreference } from '../shared/preferences/interfacePreferences'
 
 export type ThemePreference = 'light' | 'dark' | 'system'
 export const THEME_PREFERENCES: readonly ThemePreference[] = ['light', 'dark', 'system']
@@ -11,6 +11,10 @@ export function parseThemePreference(value: unknown): ThemePreference {
 
 export function resolveTheme(preference: ThemePreference, systemDark: boolean): 'light' | 'dark' {
   return preference === 'system' ? (systemDark ? 'dark' : 'light') : preference
+}
+
+export function shouldApplyRemoteTheme(userSelected: boolean, localRevision: number) {
+  return !userSelected && localRevision === 0
 }
 
 export function readLegacyPreference(storage?: Pick<Storage, 'getItem'>): ThemePreference | null {
@@ -24,8 +28,6 @@ export function readLegacyPreference(storage?: Pick<Storage, 'getItem'>): ThemeP
 
 export function readInitialPreference(input: { injected?: unknown; saved?: boolean; legacy?: unknown; datasetTheme?: string } = {}): ThemePreference {
   const state = (typeof window === 'undefined' ? {} : window) as { __TANGENTRY_THEME__?: unknown; __TANGENTRY_THEME_SAVED__?: boolean }
-  const pending = getPendingInterfacePreference('theme')
-  if (pending) return parseThemePreference(pending)
   const injected = input.injected === undefined ? state.__TANGENTRY_THEME__ : input.injected
   const saved = input.saved === undefined ? state.__TANGENTRY_THEME_SAVED__ : input.saved
   const legacy = input.legacy === undefined
@@ -55,6 +57,7 @@ export function useThemeSwitch() {
   const [dark, setDark] = useState<boolean>(() => resolveTheme(readInitialPreference(), systemIsDark()) === 'dark')
   const [hydrated, setHydrated] = useState(false)
   const userSelected = useRef(false)
+  const latestRevision = useRef(0)
   const intendedDark = useRef(dark)
   const activeTransition = useRef<ViewTransition | null>(null)
 
@@ -80,7 +83,7 @@ export function useThemeSwitch() {
     let cancelled = false
     void getInterfacePreference('theme').then(result => {
       if (cancelled) return
-      if (result && THEME_PREFERENCES.includes(result.value as ThemePreference) && !userSelected.current) {
+      if (result && THEME_PREFERENCES.includes(result.value as ThemePreference) && shouldApplyRemoteTheme(userSelected.current, latestRevision.current)) {
         if (result.saved !== false) setPreference(result.value as ThemePreference)
         else {
           const legacy = readLegacyPreference()
@@ -96,6 +99,7 @@ export function useThemeSwitch() {
 
   const setTheme = (next: ThemePreference) => {
     userSelected.current = true
+    latestRevision.current++
     setPreference(parseThemePreference(next))
   }
   const switchTheme = (event: MouseEvent<HTMLButtonElement>) => {

@@ -9,7 +9,8 @@ import (
 )
 
 type preferenceInput struct {
-	Value string `json:"value"`
+	Value    string `json:"value"`
+	Revision int64  `json:"revision"`
 }
 
 func (h *Handler) preferenceGet(w http.ResponseWriter, r *http.Request) {
@@ -51,11 +52,14 @@ func (h *Handler) preferencePut(w http.ResponseWriter, r *http.Request) {
 		write(w, http.StatusBadRequest, apiError{"invalid_theme", "请选择浅色、深色或跟随系统。"})
 		return
 	}
-	if err := h.preferences.Set(r.Context(), key, input.Value); err != nil {
+	if input.Revision < 1 {
+		input.Revision = 1
+	}
+	if err := h.preferences.Set(r.Context(), key, input.Value, input.Revision); err != nil {
 		write(w, http.StatusServiceUnavailable, apiError{"preferences_unavailable", "界面偏好未能保存，请检查数据目录权限。"})
 		return
 	}
-	write(w, http.StatusOK, map[string]any{"key": key, "value": input.Value, "saved": true})
+	write(w, http.StatusOK, map[string]any{"key": key, "value": input.Value, "saved": true, "revision": input.Revision})
 }
 
 func (h *Handler) preferenceValue(r *http.Request, key string) (string, bool, error) {

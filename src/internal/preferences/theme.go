@@ -15,7 +15,7 @@ const (
 // keep values outside browser origins so they survive a new loopback port.
 type Store interface {
 	Get(context.Context, string) (string, bool, error)
-	Set(context.Context, string, string) error
+	Set(context.Context, string, string, ...int64) error
 }
 
 func ValidateKey(key string) error {
