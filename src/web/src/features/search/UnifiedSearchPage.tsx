@@ -8,7 +8,7 @@ import { appendSearchItems, buildSearchParams, creatorPlatformSupport, groupSear
 
 const labels: Record<string, string> = { bilibili: 'B站', youtube: 'YouTube', linuxdo: 'Linux.do', xiaoyuzhou: '小宇宙', xiaohongshu: '小红书', douyin: '抖音', local: '本机资料库与订阅' }
 type TimeFilter = '' | 'day' | 'week' | 'month'
-type Props = { initialQuery?: string; savedIDs: Set<string>; pending: Set<string>; onRead: (item: ContentItem) => void; onSave: (item: ContentItem) => void; onCreator: (platform: string, authorID: string) => void; onSubscribe: (platform: string, authorID: string) => void }
+type Props = { initialQuery?: string; savedIDs: Set<string>; pending: Set<string>; onRead: (item: ContentItem) => void; onSave: (item: ContentItem) => void; onCreator: (platform: string, authorID: string) => void; onReturnCreator?: () => void; onRouteChange?: (path: string) => void; onSubscribe: (platform: string, authorID: string) => void }
 
 function timeBounds(value: TimeFilter): { from?: number; to?: number } {
   if (!value) return {}
@@ -16,7 +16,7 @@ function timeBounds(value: TimeFilter): { from?: number; to?: number } {
   return { from: to - (value === 'day' ? 86400 : value === 'week' ? 7 * 86400 : 30 * 86400), to }
 }
 
-export function UnifiedSearchPage({ initialQuery = '', savedIDs, pending, onRead, onSave, onCreator, onSubscribe }: Props) {
+export function UnifiedSearchPage({ initialQuery = '', savedIDs, pending, onRead, onSave, onCreator, onReturnCreator, onRouteChange, onSubscribe }: Props) {
   const [query, setQuery] = useState(initialQuery)
   const [platform, setPlatform] = useState('')
   const [kind, setKind] = useState('')
@@ -30,9 +30,32 @@ export function UnifiedSearchPage({ initialQuery = '', savedIDs, pending, onRead
   const controller = useRef<AbortController | null>(null)
   const groups = useMemo(() => result ? groupSearchResults(result, labels) : [], [result])
   const mixed = useMemo(() => mergeSearchItems(groups), [groups])
+  function syncStateFromURL() {
+    const params = new URLSearchParams(location.search)
+    setQuery(params.get('q') ?? '')
+    setPlatform(params.get('platform') ?? '')
+    setKind(params.get('kind') ?? '')
+    setTime((params.get('time') as TimeFilter) || '')
+    setMode(params.get('mode') === 'mixed' ? 'mixed' : 'grouped')
+  }
+  function syncSearchURL(nextQuery = query, nextPlatform = platform, nextKind = kind, nextTime = time, nextMode = mode) {
+    const params = new URLSearchParams()
+    if (nextQuery.trim()) params.set('q', nextQuery.trim())
+    if (nextPlatform) params.set('platform', nextPlatform)
+    if (nextKind) params.set('kind', nextKind)
+    if (nextTime) params.set('time', nextTime)
+    if (nextMode !== 'grouped') params.set('mode', nextMode)
+    onRouteChange?.(`/search${params.toString() ? `?${params}` : ''}`)
+  }
 
   useEffect(() => () => controller.current?.abort(), [])
-  useEffect(() => { setQuery(initialQuery); if (initialQuery.trim()) void search(initialQuery) }, [initialQuery])
+  useEffect(() => {
+    syncStateFromURL()
+    if (initialQuery.trim()) void search(initialQuery)
+    const onPopState = () => syncStateFromURL()
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
+  }, [initialQuery])
   useEffect(() => { if (result && query.trim() && !creator) void search(query) }, [platform, kind, time])
 
   async function search(nextQuery = query) {
@@ -95,11 +118,11 @@ export function UnifiedSearchPage({ initialQuery = '', savedIDs, pending, onRead
 
   if (creator && creatorPlatform) {
     const support = creatorPlatformSupport(creatorPlatform)
-    return <section className="creator-temporary-view"><button type="button" className="button button-secondary" onClick={() => history.back()}><ArrowLeft size={16}/>返回搜索</button><div className="results-heading"><div><strong>{labels[creatorPlatform] ?? creatorPlatform} 创作者最近内容</strong>{!support.subscribe && <p className="field-hint">该平台暂不支持一键订阅；这是一次性的临时查看，不会写入订阅或推荐偏好。</p>}</div>{support.subscribe && <button type="button" className="button button-primary" onClick={() => onSubscribe(creatorPlatform, creator)}>订阅</button>}</div>{error && <div className="error-panel" role="alert">{error}</div>}{groups.map(group => <div key={group.key}><CardCollection masonry className="modern-gallery">{group.items.map(card)}</CardCollection>{result?.sources[group.key]?.page.hasMore && result.sources[group.key].page.cursor && <button type="button" className="button button-secondary" onClick={() => void loadCreatorMore()} disabled={loadingMore.has(group.key)}>{loadingMore.has(group.key) ? '正在加载…' : '查看更多'}</button>}</div>)}</section>
+    return <section className="creator-temporary-view"><button type="button" className="button button-secondary" onClick={() => onReturnCreator?.()}><ArrowLeft size={16}/>返回搜索</button><div className="results-heading"><div><strong>{labels[creatorPlatform] ?? creatorPlatform} 创作者最近内容</strong>{!support.subscribe && <p className="field-hint">该平台暂不支持一键订阅；这是一次性的临时查看，不会写入订阅或推荐偏好。</p>}</div>{support.subscribe && <button type="button" className="button button-primary" onClick={() => onSubscribe(creatorPlatform, creator)}>订阅</button>}</div>{error && <div className="error-panel" role="alert">{error}</div>}{groups.map(group => <div key={group.key}><CardCollection masonry className="modern-gallery">{group.items.map(card)}</CardCollection>{result?.sources[group.key]?.page.hasMore && result.sources[group.key].page.cursor && <button type="button" className="button button-secondary" onClick={() => void loadCreatorMore()} disabled={loadingMore.has(group.key)}>{loadingMore.has(group.key) ? '正在加载…' : '查看更多'}</button>}</div>)}</section>
   }
 
   return <>
-    <section className="unified-search-head"><h1>统一搜索</h1><form className="search-field unified-search-form" role="search" onSubmit={event => { event.preventDefault(); void search() }}><Search size={17} aria-hidden="true"/><input autoFocus type="search" aria-label="搜索本机资料库与各平台" placeholder="搜索标题、作者、正文或字幕" value={query} onChange={event => setQuery(event.target.value)} /><button type="submit" className="button button-primary">搜索</button></form><div className="unified-search-filters"><label>平台<select value={platform} onChange={event => setPlatform(event.target.value)}><option value="">全部平台</option>{Object.entries(labels).filter(([key]) => key !== 'local').map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label><label>媒体<select value={kind} onChange={event => setKind(event.target.value)}><option value="">全部类型</option><option value="video">视频</option><option value="audio">音频</option><option value="article">文章</option><option value="image">图文</option><option value="pdf">PDF</option></select></label><label>时间<select value={time} onChange={event => setTime(event.target.value as TimeFilter)}><option value="">全部时间</option><option value="day">最近一天</option><option value="week">最近一周</option><option value="month">最近一个月</option></select></label><div className="segmented" role="group" aria-label="结果显示方式"><button type="button" aria-pressed={mode === 'grouped'} onClick={() => setMode('grouped')}>按平台</button><button type="button" aria-pressed={mode === 'mixed'} onClick={() => setMode('mixed')}>混合排序</button></div></div></section>
+    <section className="unified-search-head"><h1>统一搜索</h1><form className="search-field unified-search-form" role="search" onSubmit={event => { event.preventDefault(); syncSearchURL(); void search() }}><Search size={17} aria-hidden="true"/><input autoFocus type="search" aria-label="搜索本机资料库与各平台" placeholder="搜索标题、作者、正文或字幕" value={query} onChange={event => setQuery(event.target.value)} /><button type="submit" className="button button-primary">搜索</button></form><div className="unified-search-filters"><label>平台<select value={platform} onChange={event => { const value = event.target.value; setPlatform(value); syncSearchURL(query, value) }}><option value="">全部平台</option>{Object.entries(labels).filter(([key]) => key !== 'local').map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label><label>媒体<select value={kind} onChange={event => { const value = event.target.value; setKind(value); syncSearchURL(query, platform, value) }}><option value="">全部类型</option><option value="video">视频</option><option value="audio">音频</option><option value="article">文章</option><option value="image">图文</option><option value="pdf">PDF</option></select></label><label>时间<select value={time} onChange={event => { const value = event.target.value as TimeFilter; setTime(value); syncSearchURL(query, platform, kind, value) }}><option value="">全部时间</option><option value="day">最近一天</option><option value="week">最近一周</option><option value="month">最近一个月</option></select></label><div className="segmented" role="group" aria-label="结果显示方式"><button type="button" aria-pressed={mode === 'grouped'} onClick={() => { setMode('grouped'); syncSearchURL(query, platform, kind, time, 'grouped') }}>按平台</button><button type="button" aria-pressed={mode === 'mixed'} onClick={() => { setMode('mixed'); syncSearchURL(query, platform, kind, time, 'mixed') }}>混合排序</button></div></div></section>
     {error && <div className="error-panel" role="alert">{error}</div>}{result && groups.length === 0 && <section className="empty-state"><h2>没有找到相关内容</h2><p>换个关键词，或粘贴链接导入内容。</p></section>}
     {mode === 'mixed' && result && <section className="unified-search-group"><div className="results-heading"><strong>混合排序</strong><span>{mixed.length} 条去重结果</span></div><CardCollection masonry className="modern-gallery">{mixed.map(card)}</CardCollection></section>}
     {mode === 'grouped' && groups.map(group => <section className="unified-search-group" key={group.key}><div className="results-heading"><strong>{group.title}</strong><span>{group.error || `${group.items.length} 条结果`}</span></div><CardCollection masonry className="modern-gallery">{group.items.slice(0, 8).map(card)}</CardCollection>{result?.sources[group.key]?.page.hasMore && result.sources[group.key].page.cursor && <button type="button" className="button button-secondary" onClick={() => void loadMore(group)} disabled={loadingMore.has(group.key)}>{loadingMore.has(group.key) ? '正在加载…' : '查看更多'}</button>}</section>)}
