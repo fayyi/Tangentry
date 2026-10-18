@@ -53,7 +53,7 @@ export function ExperienceShell({ view, onNavigate, onNavigateSavedView, savedVi
   })
   const menu = useRef<HTMLDialogElement>(null)
   const trigger = useRef<HTMLButtonElement>(null)
-  const { dark, switchTheme } = useThemeSwitch()
+  const { dark, preference, setTheme, switchTheme } = useThemeSwitch()
   useEffect(() => {
     try { localStorage.setItem('tangentry-sidebar-collapsed', String(collapsed)) } catch { /* Navigation remains usable without storage. */ }
   }, [collapsed])
@@ -125,6 +125,7 @@ export function ExperienceShell({ view, onNavigate, onNavigateSavedView, savedVi
       {view === 'discovery' && <div className="discovery-search" role="search"><Search size={16} aria-hidden="true"/><input type="search" aria-label="搜索发现内容" placeholder="搜索本机与各平台" value={discoveryQuery} onChange={event => onDiscoveryQuery(event.target.value)} onFocus={() => onSearchQuery(discoveryQuery)}/>{discoveryQuery && <button type="button" className="icon-button" aria-label="清除发现搜索" title="清除搜索" onClick={() => onDiscoveryQuery('')}><X size={15}/></button>}</div>}
       <div className="experience-header-actions">
         <button type="button" className="experience-add" aria-label="添加内容" title="粘贴链接或导入 PDF" onClick={onAdd}><Plus size={17} aria-hidden="true"/><span>添加内容</span></button>
+        <label className="theme-picker"><span className="sr-only">主题</span><select aria-label="主题" value={preference} onChange={event => setTheme(event.target.value as 'light' | 'dark' | 'system')}><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></label>
         <button type="button" className="icon-button theme-switch" aria-label={dark ? '切换浅色模式' : '切换深色模式'} title={dark ? '切换浅色模式' : '切换深色模式'} onClick={switchTheme}>{dark ? <Sun size={18}/> : <Moon size={18}/>}</button>
       </div>
     </header>

@@ -19,6 +19,7 @@ func New(library *content.Service, discover *discovery.Service, assets fs.FS, op
 			BilibiliLogin: optionsValue.BilibiliLogin, XiaoyuzhouLogin: optionsValue.XiaoyuzhouLogin,
 			LinuxdoLogin: optionsValue.LinuxdoLogin, LinuxdoSession: optionsValue.LinuxdoSession, Cookies: optionsValue.Cookies,
 		},
+		Preferences: optionsValue.Preferences,
 		Browse: DiscoveryDependencies{
 			Search: discover, BilibiliBrowser: optionsValue.BilibiliBrowser, RecommendationQueue: optionsValue.RecommendationQueue,
 			RecommendationConfig: optionsValue.RecommendationConfig, Recommendations: optionsValue.Recommendations,
@@ -66,6 +67,7 @@ func NewWithDependencies(deps Dependencies, assets fs.FS) http.Handler {
 		notes:         &notesHandler{notes: deps.Notes},
 		feeds:         &feedsHandler{feeds: deps.Feeds},
 		backup:        &backupHandler{service: deps.Backup},
+		preferences:   deps.Preferences,
 		assets:        assets,
 	}
 	mux := http.NewServeMux()

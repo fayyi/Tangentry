@@ -3,7 +3,7 @@ import { Activity, lazy, useEffect, useMemo, useRef, useState } from 'react'
 import { ReaderActionsProvider } from '../shared/reader/ReaderActions'
 import { DiscoveryGallery } from '../features/discovery/DiscoveryGallery'
 import { readDiscoveryFilterState } from '../features/discovery/useDiscoveryBatch'
-import { useBilibiliBrowse } from '../features/bilibili/useBilibiliBrowse'
+import { bilibiliReturnPath as normalizeBilibiliReturnPath, useBilibiliBrowse } from '../features/bilibili/useBilibiliBrowse'
 import { gallerySources, useGallery } from '../features/discovery/useGallery'
 import type { GallerySource } from '../features/discovery/useGallery'
 import { usePodcastEpisodes } from '../features/podcasts/usePodcastEpisodes'
@@ -32,7 +32,7 @@ import { ContentCard } from '../shared/ui/ContentCard'
 import { CardCollection } from '../shared/ui/CardCollection'
 import { ExperienceShell } from './ExperienceShell'
 import { MediaFilters } from '../shared/ui/MediaFilters'
-import { appPageLayers, readerPath, readerPathForItem } from './navigation'
+import { appPageLayers, creatorReturnFromPath, readerPath, readerPathForItem } from './navigation'
 import { BackToTop } from '../shared/ui/BackToTop'
 import { Toast } from '../shared/ui/Toast'
 import { useToast } from '../shared/hooks/useToast'
@@ -70,13 +70,13 @@ export function App() {
   const downloads = useDownloads()
   const input = useRef<HTMLInputElement>(null)
   const navigation = useAppNavigation(input)
-  const { view, navigate, returnHome, readerQuery, readerNoteId, readingItem, setReadingItem, readerReturn, readerSourceID, scrollPositions, viewportTarget } = navigation
+  const { view, navigate, returnHome, readerQuery, readerNoteId, readingItem, setReadingItem, readerSourceID, scrollPositions, viewportTarget, viewportVersion, setReaderReturn, returnFromReader, returnToPath } = navigation
   const [discoveryMounted, setDiscoveryMounted] = useState(() => view === 'discovery')
   const pageLayers = appPageLayers(view, discoveryMounted)
   useEffect(() => {
     if (view === 'discovery') setDiscoveryMounted(true)
   }, [view])
-  const bilibili = useBilibiliBrowse(view === 'bilibili')
+  const bilibili = useBilibiliBrowse(view === 'bilibili', path => navigate('bilibili', false, path))
   const subscriptions = useSubscriptions(view === 'subscriptions')
   const [subscriptionView, setSubscriptionView] = useState(() => selectedSavedViewFromURL())
   const [subscriptionMode,setSubscriptionMode] = useState<'latest'|'history'|'health'>(() => selectedSavedViewFromURL() || new URLSearchParams(location.search).get('mode') === 'history' ? 'history' : window.location.hash === '#health' ? 'health' : 'latest')
@@ -89,6 +89,9 @@ export function App() {
       const params = new URLSearchParams(location.search)
       setSubscriptionView(selected)
       setSubscriptionMode(selected || params.get('mode') === 'history' ? 'history' : location.hash === '#health' ? 'health' : 'latest')
+      setSubscriptionFilter(params.get('q') ?? '')
+      const read = params.get('read')
+      setSubscriptionReadFilter(read === 'unread' || read === 'read' ? read : 'all')
     }
     window.addEventListener('popstate', syncSubscriptionURL)
     return () => window.removeEventListener('popstate', syncSubscriptionURL)
@@ -96,13 +99,33 @@ export function App() {
   useEffect(()=>{
     if(view!=='subscriptions'||subscriptionMode!=='history'||subscriptionView||!savedViews.views.length)return
     const defaultView=savedViews.views.find(item=>item.default)
-    if(defaultView){setSubscriptionView(defaultView.id);navigate('subscriptions',true,`/subscriptions?view=${encodeURIComponent(defaultView.id)}`)}
+    if(defaultView){setSubscriptionView(defaultView.id);navigate('subscriptions',false,`/subscriptions?view=${encodeURIComponent(defaultView.id)}`)}
   },[view,subscriptionMode,subscriptionView,savedViews.views])
-  const [subscriptionFilter, setSubscriptionFilter] = useState('')
-  const [subscriptionReadFilter, setSubscriptionReadFilter] = useState<'all' | 'unread' | 'read'>('all')
+  const [subscriptionFilter, setSubscriptionFilter] = useState(() => view === 'subscriptions' ? new URLSearchParams(location.search).get('q') ?? '' : '')
+  const [subscriptionReadFilter, setSubscriptionReadFilter] = useState<'all' | 'unread' | 'read'>(() => {
+    if (view !== 'subscriptions') return 'all'
+    const read = new URLSearchParams(location.search).get('read')
+    return read === 'unread' || read === 'read' ? read : 'all'
+  })
+  const updateSubscriptionFilter = (value: string) => {
+    setSubscriptionFilter(value)
+    const params = new URLSearchParams(location.search)
+    if (value.trim()) params.set('q', value.trim())
+    else params.delete('q')
+    navigate('subscriptions', false, `/subscriptions${params.toString() ? `?${params}` : ''}${location.hash}`)
+  }
+  const updateSubscriptionReadFilter = (value: 'all' | 'unread' | 'read') => {
+    setSubscriptionReadFilter(value)
+    const params = new URLSearchParams(location.search)
+    if (value === 'all') params.delete('read')
+    else params.set('read', value)
+    navigate('subscriptions', false, `/subscriptions${params.toString() ? `?${params}` : ''}${location.hash}`)
+  }
   const [galleryKind, setGalleryKind] = useState(() => readDiscoveryFilterState().kind)
   const [galleryOrigin, setGalleryOrigin] = useState('platforms')
   const [galleryQuery, setGalleryQuery] = useState('')
+  const creatorReturnPath = useRef('/search')
+  const bilibiliReturnPath = useRef('/')
   const gallery = useGallery(view === 'podcasts', view === 'podcasts' ? podcastSources : gallerySources)
   const podcastEpisodes = usePodcastEpisodes(view === 'podcasts')
   const globalNotes = useGlobalNotes(view === 'notes')
@@ -138,7 +161,8 @@ export function App() {
   function openReader(item: ContentItem) {
     viewingHistory.record(item)
     historyRecorded.current = item.id
-    readerReturn.current = view === 'podcasts' ? 'podcasts' : view === 'bilibili' ? 'bilibili' : view === 'history' ? 'history' : view === 'subscriptions' ? 'subscriptions' : view === 'discovery' ? 'discovery' : contentView
+    const returnView = view === 'podcasts' ? 'podcasts' : view === 'bilibili' ? 'bilibili' : view === 'history' ? 'history' : view === 'subscriptions' ? 'subscriptions' : view === 'discovery' ? 'discovery' : contentView
+    setReaderReturn(returnView, `${location.pathname}${location.search}${location.hash}`)
     readerSourceID.current = item.id
     scrollPositions.current.reader = 0
     setReadingItem(item)
@@ -151,11 +175,28 @@ export function App() {
     navigate('downloads')
   }
 
+  function updateDiscoveryQuery(query: string) {
+    setGalleryQuery(query)
+    const params = new URLSearchParams(location.search)
+    if (query.trim()) params.set('q', query.trim())
+    else params.delete('q')
+    navigate('discovery', false, params.toString() ? `/?${params}` : '/')
+  }
+
   function openCreator(platform: string, authorID: string) {
     const path = `/search?creatorPlatform=${encodeURIComponent(platform)}&creator=${encodeURIComponent(authorID)}`
     const params = new URLSearchParams(location.search)
     const alreadyShowing = location.pathname === '/search' && params.get('creatorPlatform') === platform && params.get('creator') === authorID
-    navigate('search', !alreadyShowing, path)
+    const currentCreator = location.pathname === '/search' && Boolean(params.get('creatorPlatform') && params.get('creator'))
+    if (!currentCreator) creatorReturnPath.current = `${location.pathname}${location.search}${location.hash}`
+    navigate('search', !currentCreator && !alreadyShowing, path)
+  }
+
+  function openBilibili() {
+    bilibiliReturnPath.current = view === 'discovery'
+      ? normalizeBilibiliReturnPath(`${location.pathname}${location.search}${location.hash}`)
+      : '/'
+    navigate('bilibili')
   }
 
   function renderCollectionItem(item: ContentItem) {
@@ -175,9 +216,15 @@ export function App() {
   const readingID = readerQuery.startsWith('BV') ? `bilibili:${readerQuery}` : readerQuery
   // What was open in the reader stays one click away after leaving it, so a
   // stray click elsewhere never loses the video or article being worked on.
-  const [lastReader, setLastReader] = useState<{ path: string; title: string } | null>(null)
+  const [lastReader, setLastReader] = useState<{ path: string; title: string; sourceID: string } | null>(null)
   useEffect(() => {
-    if (view === 'reader' && readerQuery) setLastReader({ path: location.pathname + location.search, title: cachedReadingItem?.title || '正在阅读的内容' })
+    if (view === 'reader' && readerQuery) {
+      setLastReader({
+        path: `${location.pathname}${location.search}${location.hash}`,
+        title: cachedReadingItem?.title || '正在阅读的内容',
+        sourceID: readerSourceID.current || cachedReadingItem?.id || readingID,
+      })
+    }
   }, [view, readerQuery, cachedReadingItem?.title])
   const historyRecorded = useRef('')
   useEffect(() => {
@@ -204,16 +251,16 @@ export function App() {
     const douyin = /^https:\/\/www\.douyin\.com\/video\/([1-9][0-9]{15,19})$/.exec(job.url)?.[1]
     const xhs = /^https:\/\/www\.xiaohongshu\.com\/explore\/([a-f0-9]{24})(?:\?|$)/.exec(job.url)?.[1]
     const social = douyin ? {platform:'douyin',id:douyin} : xhs ? {platform:'xiaohongshu',id:xhs} : null
-    if(social){ readerReturn.current='downloads';readerSourceID.current='download:'+job.id;setReadingItem({id:social.platform+':'+social.id,platform:social.platform,platformId:social.id,kind:'video',title:job.title,url:job.url,author:'',authorId:'',thumbnailUrl:'',description:'',durationSeconds:0,publishedAt:0}); navigate('reader',true,'/reader?contentId='+encodeURIComponent(social.platform+':'+social.id));return }
+    if(social){ setReaderReturn('downloads', `${location.pathname}${location.search}${location.hash}`);readerSourceID.current='download:'+job.id;setReadingItem({id:social.platform+':'+social.id,platform:social.platform,platformId:social.id,kind:'video',title:job.title,url:job.url,author:'',authorId:'',thumbnailUrl:'',description:'',durationSeconds:0,publishedAt:0}); navigate('reader',true,'/reader?contentId='+encodeURIComponent(social.platform+':'+social.id));return }
     const videoID = /^https:\/\/www\.bilibili\.com\/video\/(BV[0-9A-Za-z]{10})\/$/.exec(job.url)?.[1]
     if (!videoID) {
       const yt= new URL(job.url).searchParams.get('v')
       if(!yt)return
-      readerReturn.current='downloads';readerSourceID.current='download:'+job.id
+      setReaderReturn('downloads', `${location.pathname}${location.search}${location.hash}`);readerSourceID.current='download:'+job.id
       setReadingItem({id:'youtube:'+yt,platform:'youtube',platformId:yt,kind:'video',title:job.title,url:job.url,author:'',authorId:'',thumbnailUrl:'',description:'',durationSeconds:0,publishedAt:0})
       navigate('reader',true,'/reader?contentId='+encodeURIComponent('youtube:'+yt));return
     }
-    readerReturn.current = 'downloads'
+    setReaderReturn('downloads', `${location.pathname}${location.search}${location.hash}`)
     readerSourceID.current = `download:${job.id}`
     scrollPositions.current.reader = 0
     setReadingItem(null)
@@ -221,7 +268,7 @@ export function App() {
   }
 
   function openNoteReader(note: ReadingNote) {
-    readerReturn.current = 'notes'
+    setReaderReturn('notes', `${location.pathname}${location.search}${location.hash}`)
     readerSourceID.current = `note:${note.id}`
     scrollPositions.current.reader = 0
     setReadingItem(null)
@@ -232,17 +279,26 @@ export function App() {
       view={view}
       onNavigate={navigate}
       savedViews={savedViews.views}
-      onNavigateSavedView={id=>{setSubscriptionView(id);setSubscriptionMode('history');navigate('subscriptions',true,`/subscriptions?view=${encodeURIComponent(id)}`)}}
+      onNavigateSavedView={id=>{setSubscriptionView(id);setSubscriptionMode('history');navigate('subscriptions',view !== 'subscriptions',`/subscriptions?view=${encodeURIComponent(id)}`)}}
       onReorderSavedViews={ids=>void savedViews.reorder(ids)}
-      onSearchQuery={query => navigate('search', true, query.trim() ? `/search?q=${encodeURIComponent(query.trim())}` : '/search')}
+      onSearchQuery={query => navigate('search', view !== 'search', query.trim() ? `/search?q=${encodeURIComponent(query.trim())}` : '/search')}
       onHome={returnHome}
       activeDownloads={downloads.jobs.filter(job => job.state === 'queued' || job.state === 'running').length}
       savedCount={library.items.length}
       onAdd={focusSource}
       discoveryQuery={galleryQuery}
-      onDiscoveryQuery={setGalleryQuery}
+      onDiscoveryQuery={updateDiscoveryQuery}
       resume={view !== 'reader' ? lastReader : null}
-      onResume={() => { if (lastReader) navigate('reader', true, lastReader.path) }}
+      onResume={() => {
+        if (!lastReader) return
+        // Resuming from another page creates a new, explicit source snapshot;
+        // the reader should return to where the user resumed, not the page
+        // that originally opened this item.
+        const sourceView = view === 'reader' ? 'discovery' : view
+        setReaderReturn(sourceView, `${location.pathname}${location.search}${location.hash}`)
+        readerSourceID.current = lastReader.sourceID
+        navigate('reader', true, lastReader.path)
+      }}
       onDismissResume={() => setLastReader(null)}
     >
     <ReaderActionsProvider><main id="main" className={`main-workspace ${view === 'reader' ? 'immersive-reader' : ''}`} tabIndex={-1}>
@@ -251,7 +307,7 @@ export function App() {
       {pageLayers.mountDiscovery && <PageLoadBoundary key="discovery-page">
         <Activity mode={pageLayers.discoveryVisible ? 'visible' : 'hidden'}>
           <div data-app-view="discovery">
-            <DiscoveryGallery active={pageLayers.discoveryVisible} kind={galleryKind} onKind={setGalleryKind} origin={galleryOrigin} onOrigin={setGalleryOrigin} query={galleryQuery} onClearQuery={() => setGalleryQuery('')} notice={library.notice} noticeError={library.noticeError} gallery={gallery} savedIDs={savedIDs} pending={library.pending} savingUnavailable={savingUnavailable} onSave={item => void library.toggle(item)} onRead={openReader} onDownload={onDownload} onCreator={openCreator} onSearch={() => navigate('search')} onSubscriptions={() => navigate('subscriptions')} onBilibili={() => navigate('bilibili')} />
+            <DiscoveryGallery active={pageLayers.discoveryVisible} kind={galleryKind} onKind={setGalleryKind} origin={galleryOrigin} onOrigin={setGalleryOrigin} query={galleryQuery} onClearQuery={() => updateDiscoveryQuery('')} onQueryChange={setGalleryQuery} onRouteChange={path => navigate('discovery', false, path)} notice={library.notice} noticeError={library.noticeError} gallery={gallery} savedIDs={savedIDs} pending={library.pending} savingUnavailable={savingUnavailable} onSave={item => void library.toggle(item)} onRead={openReader} onDownload={onDownload} onCreator={openCreator} onSearch={() => navigate('search')} onSubscriptions={() => navigate('subscriptions')} onBilibili={openBilibili} />
           </div>
         </Activity>
       </PageLoadBoundary>}
@@ -262,12 +318,12 @@ export function App() {
       {view === 'history' ? <ViewingHistoryPage history={viewingHistory} onRead={openReader} onSave={item => void library.toggle(item)} savedIDs={savedIDs} pending={library.pending} unavailable={savingUnavailable}/>
       : view === 'discovery' ? null
       : view === 'podcasts' ? <PodcastsPage history={viewingHistory.entries} library={library.items} episodes={podcastEpisodes} gallery={gallery} savedIDs={savedIDs} pending={library.pending} unavailable={savingUnavailable} onRead={openReader} onSave={item => void library.toggle(item)} onDownload={onDownload} onSubscriptions={() => navigate('subscriptions')} onSettings={() => { navigate('tools', true, '/tools#accounts') }} onAdd={() => { discovery.setSource('xiaoyuzhou'); focusSource() }} />
-      : view === 'bilibili' ? <BilibiliPage browser={bilibili} savedIDs={savedIDs} pending={library.pending} unavailable={savingUnavailable} notice={library.notice} noticeError={library.noticeError} onRead={openReader} onSave={item => void library.toggle(item)} onReturn={() => navigate('discovery')} onLogin={() => navigate('tools', true, '/tools#accounts')} onLibrary={() => navigate('library')} />
+      : view === 'bilibili' ? <BilibiliPage browser={bilibili} savedIDs={savedIDs} pending={library.pending} unavailable={savingUnavailable} notice={library.notice} noticeError={library.noticeError} onRead={openReader} onSave={item => void library.toggle(item)} onReturn={() => returnToPath(bilibiliReturnPath.current, 'discovery')} onLogin={() => navigate('tools', true, '/tools#accounts')} onLibrary={() => navigate('library')} />
       : view === 'notes' ? <GlobalNotesPage browser={globalNotes} savedItems={library.items} onRead={openNoteReader} /> : view === 'reader' ? (
-        readerQuery.startsWith('youtube:') ? <YouTubeReadingWorkspace key={readerQuery} id={readerQuery} linkedNoteId={readerNoteId} initialItem={cachedReadingItem} jobs={downloads.jobs} loading={downloads.loading} error={downloads.error} onReturn={() => navigate(readerReturn.current)} onDownloads={() => navigate('downloads')} onRefresh={() => void downloads.reload()} onCreator={openCreator} />
-        : readerQuery.includes(':') ? (library.loading && !cachedReadingItem ? <p className="field-hint" role="status">正在读取本机内容…</p> : <ContentReadingWorkspace key={readerQuery} id={readerQuery} linkedNoteId={readerNoteId} initialItem={cachedReadingItem} jobs={downloads.jobs} jobsLoading={downloads.loading} onItem={setReadingItem} onCreator={openCreator} onReturn={() => navigate(readerReturn.current)} />)
-        : <ReadingWorkspace key={readerQuery} query={readerQuery} linkedNoteId={readerNoteId} initialItem={cachedReadingItem} onReturn={() => navigate(readerReturn.current)} sources={localVideos} loading={downloads.loading} error={downloads.error} onDownloads={() => navigate('downloads')} onRefresh={() => void downloads.reload()} />
-      ) : view === 'subscriptions' ? <SubscriptionsPage inbox={inbox} selectedViewID={subscriptionView} mode={subscriptionMode} onMode={mode=>{setSubscriptionView('');setSubscriptionMode(mode);navigate('subscriptions',true,mode==='history'?'/subscriptions?mode=history':mode==='health'?'/subscriptions#health':'/subscriptions');if(mode==='history'&&inbox.confirmed)void inbox.reload()}} views={savedViews.views} onSaveView={async (name,filters)=>{const definition={version:1,filters};const existing=savedViews.views.find(item=>item.id===subscriptionView);if(existing){await savedViews.update(existing.id,{name,definition});await inbox.reload()}else{const saved=await savedViews.create(name,definition);setSubscriptionView(saved.id);navigate('subscriptions',true,`/subscriptions?view=${encodeURIComponent(saved.id)}`)}}} onUpdateView={(id,edit)=>void savedViews.update(id,edit)} onDeleteView={id=>{void savedViews.remove(id);if(id===subscriptionView){setSubscriptionView('');navigate('subscriptions',true,'/subscriptions?mode=history')}}} readStates={readStates} readFilter={subscriptionReadFilter} onReadFilter={setSubscriptionReadFilter} subscriptions={subscriptions} savedIDs={savedIDs} savingUnavailable={savingUnavailable} savingIDs={library.pending} onSave={item => void library.toggle(item)} onRead={openReader} filter={subscriptionFilter} onFilter={setSubscriptionFilter} saveNotice={library.notice} saveError={library.noticeError} /> : view === 'search' ? <UnifiedSearchPage initialQuery={new URLSearchParams(location.search).get('q') ?? ''} savedIDs={savedIDs} pending={library.pending} onRead={openReader} onSave={item => void library.toggle(item)} onCreator={openCreator} onSubscribe={(platform, authorID) => { if (platform === 'bilibili' || platform === 'youtube') void subscriptions.create(authorID, '', platform) }} /> : view === 'downloads' ? <DownloadsPage downloads={downloads} onRead={openDownloadReader} intent={downloadIntent} /> : view === 'tools' ? <ToolsPage downloads={downloads} columns={galleryLayout.columns} onColumns={galleryLayout.setColumns} onCookieChanged={platform => { gallery.invalidate(platform); if (platform === 'bilibili') bilibili.invalidate() }} onYouTubeFeed={feed => gallery.accept('youtube', feed)} onDiscover={() => navigate('discovery')} /> : <>
+        readerQuery.startsWith('youtube:') ? <YouTubeReadingWorkspace key={readerQuery} id={readerQuery} linkedNoteId={readerNoteId} initialItem={cachedReadingItem} jobs={downloads.jobs} loading={downloads.loading} error={downloads.error} onReturn={returnFromReader} onDownloads={() => navigate('downloads')} onRefresh={() => void downloads.reload()} onCreator={openCreator} />
+        : readerQuery.includes(':') ? (library.loading && !cachedReadingItem ? <p className="field-hint" role="status">正在读取本机内容…</p> : <ContentReadingWorkspace key={readerQuery} id={readerQuery} linkedNoteId={readerNoteId} initialItem={cachedReadingItem} jobs={downloads.jobs} jobsLoading={downloads.loading} onItem={setReadingItem} onCreator={openCreator} onReturn={returnFromReader} />)
+        : <ReadingWorkspace key={readerQuery} query={readerQuery} linkedNoteId={readerNoteId} initialItem={cachedReadingItem} onReturn={returnFromReader} sources={localVideos} loading={downloads.loading} error={downloads.error} onDownloads={() => navigate('downloads')} onRefresh={() => void downloads.reload()} />
+      ) : view === 'subscriptions' ? <SubscriptionsPage inbox={inbox} selectedViewID={subscriptionView} mode={subscriptionMode} onMode={mode=>{setSubscriptionView('');setSubscriptionMode(mode);navigate('subscriptions',false,mode==='history'?'/subscriptions?mode=history':mode==='health'?'/subscriptions#health':'/subscriptions');if(mode==='history'&&inbox.confirmed)void inbox.reload()}} views={savedViews.views} onSaveView={async (name,filters)=>{const definition={version:1,filters};const existing=savedViews.views.find(item=>item.id===subscriptionView);if(existing){await savedViews.update(existing.id,{name,definition});await inbox.reload()}else{const saved=await savedViews.create(name,definition);setSubscriptionView(saved.id);navigate('subscriptions',false,`/subscriptions?view=${encodeURIComponent(saved.id)}`)}}} onUpdateView={(id,edit)=>void savedViews.update(id,edit)} onDeleteView={id=>{void savedViews.remove(id);if(id===subscriptionView){setSubscriptionView('');navigate('subscriptions',false,'/subscriptions?mode=history')}}} readStates={readStates} readFilter={subscriptionReadFilter} onReadFilter={updateSubscriptionReadFilter} subscriptions={subscriptions} savedIDs={savedIDs} savingUnavailable={savingUnavailable} savingIDs={library.pending} onSave={item => void library.toggle(item)} onRead={openReader} filter={subscriptionFilter} onFilter={updateSubscriptionFilter} saveNotice={library.notice} saveError={library.noticeError} /> : view === 'search' ? <UnifiedSearchPage initialQuery={new URLSearchParams(location.search).get('q') ?? ''} savedIDs={savedIDs} pending={library.pending} onRead={openReader} onSave={item => void library.toggle(item)} onCreator={openCreator} onReturnCreator={() => { const target = creatorReturnFromPath(creatorReturnPath.current); returnToPath(target.path, target.view) }} onReturnCreatorLabel={creatorReturnFromPath(creatorReturnPath.current).label} onRouteChange={path => navigate('search', false, path)} onSubscribe={(platform, authorID) => { if (platform === 'bilibili' || platform === 'youtube') void subscriptions.create(authorID, '', platform) }} /> : view === 'downloads' ? <DownloadsPage downloads={downloads} onRead={openDownloadReader} intent={downloadIntent} /> : view === 'tools' ? <ToolsPage downloads={downloads} columns={galleryLayout.columns} onColumns={galleryLayout.setColumns} onCookieChanged={platform => { gallery.invalidate(platform); if (platform === 'bilibili') bilibili.invalidate() }} onYouTubeFeed={feed => gallery.accept('youtube', feed)} onDiscover={() => navigate('discovery')} /> : <>
         {view === 'library' ? <PageHeader title="收藏" summary={library.loading ? '正在读取本机收藏…' : library.items.length ? `${library.items.length} 条收藏${(() => { const kinds = Object.entries(kindNames).map(([kind, name]) => [name, library.items.filter(item => item.kind === kind).length] as const).filter(([, count]) => count > 0); return kinds.length > 1 ? ' · ' + kinds.map(([name, count]) => `${name} ${count}`).join(' · ') : '' })()}` : '把想继续看、听、读的内容留在本机。'} actions={<button className="button button-primary collection-add" onClick={() => navigate('search')}><Plus size={16}/><span>添加内容</span></button>}/>
         : <PageHeader title="添加内容" summary="粘贴视频、播客、文章或 RSS 链接，也可以导入本机 PDF。识别后可直接阅读或收藏。"/>}
         {view === 'library' && <LibrarySources favorites={favorites} mode={libraryMode} localCount={library.items.length} onLocal={() => setLibraryMode('local')} onFolder={id => { favorites.setSelected(id); setLibraryMode('folder') }} onSetup={() => setLibraryMode('setup')}/>}
@@ -294,7 +350,7 @@ export function App() {
       </>}
       </PageLoadBoundary>
       </div>
-      <RestoreViewport key={view} view={view} {...viewportTarget.current}/>
+      <RestoreViewport key={`${view}:${viewportTarget.current.routeKey}:${viewportVersion}`} view={view} {...viewportTarget.current}/>
       </div>
     </main></ReaderActionsProvider>
     <BackToTop />

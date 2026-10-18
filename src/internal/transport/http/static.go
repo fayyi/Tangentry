@@ -1,9 +1,13 @@
 package httptransport
 
 import (
+	"bytes"
+	"encoding/json"
 	"io/fs"
 	"net/http"
 	"strings"
+
+	"tangentry/internal/preferences"
 )
 
 func (h *Handler) static(w http.ResponseWriter, r *http.Request) {
@@ -39,11 +43,28 @@ func (h *Handler) static(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if r.Method != http.MethodHead {
-			_, _ = w.Write(data)
+			_, _ = w.Write(h.injectTheme(r, data))
 		}
 		return
 	}
 	clone := r.Clone(r.Context())
 	clone.URL.Path = "/" + name
 	http.FileServer(http.FS(h.assets)).ServeHTTP(w, clone)
+}
+
+func (h *Handler) injectTheme(r *http.Request, data []byte) []byte {
+	theme := preferences.ThemeSystem
+	saved := false
+	if h.preferences != nil {
+		if value, persisted, err := h.preferences.Get(r.Context(), preferences.ThemeKey); err == nil {
+			loaded := preferences.ParseTheme(value)
+			if value == "" || loaded == preferences.Theme(value) {
+				theme, saved = loaded, persisted
+			}
+		}
+	}
+	encodedTheme, _ := json.Marshal(string(theme))
+	encodedSaved, _ := json.Marshal(saved)
+	data = bytes.Replace(data, []byte(`"__TANGENTRY_THEME__"`), encodedTheme, 1)
+	return bytes.Replace(data, []byte(`__TANGENTRY_THEME_SAVED__`), encodedSaved, 1)
 }

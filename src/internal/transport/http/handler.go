@@ -2,6 +2,8 @@ package httptransport
 
 import (
 	"io/fs"
+
+	"tangentry/internal/preferences"
 )
 
 type Handler struct {
@@ -15,6 +17,7 @@ type Handler struct {
 	notes         *notesHandler
 	feeds         *feedsHandler
 	backup        *backupHandler
+	preferences   preferences.Store
 	assets        fs.FS
 }
 
