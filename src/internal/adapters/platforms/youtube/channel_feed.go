@@ -5,9 +5,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/xml"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"tangentry/internal/adapters/feeds"
@@ -50,18 +52,112 @@ type feed struct {
 type Client struct {
 	feeds     *feeds.Client
 	http      *http.Client
+	fallback  func(context.Context, string) (discovery.Feed, error)
 	mu        sync.Mutex
 	durations map[string]int
 }
 
+type channelFetchError struct {
+	message string
+	status  int
+}
+
+func (e *channelFetchError) Error() string       { return e.message }
+func (e *channelFetchError) HTTPStatusCode() int { return e.status }
+
+// Unwrap exposes only the YouTube-specific platform error. Returning the RSS
+// cause here would let generic RSSHub wording win errors.As in the transport
+// layer, even though this error belongs to a YouTube URL.
+func (e *channelFetchError) Unwrap() error { return &discovery.PlatformError{Message: e.message} }
+
 func New(httpClient *http.Client) *Client {
 	return &Client{feeds: &feeds.Client{HTTP: httpClient, Parser: Parse}, http: httpClient, durations: make(map[string]int)}
+}
+func (c *Client) SetChannelFallback(fallback func(context.Context, string) (discovery.Feed, error)) {
+	c.fallback = fallback
 }
 func (c *Client) FetchConditional(ctx context.Context, id string, v feeds.Validators) (feeds.Result, error) {
 	if !discovery.YouTubeChannelID(id) {
 		return feeds.Result{}, discovery.ErrInvalidQuery
 	}
-	return c.feeds.FetchConditional(ctx, discovery.YouTubeChannelFeed(id), v)
+	result, err := c.feeds.FetchConditional(ctx, discovery.YouTubeChannelFeed(id), v)
+	if err == nil {
+		return result, err
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return result, err
+	}
+	if c.fallback == nil || !shouldFallback(err) {
+		return result, youtubeRSSFailure(err)
+	}
+	feed, fallbackErr := c.fallback(ctx, id)
+	if fallbackErr == nil {
+		return feeds.Result{Feed: feed}, nil
+	}
+	var fetchErr *feeds.FetchError
+	status := 0
+	if errors.As(err, &fetchErr) {
+		status = fetchErr.StatusCode
+	}
+	return feeds.Result{}, &channelFetchError{status: status, message: "YouTube 频道获取失败：RSS " + rssCause(err) + "；yt-dlp " + sanitizeCause(fallbackErr.Error())}
+}
+
+func youtubeRSSFailure(err error) error {
+	var fetchErr *feeds.FetchError
+	status := 0
+	if errors.As(err, &fetchErr) {
+		status = fetchErr.StatusCode
+	}
+	return &channelFetchError{status: status, message: "YouTube 频道获取失败：RSS " + rssCause(err)}
+}
+
+func shouldFallback(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var fetchErr *feeds.FetchError
+	if errors.As(err, &fetchErr) {
+		return fetchErr.StatusCode != http.StatusUnauthorized && fetchErr.StatusCode != http.StatusForbidden
+	}
+	return true
+}
+
+func rssCause(err error) string {
+	var fetchErr *feeds.FetchError
+	if errors.As(err, &fetchErr) {
+		contentType := fetchErr.ContentType
+		if contentType == "" {
+			contentType = "未知类型"
+		}
+		if fetchErr.StatusCode == 0 {
+			if fetchErr.TimedOut {
+				if fetchErr.Cause != nil {
+					return "请求超时（" + sanitizeCause(fetchErr.Cause.Error()) + "）"
+				}
+				return "请求超时"
+			}
+			if fetchErr.Cause != nil {
+				return "网络错误（" + sanitizeCause(fetchErr.Cause.Error()) + "；Content-Type: " + sanitizeCause(contentType) + "）"
+			}
+			return "内容无效（Content-Type: " + sanitizeCause(contentType) + "）"
+		}
+		status := strconv.Itoa(fetchErr.StatusCode)
+		return "HTTP " + status + "（Content-Type: " + sanitizeCause(contentType) + "）"
+	}
+	// Do not forward the generic feed adapter's RSSHub wording for YouTube.
+	return "内容无效（RSS/Atom 解析失败）"
+}
+
+func sanitizeCause(raw string) string {
+	raw = strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(raw, "\r", " "), "\n", " "))
+	lower := strings.ToLower(raw)
+	if strings.Contains(lower, "cookie") || strings.Contains(lower, "authorization") || strings.Contains(lower, "token") || strings.Contains(lower, "password") {
+		return "工具错误（已隐藏敏感信息）"
+	}
+	if len(raw) > 800 {
+		raw = raw[len(raw)-800:]
+	}
+	return raw
 }
 
 func (c *Client) Creator(ctx context.Context, id, cursor string) (discovery.SearchPage, error) {

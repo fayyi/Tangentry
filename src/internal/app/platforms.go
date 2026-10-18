@@ -99,6 +99,7 @@ func newPlatforms(dataDir string, configuration config.Config, toolkit *tools.To
 	feedClient := &feeds.Client{HTTP: public}
 	paperClient := &paperadapter.Client{HTTP: public, UserAgent: "Tangentry/0.1 (paper reader)"}
 	youtubeClient := youtube.New(public)
+	youtubeClient.SetChannelFallback(toolkit.YouTubeChannelFeed)
 	douyinClient := &douyin.Client{HTTP: public, Cookie: cookieFor(cookies, "douyin"), UserAgent: userAgentFor(cookies, "douyin"), Page: option.PlatformPageFetcher}
 	notesClient := &xiaohongshu.Client{HTTP: public, Cookie: cookieFor(cookies, "xiaohongshu"), UserAgent: userAgentFor(cookies, "xiaohongshu"), Page: option.PlatformPageFetcher}
 	forumClient := &discourse.Client{HTTP: public, UserAgent: userAgentFor(cookies, "linuxdo"), Session: cookies.PrepareLinuxdoSession, UserKey: cookies.LinuxdoUserKey, Page: option.PlatformPageFetcher}

@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,48 @@ import (
 	"testing"
 	"time"
 )
+
+func TestParseYouTubeChannelFeedMapsFlatEntries(t *testing.T) {
+	data := `{"channel_id":"UCaaaaaaaaaaaaaaaaaaaaaa","channel":"测试频道","entries":[{"id":"abcdefghijk","title":"视频一","channel_id":"UCaaaaaaaaaaaaaaaaaaaaaa","duration":61.9,"timestamp":1790856000,"view_count":42,"thumbnails":[{"url":"https://i.ytimg.com/vi/abcdefghijk/hqdefault.jpg"}]},{"id":"abcdefghijk","title":"重复"},{"id":"bad","title":"跳过"},{"id":"lmnopqrstuv","title":"视频二","timestamp":null,"view_count":null}]}`
+	feed, err := ParseYouTubeChannelFeed([]byte(data), "UCaaaaaaaaaaaaaaaaaaaaaa")
+	if err != nil || len(feed.Items) != 2 {
+		t.Fatalf("feed=%+v err=%v", feed, err)
+	}
+	first := feed.Items[0]
+	if first.ID != "youtube:abcdefghijk" || first.AuthorID != "UCaaaaaaaaaaaaaaaaaaaaaa" || first.DurationSeconds != 61 || first.ViewCount != 42 || first.PublishedAt != 1790856000 || first.ThumbnailURL == "" {
+		t.Fatalf("bad first item: %+v", first)
+	}
+	if feed.Items[1].PublishedAt != 0 || feed.Items[1].ViewCount != 0 {
+		t.Fatalf("null optional fields not accepted: %+v", feed.Items[1])
+	}
+}
+
+func TestParseYouTubeChannelFeedBoundsEntriesAndRejectsWrongChannel(t *testing.T) {
+	if _, err := ParseYouTubeChannelFeed([]byte(`{"channel_id":"UCbbbbbbbbbbbbbbbbbbbbbb","entries":[]}`), "UCaaaaaaaaaaaaaaaaaaaaaa"); err == nil {
+		t.Fatal("wrong channel accepted")
+	}
+	for _, raw := range []string{`{}`, `{"channel_id":"UCaaaaaaaaaaaaaaaaaaaaaa"}`} {
+		if _, err := ParseYouTubeChannelFeed([]byte(raw), "UCaaaaaaaaaaaaaaaaaaaaaa"); err == nil {
+			t.Fatalf("incomplete yt-dlp payload accepted: %s", raw)
+		}
+	}
+	empty, err := ParseYouTubeChannelFeed([]byte(`{"channel_id":"UCaaaaaaaaaaaaaaaaaaaaaa","entries":[]}`), "UCaaaaaaaaaaaaaaaaaaaaaa")
+	if err != nil || empty.Items == nil || len(empty.Items) != 0 {
+		t.Fatalf("explicit empty channel rejected: %+v err=%v", empty, err)
+	}
+	if _, err := ParseYouTubeChannelFeed([]byte(`{"channel_id":"UCaaaaaaaaaaaaaaaaaaaaaa","entries":[{"id":"invalid"}]}`), "UCaaaaaaaaaaaaaaaaaaaaaa"); err == nil {
+		t.Fatal("non-empty invalid entries accepted as an empty snapshot")
+	}
+	entries := make([]string, 0, 101)
+	for i := 0; i < 101; i++ {
+		entries = append(entries, fmt.Sprintf(`{"id":"%011d","title":"视频 %d","channel_id":"UCaaaaaaaaaaaaaaaaaaaaaa"}`, i, i))
+	}
+	data := `{"channel_id":"UCaaaaaaaaaaaaaaaaaaaaaa","entries":[` + strings.Join(entries, ",") + `]}`
+	feed, err := ParseYouTubeChannelFeed([]byte(data), "UCaaaaaaaaaaaaaaaaaaaaaa")
+	if err != nil || len(feed.Items) != 100 {
+		t.Fatalf("entry bound failed: got %d err=%v", len(feed.Items), err)
+	}
+}
 
 func TestChannelResolutionIsMetadataOnlyAndUsesNoCredentials(t *testing.T) {
 	if os.PathSeparator != '/' {

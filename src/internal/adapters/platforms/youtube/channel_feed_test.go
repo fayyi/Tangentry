@@ -2,12 +2,15 @@ package youtube
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"strings"
 	"tangentry/internal/adapters/feeds"
+	"tangentry/internal/content"
 	"tangentry/internal/discovery"
 	"tangentry/internal/netpolicy"
 	"testing"
@@ -99,6 +102,66 @@ func TestChannelConditionalClientUsesSharedBoundedFetcher(t *testing.T) {
 	}
 	if _, err = c.FetchConditional(context.Background(), "invalid", feeds.Validators{}); err == nil || calls != 2 {
 		t.Fatal("invalid channel fetched")
+	}
+}
+
+func TestChannelConditionalUsesFallbackAfterRSSFailure(t *testing.T) {
+	channelID := fixtureChannel
+	server := func(status int, body string, contentType string) *Client {
+		client := New(&http.Client{Transport: trip(func(r *http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": {contentType}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+		})})
+		return client
+	}
+	fallbackFeed := discovery.Feed{Items: []content.Item{{ID: "youtube:abcdefghijk", Platform: "youtube", PlatformID: "abcdefghijk", Kind: "video", Title: "回退视频", Author: "测试作者", AuthorID: channelID, URL: "https://www.youtube.com/watch?v=abcdefghijk", PublishedAt: 1}}, SourceTitle: "测试频道", Query: channelID}
+	calls := 0
+	c := server(http.StatusNotFound, "<html>404</html>", "text/html")
+	c.SetChannelFallback(func(context.Context, string) (discovery.Feed, error) { calls++; return fallbackFeed, nil })
+	result, err := c.FetchConditional(context.Background(), channelID, feeds.Validators{})
+	if err != nil || calls != 1 || len(result.Feed.Items) != 1 || result.Validators != (feeds.Validators{}) {
+		t.Fatalf("fallback not used: %+v calls=%d err=%v", result, calls, err)
+	}
+
+	calls = 0
+	ok := server(http.StatusOK, fixture(fixtureEntry), "application/atom+xml")
+	ok.SetChannelFallback(func(context.Context, string) (discovery.Feed, error) { calls++; return fallbackFeed, nil })
+	if _, err := ok.FetchConditional(context.Background(), channelID, feeds.Validators{}); err != nil || calls != 0 {
+		t.Fatalf("RSS success unexpectedly used fallback: calls=%d err=%v", calls, err)
+	}
+
+	fail := server(http.StatusNotFound, "<html>404</html>", "text/html")
+	fail.SetChannelFallback(func(context.Context, string) (discovery.Feed, error) {
+		return discovery.Feed{}, &discovery.PlatformError{Message: "退出码 1，stderr: 网络不可用"}
+	})
+	_, err = fail.FetchConditional(context.Background(), channelID, feeds.Validators{})
+	if err == nil || !strings.Contains(err.Error(), "YouTube") || !strings.Contains(err.Error(), "HTTP 404") || !strings.Contains(err.Error(), "text/html") || !strings.Contains(err.Error(), "网络不可用") || strings.Contains(err.Error(), "RSSHub") {
+		t.Fatalf("combined failure missing safe causes: %v", err)
+	}
+	malformed := server(http.StatusOK, "<html>not feed</html>", "text/html")
+	malformed.SetChannelFallback(func(context.Context, string) (discovery.Feed, error) {
+		return discovery.Feed{}, errors.New("工具退出码 2")
+	})
+	_, err = malformed.FetchConditional(context.Background(), channelID, feeds.Validators{})
+	if err == nil || !strings.Contains(err.Error(), "HTTP 200") || !strings.Contains(err.Error(), "text/html") || !strings.Contains(err.Error(), "工具退出码 2") {
+		t.Fatalf("invalid feed cause missing response details: %v", err)
+	}
+	network := New(&http.Client{Transport: trip(func(*http.Request) (*http.Response, error) { return nil, errors.New("连接被拒绝") })})
+	network.SetChannelFallback(func(context.Context, string) (discovery.Feed, error) {
+		return discovery.Feed{}, errors.New("退出码 3")
+	})
+	_, err = network.FetchConditional(context.Background(), channelID, feeds.Validators{})
+	if err == nil || !strings.Contains(err.Error(), "网络错误") || !strings.Contains(err.Error(), "连接被拒绝") {
+		t.Fatalf("network cause missing: %v", err)
+	}
+	timedOut := New(&http.Client{Transport: trip(func(*http.Request) (*http.Response, error) {
+		return nil, &net.DNSError{Err: "i/o timeout", Name: "fixture.youtube", IsTimeout: true}
+	})})
+	timedOut.SetChannelFallback(func(context.Context, string) (discovery.Feed, error) {
+		return discovery.Feed{}, errors.New("退出码 4")
+	})
+	_, err = timedOut.FetchConditional(context.Background(), channelID, feeds.Validators{})
+	if err == nil || !strings.Contains(err.Error(), "请求超时") || !strings.Contains(err.Error(), "i/o timeout") || !strings.Contains(err.Error(), "退出码 4") {
+		t.Fatalf("timeout cause missing: %v", err)
 	}
 }
 

@@ -27,6 +27,8 @@ type Result struct {
 type FetchError struct {
 	Message           string
 	StatusCode        int
+	ContentType       string
+	Cause             error
 	RetryAfterSeconds int64
 	Restricted        bool
 	TimedOut          bool
@@ -35,6 +37,7 @@ type FetchError struct {
 func (e *FetchError) Timeout() bool { return e.TimedOut }
 
 func (e *FetchError) HTTPStatusCode() int      { return e.StatusCode }
+func (e *FetchError) HTTPContentType() string  { return e.ContentType }
 func (e *FetchError) RetryDelaySeconds() int64 { return e.RetryAfterSeconds }
 func (e *FetchError) Error() string            { return e.Message }
 func (e *FetchError) Unwrap() error {
@@ -146,9 +149,9 @@ func (c *Client) fetchConditional(ctx context.Context, raw, identity string, cac
 		}
 		var networkError net.Error
 		if errors.As(err, &networkError) && networkError.Timeout() {
-			return Result{}, &FetchError{TimedOut: true, Message: "等待订阅源响应超时，地址不一定有误。若使用自部署 RSSHub，请检查路由生成耗时、服务日志与上游网络，稍后再更新。"}
+			return Result{}, &FetchError{TimedOut: true, Message: "等待订阅源响应超时，地址不一定有误。若使用自部署 RSSHub，请检查路由生成耗时、服务日志与上游网络，稍后再更新。", Cause: err}
 		}
-		return Result{}, &FetchError{Message: "订阅源暂时无法连接，请检查地址与网络。"}
+		return Result{}, &FetchError{Message: "订阅源暂时无法连接，请检查地址与网络。", Cause: err}
 	}
 	defer response.Body.Close()
 	resource := canonical
@@ -185,14 +188,26 @@ func (c *Client) fetchConditional(ctx context.Context, raw, identity string, cac
 		if limited || response.StatusCode == 503 {
 			wait = retryAfter(response.Header.Get("Retry-After"), time.Now())
 		}
-		return Result{}, &FetchError{Message: message, StatusCode: response.StatusCode, RetryAfterSeconds: wait, Restricted: limited}
+		return Result{}, &FetchError{Message: message, StatusCode: response.StatusCode, ContentType: response.Header.Get("Content-Type"), RetryAfterSeconds: wait, Restricted: limited}
 	}
 	if identity == "" {
 		identity = canonical
 	}
 	feed, err := c.parseResponse(ctx, response, identity)
 	if err != nil {
-		return Result{}, err
+		var fetchErr *FetchError
+		if errors.As(err, &fetchErr) {
+			if fetchErr.ContentType == "" {
+				fetchErr.ContentType = response.Header.Get("Content-Type")
+			}
+			if fetchErr.StatusCode == 0 {
+				fetchErr.StatusCode = response.StatusCode
+			}
+			return Result{}, err
+		}
+		// Preserve the concrete HTTP response metadata for parser failures. The
+		// original platform error remains available through errors.Is/As.
+		return Result{}, &FetchError{Message: err.Error(), StatusCode: response.StatusCode, ContentType: response.Header.Get("Content-Type"), Cause: err}
 	}
 	feed.Query = canonical
 	return Result{Feed: feed, Validators: confirmed}, nil
