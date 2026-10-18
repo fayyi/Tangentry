@@ -6,9 +6,45 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/egoist/mygo"
+
 	"tangentry/internal/app"
 	"tangentry/internal/platformfetch"
 )
+
+func TestPlatformPageWindowPositionUsesAllDisplayBounds(t *testing.T) {
+	displays := []mygo.Display{
+		{Label: "Built-in", Bounds: mygo.Rectangle{X: 0, Y: 0, Width: 1728, Height: 1117}},
+		{Label: "Left", Bounds: mygo.Rectangle{X: -1920, Y: -120, Width: 1920, Height: 1080}},
+		{Label: "Above", Bounds: mygo.Rectangle{X: 100, Y: -900, Width: 1200, Height: 900}},
+	}
+	x, y := platformPageWindowPosition(displays, 1024, 768)
+	planned := mygo.Rectangle{X: x, Y: y, Width: 1024, Height: 768}
+	for _, display := range displays {
+		if rectanglesOverlap(planned, display.Bounds) {
+			t.Fatalf("planned bridge window overlaps %s: %+v", display.Label, planned)
+		}
+	}
+	if x > -1920-1024-platformPageWindowGap || y > -900-768-platformPageWindowGap {
+		t.Fatalf("position does not clear union bounds: x=%d y=%d", x, y)
+	}
+}
+
+func TestPlatformPageWindowScreenReportsVisibleAndOffscreen(t *testing.T) {
+	displays := []mygo.Display{{Label: "Main", ID: 1, Bounds: mygo.Rectangle{X: 0, Y: 0, Width: 1000, Height: 800}}}
+	if got := platformPageWindowScreen(mygo.Rectangle{X: 100, Y: 100, Width: 20, Height: 20}, displays); got != "Main" {
+		t.Fatalf("visible screen = %q", got)
+	}
+	if got := platformPageWindowScreen(mygo.Rectangle{X: -200, Y: -200, Width: 20, Height: 20}, displays); got != "屏幕外" {
+		t.Fatalf("offscreen screen = %q", got)
+	}
+	if !platformPageWindowNeedsFallback(mygo.Rectangle{X: 100, Y: 100, Width: 20, Height: 20}, displays) {
+		t.Fatal("visible bridge window did not request concealment fallback")
+	}
+	if platformPageWindowNeedsFallback(mygo.Rectangle{X: -200, Y: -200, Width: 20, Height: 20}, displays) {
+		t.Fatal("offscreen bridge window unexpectedly requested fallback")
+	}
+}
 
 func TestValidatePlatformPath(t *testing.T) {
 	for _, raw := range []string{"/latest.json", "/top.json?page=2", "/aweme/v2/web/module/feed/?refresh_index=1"} {

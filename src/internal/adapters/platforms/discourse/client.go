@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -68,6 +69,84 @@ type SessionState struct {
 
 const discourseBrowserUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
 
+const discourseMaxResponseBody = 4 << 20
+
+var diagnosticSecretPattern = regexp.MustCompile(`(?i)(?:cookie|token|secret|sig(?:nature)?|key|auth(?:orization)?)\s*[:=]\s*["']?[^\s,;"']+|[A-Za-z0-9_\-]{32,}`)
+
+func sanitizeDiagnosticSample(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if len(raw) > 200 {
+		raw = raw[:200]
+	}
+	return diagnosticSecretPattern.ReplaceAllString(raw, "<已脱敏>")
+}
+
+func sanitizeDiagnosticURL(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return "<无效 URL>"
+	}
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String()
+}
+
+func pageResponseMessage(path string, response platformfetch.Response, reason string) string {
+	parts := []string{"Linux.do 页面请求失败", "路径=" + path}
+	if reason != "" {
+		parts = append(parts, reason)
+	}
+	parts = append(parts, "状态码="+strconv.Itoa(response.Status))
+	if response.ContentType != "" {
+		parts = append(parts, "content-type="+response.ContentType)
+	}
+	if response.URL != "" {
+		parts = append(parts, "最终 URL="+sanitizeDiagnosticURL(response.URL))
+	}
+	if sample := sanitizeDiagnosticSample(response.Body); sample != "" {
+		parts = append(parts, "响应片段="+sample)
+	}
+	if response.Restricted || response.Status == http.StatusForbidden || looksLikeCloudflare([]byte(response.Body)) {
+		parts = append(parts, "疑似 Cloudflare 验证页")
+	}
+	return strings.Join(parts, "；") + "。"
+}
+
+func bridgeFailure(path string, bridgeErr error) error {
+	if bridgeErr == nil {
+		return nil
+	}
+	return &discovery.PlatformError{Message: "Linux.do 页面请求桥不可用（路径=" + path + "）：" + sanitizeDiagnosticSample(bridgeErr.Error()) + "。"}
+}
+
+func invalidJSONFailure(path string, response platformfetch.Response) error {
+	return &discovery.PlatformError{Message: pageResponseMessage(path, response, "响应不是 JSON")}
+}
+
+func malformedDetailFailure(path string, responseBody []byte, cause error) error {
+	response := platformfetch.Response{Status: http.StatusOK, Body: string(responseBody), URL: "https://linux.do" + path, ContentType: "application/json"}
+	reason := "详情 JSON 结构无法解析"
+	if cause != nil {
+		reason += "（" + sanitizeDiagnosticSample(cause.Error()) + "）"
+	}
+	return &discovery.PlatformError{Message: pageResponseMessage(path, response, reason)}
+}
+
+func optionalNotFound(path string) bool {
+	if path == "/session/current.json" {
+		return true
+	}
+	for _, name := range []string{"latest", "hot", "top", "new", "unread"} {
+		if path == "/"+name+".json" || strings.HasPrefix(path, "/"+name+".json?") {
+			return true
+		}
+	}
+	return false
+}
+
 func setDiscourseBrowserHeaders(req *http.Request, ajax bool) {
 	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
 	req.Header.Set("User-Agent", discourseBrowserUserAgent)
@@ -81,6 +160,7 @@ func setDiscourseBrowserHeaders(req *http.Request, ajax bool) {
 }
 
 func (c *Client) read(ctx context.Context, path string) ([]byte, int, error) {
+	var bridgeErr error
 	if c.Page != nil {
 		response, err := c.Page.Fetch(ctx, "linuxdo", path, platformfetch.Request{Method: http.MethodGet, Headers: map[string]string{
 			"Accept":           "application/json, text/javascript, */*; q=0.01",
@@ -89,32 +169,30 @@ func (c *Client) read(ctx context.Context, path string) ([]byte, int, error) {
 		if err == nil {
 			raw := []byte(response.Body)
 			if response.Restricted || response.Status == http.StatusForbidden || response.Status == http.StatusUnauthorized || response.Status == http.StatusTooManyRequests || looksLikeCloudflare(raw) {
-				return nil, response.Status, linuxdoPageRestricted(response.Status)
+				return nil, response.Status, &discovery.PlatformError{Message: pageResponseMessage(path, response, "需要在应用内完成 Linux.do 验证"), Restricted: true}
 			}
 			if response.Status != http.StatusOK {
-				if response.Status == http.StatusNotFound {
+				if response.Status == http.StatusNotFound && optionalNotFound(path) {
 					return nil, response.Status, nil
 				}
-				return nil, response.Status, discovery.ErrUnavailable
+				return nil, response.Status, &discovery.PlatformError{Message: pageResponseMessage(path, response, "HTTP 请求未成功")}
 			}
 			if !json.Valid(raw) {
-				if response.Restricted || looksLikeCloudflare(raw) {
-					return nil, response.Status, linuxdoPageRestricted(response.Status)
-				}
-				return nil, response.Status, discovery.ErrUnavailable
+				return nil, response.Status, invalidJSONFailure(path, response)
 			}
 			return raw, response.Status, nil
 		}
+		bridgeErr = err
 		// A native bridge is optional. If it cannot create or use a WebView,
 		// retain the server-side HTTP fallback below.
 	}
 	if c.HTTP == nil {
-		return nil, 0, discovery.ErrUnavailable
+		return nil, 0, bridgeFailure(path, bridgeErr)
 	}
 	origin := "https://linux.do" + path
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, origin, nil)
 	if err != nil {
-		return nil, 0, discovery.ErrUnavailable
+		return nil, 0, &discovery.PlatformError{Message: "Linux.do 页面请求地址无效（路径=" + path + "）"}
 	}
 	req.Header.Set("Accept", "application/json, text/javascript, */*; q=0.01")
 	setDiscourseBrowserHeaders(req, true)
@@ -153,46 +231,51 @@ func (c *Client) read(ctx context.Context, path string) ([]byte, int, error) {
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	res, err := client.Do(req)
 	if err != nil {
-		return nil, 0, discovery.ErrUnavailable
+		message := "Linux.do 页面请求失败（路径=" + path + "）：" + sanitizeDiagnosticSample(err.Error())
+		if bridgeErr != nil {
+			message += "；页面请求桥原因=" + sanitizeDiagnosticSample(bridgeErr.Error())
+		}
+		return nil, 0, &discovery.PlatformError{Message: message + "。"}
 	}
 	defer res.Body.Close()
+	responseURL := req.URL.String()
+	if res.Request != nil && res.Request.URL != nil {
+		responseURL = res.Request.URL.String()
+	}
+	raw, readErr := io.ReadAll(io.LimitReader(res.Body, discourseMaxResponseBody+1))
+	response := platformfetch.Response{Status: res.StatusCode, Body: string(raw), URL: responseURL, ContentType: res.Header.Get("Content-Type")}
+	if readErr != nil {
+		return nil, res.StatusCode, &discovery.PlatformError{Message: pageResponseMessage(path, response, "读取响应失败")}
+	}
 	if strings.EqualFold(res.Header.Get("cf-mitigated"), "challenge") {
-		return nil, res.StatusCode, &discovery.PlatformError{Message: "Linux.do 触发 Cloudflare 验证，请在桌面浏览器打开 linux.do 完成验证后重新导入 Cookie（需包含 cf_clearance）。", Restricted: true}
+		return nil, res.StatusCode, &discovery.PlatformError{Message: pageResponseMessage(path, response, "需要在应用内完成 Linux.do 验证；若使用 Cookie，请确认包含 cf_clearance"), Restricted: true}
 	}
 	switch res.StatusCode {
 	case 401:
-		return nil, res.StatusCode, &discovery.PlatformError{Message: "Linux.do 登录已失效，请重新保存原站登录信息。", Restricted: true}
+		return nil, res.StatusCode, &discovery.PlatformError{Message: pageResponseMessage(path, response, "Linux.do 登录已失效，请在应用内完成验证后重试"), Restricted: true}
 	case 403:
-		return nil, res.StatusCode, &discovery.PlatformError{Message: "Linux.do 触发 Cloudflare 验证，请在桌面浏览器打开 linux.do 完成验证后重新导入 Cookie（需包含 cf_clearance）。", Restricted: true}
+		return nil, res.StatusCode, &discovery.PlatformError{Message: pageResponseMessage(path, response, "需要在应用内完成 Linux.do 验证；若使用 Cookie，请确认包含 cf_clearance"), Restricted: true}
 	case 429:
-		return nil, res.StatusCode, &discovery.PlatformError{Message: "Linux.do 暂时限制请求，请稍后手动重试。", Restricted: true}
+		return nil, res.StatusCode, &discovery.PlatformError{Message: pageResponseMessage(path, response, "Linux.do 暂时限制请求，请稍后在应用内重试"), Restricted: true}
+	}
+	if len(raw) > discourseMaxResponseBody {
+		return nil, res.StatusCode, &discovery.PlatformError{Message: pageResponseMessage(path, response, "响应超过 4 MiB 大小限制")}
 	}
 	if res.StatusCode != http.StatusOK {
-		return nil, res.StatusCode, discovery.ErrUnavailable
+		return nil, res.StatusCode, &discovery.PlatformError{Message: pageResponseMessage(path, response, "HTTP 请求未成功")}
 	}
-	raw, err := io.ReadAll(io.LimitReader(res.Body, (2<<20)+1))
-	if err != nil || len(raw) > 2<<20 || !json.Valid(raw) {
+	if !json.Valid(raw) {
 		if looksLikeCloudflare(raw) {
-			return nil, res.StatusCode, &discovery.PlatformError{Message: "Linux.do 返回了 Cloudflare 验证页面，请在原站完成验证后重试。", Restricted: true}
+			return nil, res.StatusCode, &discovery.PlatformError{Message: pageResponseMessage(path, response, "需要在应用内完成 Linux.do 验证"), Restricted: true}
 		}
-		return nil, res.StatusCode, discovery.ErrUnavailable
+		return nil, res.StatusCode, invalidJSONFailure(path, response)
 	}
 	if save != nil && req.Header.Get("Cookie") != "" {
 		if err := save(res.Cookies()); err != nil {
-			return nil, res.StatusCode, discovery.ErrUnavailable
+			return nil, res.StatusCode, &discovery.PlatformError{Message: "Linux.do 登录态保存失败（路径=" + path + "），请重试。"}
 		}
 	}
 	return raw, res.StatusCode, nil
-}
-
-func linuxdoPageRestricted(status int) error {
-	if status == http.StatusUnauthorized {
-		return &discovery.PlatformError{Message: "Linux.do 登录已失效，请在应用内完成验证后重试。", Restricted: true}
-	}
-	if status == http.StatusTooManyRequests {
-		return &discovery.PlatformError{Message: "Linux.do 暂时限制请求，请稍后在应用内重试。", Restricted: true}
-	}
-	return &discovery.PlatformError{Message: "需要在应用内完成 Linux.do 验证", Restricted: true}
 }
 
 func looksLikeCloudflare(raw []byte) bool {
@@ -285,8 +368,11 @@ func (c *Client) Topic(ctx context.Context, id string) (content.Item, error) {
 			Stream []int64 `json:"stream"`
 		} `json:"post_stream"`
 	}
-	if json.Unmarshal(raw, &data) != nil || data.ID != number {
-		return content.Item{}, discovery.ErrUnavailable
+	if err := json.Unmarshal(raw, &data); err != nil {
+		return content.Item{}, malformedDetailFailure("/t/"+id+".json", raw, err)
+	}
+	if data.ID != number {
+		return content.Item{}, &discovery.PlatformError{Message: "Linux.do 话题详情与请求 ID 不一致（请求=" + id + "，响应=" + strconv.FormatInt(data.ID, 10) + "）。"}
 	}
 	date, _ := time.Parse(time.RFC3339Nano, data.Created)
 	item := content.Item{ID: "linuxdo:" + id, Platform: "linuxdo", PlatformID: id, Kind: "article", Title: data.Title, Category: data.Category, ViewCount: int64(data.Views), LikeCount: data.Likes, URL: "https://linux.do/t/" + id}
@@ -294,9 +380,13 @@ func (c *Client) Topic(ctx context.Context, id string) (content.Item, error) {
 		item.PublishedAt = date.Unix()
 	}
 	posts := make([]content.DiscussionPost, 0, len(data.Stream.Posts))
+	parseFailure := false
 	for _, post := range data.Stream.Posts {
 		cookedBlocks := feeds.ParseArticleBlocks(post.Body, item.URL)
 		if len(cookedBlocks) == 0 {
+			if strings.TrimSpace(post.Body) != "" {
+				parseFailure = true
+			}
 			continue
 		}
 		if post.Number == 1 {
@@ -308,6 +398,9 @@ func (c *Client) Topic(ctx context.Context, id string) (content.Item, error) {
 			post.ID = int64(post.Number)
 		}
 		posts = append(posts, content.DiscussionPost{ID: post.ID, Number: post.Number, Username: post.Username, Name: post.Name, AvatarURL: discourseAvatar(post.Avatar), CreatedAt: created.Unix(), LikeCount: post.Likes, ReplyToNumber: post.ReplyTo, ReplyToUser: post.ReplyUser, ReplyToPostID: post.ReplyID, Blocks: cookedBlocks})
+	}
+	if parseFailure {
+		return content.Item{}, &discovery.PlatformError{Message: "Linux.do 话题正文包含无法解析的 HTML，详情未能完整渲染。"}
 	}
 	var mainText []string
 	if len(posts) > 0 {
@@ -338,7 +431,7 @@ func (c *Client) Topic(ctx context.Context, id string) (content.Item, error) {
 		item.Discussion = &content.Discussion{TopicID: id, TotalPosts: maxInt(data.PostsCount, len(postIDs), data.ReplyCount+1), LoadedPosts: len(posts), Participating: len(participants), PostIDs: postIDs, Posts: posts}
 	}
 	if content.Validate(item) != nil {
-		return content.Item{}, discovery.ErrUnavailable
+		return content.Item{}, &discovery.PlatformError{Message: "Linux.do 话题详情缺少可显示的正文或字段，无法渲染。"}
 	}
 	return item, nil
 }
@@ -375,17 +468,27 @@ func (c *Client) TopicPosts(ctx context.Context, id string, postIDs []int64) (co
 			} `json:"posts"`
 		} `json:"post_stream"`
 	}
-	if json.Unmarshal(raw, &data) != nil {
-		return content.Discussion{}, discovery.ErrUnavailable
+	if err := json.Unmarshal(raw, &data); err != nil {
+		return content.Discussion{}, malformedDetailFailure("/t/"+id+"/posts.json", raw, err)
 	}
 	posts := make([]content.DiscussionPost, 0, len(data.PostStream.Posts))
+	parseFailure := false
 	for _, post := range data.PostStream.Posts {
 		blocks := feeds.ParseArticleBlocks(post.Body, "https://linux.do/t/"+id)
 		if len(blocks) == 0 {
+			if strings.TrimSpace(post.Body) != "" {
+				parseFailure = true
+			}
 			continue
 		}
 		created, _ := time.Parse(time.RFC3339Nano, post.Created)
 		posts = append(posts, content.DiscussionPost{ID: post.ID, Number: post.Number, Username: post.Username, Name: post.Name, AvatarURL: discourseAvatar(post.Avatar), CreatedAt: created.Unix(), LikeCount: post.Likes, ReplyToNumber: post.ReplyTo, ReplyToUser: post.ReplyUser, ReplyToPostID: post.ReplyID, Blocks: blocks})
+	}
+	if parseFailure {
+		return content.Discussion{}, &discovery.PlatformError{Message: "Linux.do 楼层正文包含无法解析的 HTML，未能完整渲染。"}
+	}
+	if len(data.PostStream.Posts) == 0 {
+		return content.Discussion{}, &discovery.PlatformError{Message: "Linux.do 楼层接口未返回请求的楼层正文。"}
 	}
 	return content.Discussion{TopicID: id, LoadedPosts: len(posts), Posts: posts}, nil
 }

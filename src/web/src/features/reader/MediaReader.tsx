@@ -24,6 +24,7 @@ import { ReaderPublication } from './ReaderPublication'
 import { DiscussionReader } from './DiscussionReader'
 import { DiscussionFallback } from './DiscussionFallback'
 import { useReaderContent } from './useReaderContent'
+import { openDesktopPlatformLogin, useCapabilities } from '../../shared/api/desktop'
 import './reader.css'
 import './watch.css'
 import './listen.css'
@@ -36,7 +37,8 @@ function ResizableReaderPlayer({ children }: { children: ReactNode }) {
 
 export function MediaReader({ id, initialItem, jobs, jobsLoading = false, video, reading, notes, insights, mediaRef, playbackRef, onReady, onPosition, onSeek, onItem, onQuote, annotations = [], textFocus, onOpenNotes, onUnresolved, onPDFQuote, onReturn }: { id: string; initialItem?: ContentItem; jobs: DownloadJob[]; jobsLoading?: boolean; video?: ReactNode; reading?: ReactNode; notes?: ReactNode; insights?: ReactNode; mediaRef?:RefObject<HTMLMediaElement|null>; playbackRef?:RefObject<PlaybackHandle|null>; onReady?:(ready:boolean)=>void; onPosition?:(seconds:number|null)=>void; onSeek?:(seconds:number)=>void; onItem?:(item:ContentItem)=>void; onQuote?:(text:string,anchor?:TextAnchor)=>void; annotations?:ReadingNote[]; textFocus?:{id:string;token:number;allowReturn?:boolean}|null; onOpenNotes?:(ids:string[])=>void; onUnresolved?:(ids:string[])=>void; onPDFQuote?:(text:string,anchor:PDFAnchor)=>void; onReturn: () => void }) {
   const [quote,setQuote]=useState('')
-  const { item, error, localReadFailed, retryLocalRead, social, localSocial, refreshDetails, detailError, detailLoading, detailRead, sourceEditing, setSourceEditing, onSourceUpdated } = useReaderContent({ id, initialItem, jobs, jobsLoading, onItem })
+  const { item, error, errorRequiresVerification, localReadFailed, retryLocalRead, social, localSocial, refreshDetails, detailError, detailRequiresVerification, detailLoading, detailRead, sourceEditing, setSourceEditing, onSourceUpdated } = useReaderContent({ id, initialItem, jobs, jobsLoading, onItem })
+  const capabilities = useCapabilities()
   const [focusReading, setFocusReading] = useState(false)
   useEffect(() => setFocusReading(false), [id])
   const [audioError, setAudioError] = useState(false)
@@ -79,6 +81,14 @@ export function MediaReader({ id, initialItem, jobs, jobsLoading = false, video,
   useEffect(() => { lastVideoPosition.current = 0; compatibilityResume.current = null; compatibilityRequested.current = null }, [id, item?.mediaUrl])
   const compatibility = useCompatibilityPlayback(id, item?.url ?? '')
   const compatibilityBlocked = compatibility.active && !compatibility.source
+  async function verifyLinuxdo() {
+    try {
+      await openDesktopPlatformLogin('linuxdo')
+    } catch {
+      // The detail error remains visible so the user can retry after closing
+      // a failed or unavailable native verification window.
+    }
+  }
   useNativePlaybackClock(native, `${id}:${item?.mediaUrl}:${localSocial?.id}:${compatibility.source}:${compatibilityBlocked}`, seconds => {
     if (seconds !== null && item?.kind === 'video') lastVideoPosition.current = seconds
     onPosition?.(seconds)
@@ -164,9 +174,9 @@ export function MediaReader({ id, initialItem, jobs, jobsLoading = false, video,
     : null
   const textAboveNotes = Boolean(notes && item?.platform === 'xiaohongshu' && item.kind === 'image')
   const sourceText = item && (item.kind === 'article' || item.kind === 'image') && !(item.kind === 'article' && item.platform === 'rss')
-    ? <ArticleReader collapsible={textAboveNotes} contentId={item.description?.trim() || item.articleBlocks?.length ? item.id : undefined} summarySource="article:content" toolbarOwnsSummary={item.platform==='linuxdo'} sourceTitle={item.title} sourceURL={item.url} title={item.platform==='rss'?'订阅源正文':item.platform==='linuxdo'?'':'笔记正文'} text={item.description || (item.articleBlocks?.length ? item.articleBlocks.filter(block => block.kind !== 'image' && block.kind !== 'emoji').map(block => block.text).filter(Boolean).join('\n\n') : '') || (item.platform==='xiaohongshu'?(detailRead?'这篇笔记没有附加文字。':detailLoading?'正在获取正文…':'正文尚未读取。'):'来源没有提供正文，可打开原内容查看。')} blocks={item.articleBlocks?.length ? item.articleBlocks : undefined} feed={item.platform==='rss'} notes={annotations} focus={textFocus} onQuote={item.description || item.articleBlocks?.length ? quoteText : undefined} onOpenNotes={revealNotes} onUnresolved={onUnresolved} navigationTarget={notesNavigation} onReturnedToReading={returnedToReading}/>
+    ? <ArticleReader collapsible={textAboveNotes} contentId={item.description?.trim() || item.articleBlocks?.length ? item.id : undefined} summarySource="article:content" toolbarOwnsSummary={item.platform==='linuxdo'} sourceTitle={item.title} sourceURL={item.url} title={item.platform==='rss'?'订阅源正文':item.platform==='linuxdo'?'':'笔记正文'} text={item.description || (item.articleBlocks?.length ? item.articleBlocks.filter(block => block.kind !== 'image' && block.kind !== 'emoji').map(block => block.text).filter(Boolean).join('\n\n') : '') || (item.platform==='xiaohongshu'?(detailRead?'这篇笔记没有附加文字。':detailLoading?'正在获取正文…':'正文尚未读取。'):item.platform==='linuxdo'?'话题正文暂不可用，可打开原内容查看。':'来源没有提供正文，可打开原内容查看。')} blocks={item.articleBlocks?.length ? item.articleBlocks : undefined} feed={item.platform==='rss'} notes={annotations} focus={textFocus} onQuote={item.description || item.articleBlocks?.length ? quoteText : undefined} onOpenNotes={revealNotes} onUnresolved={onUnresolved} navigationTarget={notesNavigation} onReturnedToReading={returnedToReading}/>
     : null
-  const discussionText = item?.platform === 'linuxdo' ? <DiscussionFallback discussion={item.discussion?.posts?.length ? <DiscussionReader discussion={item.discussion} topicURL={item.url} sourceURL={item.url} viewCount={item.viewCount} likeCount={item.likeCount} notes={annotations} focus={textFocus} onQuote={quoteText} onOpenNotes={revealNotes} onUnresolved={onUnresolved}/> : undefined} loading={detailLoading} error={detailError} onRetry={refreshDetails}>{sourceText || <article className="article-reader"><p>{item.description || '话题正文暂不可用，可打开原内容查看。'}</p></article>}</DiscussionFallback>
+  const discussionText = item?.platform === 'linuxdo' ? <DiscussionFallback discussion={item.discussion?.posts?.length ? <DiscussionReader discussion={item.discussion} topicURL={item.url} sourceURL={item.url} viewCount={item.viewCount} likeCount={item.likeCount} notes={annotations} focus={textFocus} onQuote={quoteText} onOpenNotes={revealNotes} onUnresolved={onUnresolved}/> : undefined} loading={detailLoading} error={detailError} onRetry={refreshDetails} onVerify={detailRequiresVerification && capabilities.platformWebViewLogin ? () => { void verifyLinuxdo() } : undefined}>{sourceText || <article className="article-reader"><p>{item.description || '话题正文暂不可用，可打开原内容查看。'}</p></article>}</DiscussionFallback>
     : null
   const videoLayout = Boolean(video || item?.kind === 'video')
   const audioLayout = item?.kind === 'audio'
@@ -176,7 +186,7 @@ export function MediaReader({ id, initialItem, jobs, jobsLoading = false, video,
   return <section data-focus-reading={focusReading} className={`media-reader${item?.kind === 'article' ? ' article-workspace' : ''}${item?.kind === 'pdf' ? ' document-workspace' : ''}${videoLayout ? ' video-workspace' : ''}${audioLayout ? ' audio-workspace' : ''}`}>
     <div className="reading-nav"><button className="button button-secondary" title="返回列表" onClick={onReturn}><ArrowLeft size={16}/>返回列表</button><span>{item?mediaLabel(item):'内容阅读'}</span><ReaderActionsSlot/>{notes && item && (item.kind === 'article' || item.kind === 'pdf') && <button className="button button-secondary reading-focus-toggle" aria-label={focusReading ? '展开笔记' : '专注阅读'} title={focusReading ? '展开笔记' : '专注阅读'} aria-pressed={focusReading} onClick={() => setFocusReading(value => !value)}>{focusReading ? <PanelRightOpen size={16}/> : <PanelRightClose size={16}/>}<span>{focusReading ? '展开笔记' : '专注阅读'}</span></button>}{item?.platform==='xiaohongshu'&&<button className="icon-button" aria-label="刷新笔记详情" title="刷新笔记详情" disabled={detailLoading} onClick={refreshDetails}><RotateCw size={16}/></button>}{item && <a className="button button-secondary" title={item.kind==='pdf'?'打开 PDF 原文件':'打开原内容'} href={item.platform==='pdf'?'/api/documents/'+item.platformId+'/file':item.mediaUrl&&item.kind==='pdf'?item.mediaUrl:item.url} target="_blank" rel="noopener noreferrer">{item.kind==='pdf'?'打开 PDF 原文件':'打开原内容'}<ExternalLink size={15}/></a>}</div>
     {!videoLayout && !audioLayout && heading}
-    {error&&<div className={`error-panel${social?.[0]==='xiaohongshu'?' reader-source-error':''}`} role="alert"><p>{error}</p>{localReadFailed?<div className="reader-source-error-actions"><button className="button button-secondary" onClick={retryLocalRead}><RotateCw size={14}/>重新读取</button></div>:social?.[0]==='xiaohongshu'?<div className="reader-source-error-actions"><button className="button button-secondary" onClick={refreshDetails}>重新读取</button><button className="button button-secondary" onClick={()=>setSourceEditing(true)}>更新链接</button><a className="button button-secondary" href="/tools#accounts">检查登录</a></div>:<button className="button button-secondary" onClick={refreshDetails}>重新读取</button>}</div>}
+    {error&&<div className={`error-panel${social?.[0]==='xiaohongshu'?' reader-source-error':''}`} role="alert"><p>{error}</p>{localReadFailed?<div className="reader-source-error-actions"><button className="button button-secondary" onClick={retryLocalRead}><RotateCw size={14}/>重新读取</button></div>:social?.[0]==='xiaohongshu'?<div className="reader-source-error-actions"><button className="button button-secondary" onClick={refreshDetails}>重新读取</button><button className="button button-secondary" onClick={()=>setSourceEditing(true)}>更新链接</button><a className="button button-secondary" href="/tools#accounts">检查登录</a></div>:<div className="reader-source-error-actions"><button className="button button-secondary" onClick={refreshDetails}>重新读取</button>{errorRequiresVerification && id.startsWith('linuxdo:') && capabilities.platformWebViewLogin && <button className="button button-secondary" onClick={() => { void verifyLinuxdo() }}>重新验证</button>}</div>}</div>}
     {sourceEditing && <XiaohongshuSourceForm key={id} id={id} onClose={()=>setSourceEditing(false)} onUpdated={detail=>{
       onSourceUpdated(detail)
     }}/>}
