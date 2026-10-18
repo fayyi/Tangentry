@@ -4,6 +4,7 @@ package discourse
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -342,65 +343,53 @@ func (c *Client) Topic(ctx context.Context, id string) (content.Item, error) {
 	if err != nil {
 		return content.Item{}, err
 	}
-	var data struct {
-		ID         int64  `json:"id"`
-		Title      string `json:"title"`
-		Created    string `json:"created_at"`
-		Category   string `json:"category_name"`
-		Views      int    `json:"views"`
-		Likes      int    `json:"like_count"`
-		ReplyCount int    `json:"reply_count"`
-		PostsCount int    `json:"posts_count"`
-		Stream     struct {
-			Posts []struct {
-				ID        int64  `json:"id"`
-				Number    int    `json:"post_number"`
-				Body      string `json:"cooked"`
-				Username  string `json:"username"`
-				Name      string `json:"name"`
-				Avatar    string `json:"avatar_template"`
-				Created   string `json:"created_at"`
-				Likes     int    `json:"like_count"`
-				ReplyTo   int    `json:"reply_to_post_number"`
-				ReplyUser string `json:"reply_to_user"`
-				ReplyID   int64  `json:"reply_to_post_id"`
-			} `json:"posts"`
-			Stream []int64 `json:"stream"`
-		} `json:"post_stream"`
-	}
-	if err := json.Unmarshal(raw, &data); err != nil {
+	data, err := discourseObject(raw)
+	if err != nil {
 		return content.Item{}, malformedDetailFailure("/t/"+id+".json", raw, err)
 	}
-	if data.ID != number {
-		return content.Item{}, &discovery.PlatformError{Message: "Linux.do 话题详情与请求 ID 不一致（请求=" + id + "，响应=" + strconv.FormatInt(data.ID, 10) + "）。"}
+	responseID := discourseInt64(data["id"])
+	if responseID != number {
+		return content.Item{}, &discovery.PlatformError{Message: "Linux.do 话题详情与请求 ID 不一致（请求=" + id + "，响应=" + strconv.FormatInt(responseID, 10) + "）。"}
 	}
-	date, _ := time.Parse(time.RFC3339Nano, data.Created)
-	item := content.Item{ID: "linuxdo:" + id, Platform: "linuxdo", PlatformID: id, Kind: "article", Title: data.Title, Category: data.Category, ViewCount: int64(data.Views), LikeCount: data.Likes, URL: "https://linux.do/t/" + id}
+	title := discourseString(data["title"])
+	if strings.TrimSpace(title) == "" {
+		title = "Linux.do 话题 " + id
+	}
+	date, _ := time.Parse(time.RFC3339Nano, discourseString(data["created_at"]))
+	item := content.Item{
+		ID: "linuxdo:" + id, Platform: "linuxdo", PlatformID: id, Kind: "article",
+		Title: title, Category: discourseString(data["category_name"]),
+		ViewCount: maxInt64(discourseInt64(data["views"]), 0), LikeCount: discourseCount(data["like_count"]),
+		URL: "https://linux.do/t/" + id,
+	}
 	if !date.IsZero() {
 		item.PublishedAt = date.Unix()
 	}
-	posts := make([]content.DiscussionPost, 0, len(data.Stream.Posts))
-	parseFailure := false
-	for _, post := range data.Stream.Posts {
+	postStream, _ := discourseObject(data["post_stream"])
+	rawPosts := discourseArray(postStream["posts"])
+	posts := make([]content.DiscussionPost, 0, len(rawPosts))
+	for _, rawPost := range rawPosts {
+		post, ok := decodeDiscoursePost(rawPost)
+		if !ok {
+			continue
+		}
 		cookedBlocks := feeds.ParseArticleBlocks(post.Body, item.URL)
 		if len(cookedBlocks) == 0 {
-			if strings.TrimSpace(post.Body) != "" {
-				parseFailure = true
-			}
+			continue
+		}
+		if post.Number <= 0 {
 			continue
 		}
 		if post.Number == 1 {
-			item.Author = post.Username
+			item.Author = firstNonEmpty(post.Username, post.Name)
 			item.AuthorAvatarURL = discourseAvatar(post.Avatar)
 		}
 		created, _ := time.Parse(time.RFC3339Nano, post.Created)
 		if post.ID <= 0 {
 			post.ID = int64(post.Number)
 		}
-		posts = append(posts, content.DiscussionPost{ID: post.ID, Number: post.Number, Username: post.Username, Name: post.Name, AvatarURL: discourseAvatar(post.Avatar), CreatedAt: created.Unix(), LikeCount: post.Likes, ReplyToNumber: post.ReplyTo, ReplyToUser: post.ReplyUser, ReplyToPostID: post.ReplyID, Blocks: cookedBlocks})
-	}
-	if parseFailure {
-		return content.Item{}, &discovery.PlatformError{Message: "Linux.do 话题正文包含无法解析的 HTML，详情未能完整渲染。"}
+		username := firstNonEmpty(post.Username, post.Name, "Linux.do")
+		posts = append(posts, content.DiscussionPost{ID: post.ID, Number: post.Number, Username: username, Name: post.Name, AvatarURL: discourseAvatar(post.Avatar), CreatedAt: created.Unix(), LikeCount: post.Likes, ReplyToNumber: post.ReplyTo, ReplyToUser: post.ReplyUser, ReplyToPostID: post.ReplyID, Blocks: cookedBlocks})
 	}
 	var mainText []string
 	if len(posts) > 0 {
@@ -411,10 +400,12 @@ func (c *Client) Topic(ctx context.Context, id string) (content.Item, error) {
 		}
 	}
 	item.Description = feeds.Text(strings.Join(mainText, "\n\n"))
-	if data.ReplyCount > 0 {
-		item.ReplyCount = data.ReplyCount
-	} else if len(data.Stream.Posts) > 1 {
-		item.ReplyCount = len(data.Stream.Posts) - 1
+	replyCount := discourseCount(data["reply_count"])
+	postsCount := discourseCount(data["posts_count"])
+	if replyCount > 0 {
+		item.ReplyCount = replyCount
+	} else if len(rawPosts) > 1 {
+		item.ReplyCount = len(rawPosts) - 1
 	}
 	if len(posts) > 0 {
 		item.ArticleBlocks = posts[0].Blocks
@@ -422,13 +413,13 @@ func (c *Client) Topic(ctx context.Context, id string) (content.Item, error) {
 		for _, post := range posts {
 			participants[post.Username] = struct{}{}
 		}
-		postIDs := append([]int64(nil), data.Stream.Stream...)
+		postIDs := discourseIDs(postStream["stream"])
 		if len(postIDs) == 0 {
 			for _, post := range posts {
 				postIDs = append(postIDs, post.ID)
 			}
 		}
-		item.Discussion = &content.Discussion{TopicID: id, TotalPosts: maxInt(data.PostsCount, len(postIDs), data.ReplyCount+1), LoadedPosts: len(posts), Participating: len(participants), PostIDs: postIDs, Posts: posts}
+		item.Discussion = &content.Discussion{TopicID: id, TotalPosts: maxInt(postsCount, len(postIDs), replyCount+1), LoadedPosts: len(posts), Participating: len(participants), PostIDs: postIDs, Posts: posts}
 	}
 	if content.Validate(item) != nil {
 		return content.Item{}, &discovery.PlatformError{Message: "Linux.do 话题详情缺少可显示的正文或字段，无法渲染。"}
@@ -451,46 +442,181 @@ func (c *Client) TopicPosts(ctx context.Context, id string, postIDs []int64) (co
 	if err != nil {
 		return content.Discussion{}, err
 	}
-	var data struct {
-		PostStream struct {
-			Posts []struct {
-				ID        int64  `json:"id"`
-				Number    int    `json:"post_number"`
-				Body      string `json:"cooked"`
-				Username  string `json:"username"`
-				Name      string `json:"name"`
-				Avatar    string `json:"avatar_template"`
-				Created   string `json:"created_at"`
-				Likes     int    `json:"like_count"`
-				ReplyTo   int    `json:"reply_to_post_number"`
-				ReplyUser string `json:"reply_to_user"`
-				ReplyID   int64  `json:"reply_to_post_id"`
-			} `json:"posts"`
-		} `json:"post_stream"`
-	}
-	if err := json.Unmarshal(raw, &data); err != nil {
+	data, err := discourseObject(raw)
+	if err != nil {
 		return content.Discussion{}, malformedDetailFailure("/t/"+id+"/posts.json", raw, err)
 	}
-	posts := make([]content.DiscussionPost, 0, len(data.PostStream.Posts))
-	parseFailure := false
-	for _, post := range data.PostStream.Posts {
+	postStream, _ := discourseObject(data["post_stream"])
+	rawPosts := discourseArray(postStream["posts"])
+	posts := make([]content.DiscussionPost, 0, len(rawPosts))
+	for _, rawPost := range rawPosts {
+		post, ok := decodeDiscoursePost(rawPost)
+		if !ok {
+			continue
+		}
 		blocks := feeds.ParseArticleBlocks(post.Body, "https://linux.do/t/"+id)
 		if len(blocks) == 0 {
-			if strings.TrimSpace(post.Body) != "" {
-				parseFailure = true
-			}
+			continue
+		}
+		if post.Number <= 0 {
 			continue
 		}
 		created, _ := time.Parse(time.RFC3339Nano, post.Created)
-		posts = append(posts, content.DiscussionPost{ID: post.ID, Number: post.Number, Username: post.Username, Name: post.Name, AvatarURL: discourseAvatar(post.Avatar), CreatedAt: created.Unix(), LikeCount: post.Likes, ReplyToNumber: post.ReplyTo, ReplyToUser: post.ReplyUser, ReplyToPostID: post.ReplyID, Blocks: blocks})
+		if post.ID <= 0 {
+			post.ID = int64(post.Number)
+		}
+		username := firstNonEmpty(post.Username, post.Name, "Linux.do")
+		posts = append(posts, content.DiscussionPost{ID: post.ID, Number: post.Number, Username: username, Name: post.Name, AvatarURL: discourseAvatar(post.Avatar), CreatedAt: created.Unix(), LikeCount: post.Likes, ReplyToNumber: post.ReplyTo, ReplyToUser: post.ReplyUser, ReplyToPostID: post.ReplyID, Blocks: blocks})
 	}
-	if parseFailure {
-		return content.Discussion{}, &discovery.PlatformError{Message: "Linux.do 楼层正文包含无法解析的 HTML，未能完整渲染。"}
-	}
-	if len(data.PostStream.Posts) == 0 {
+	if len(posts) == 0 {
 		return content.Discussion{}, &discovery.PlatformError{Message: "Linux.do 楼层接口未返回请求的楼层正文。"}
 	}
 	return content.Discussion{TopicID: id, LoadedPosts: len(posts), Posts: posts}, nil
+}
+
+type discoursePost struct {
+	ID        int64
+	Number    int
+	Body      string
+	Username  string
+	Name      string
+	Avatar    string
+	Created   string
+	Likes     int
+	ReplyTo   int
+	ReplyUser string
+	ReplyID   int64
+}
+
+func discourseObject(raw json.RawMessage) (map[string]json.RawMessage, error) {
+	var fields map[string]json.RawMessage
+	if len(raw) == 0 || json.Unmarshal(raw, &fields) != nil || fields == nil {
+		return nil, errors.New("expected JSON object")
+	}
+	return fields, nil
+}
+
+func discourseArray(raw json.RawMessage) []json.RawMessage {
+	var values []json.RawMessage
+	if len(raw) == 0 || json.Unmarshal(raw, &values) != nil {
+		return nil
+	}
+	return values
+}
+
+func discourseString(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	var value string
+	if json.Unmarshal(raw, &value) == nil {
+		return value
+	}
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed != "" && (trimmed[0] == '-' || trimmed[0] >= '0' && trimmed[0] <= '9') {
+		if json.Valid(raw) {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func discourseInt64(raw json.RawMessage) int64 {
+	value := strings.TrimSpace(string(raw))
+	if value == "" || value == "null" {
+		return 0
+	}
+	if value[0] == '"' {
+		var stringValue string
+		if json.Unmarshal(raw, &stringValue) != nil {
+			return 0
+		}
+		value = strings.TrimSpace(stringValue)
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err == nil {
+		return parsed
+	}
+	floatValue, err := strconv.ParseFloat(value, 64)
+	const maxInt64Value = float64(^uint64(0) >> 1)
+	const minInt64Value = -maxInt64Value - 1
+	if err != nil || floatValue > maxInt64Value || floatValue < minInt64Value {
+		return 0
+	}
+	return int64(floatValue)
+}
+
+func discourseCount(raw json.RawMessage) int {
+	value := discourseInt64(raw)
+	if value <= 0 {
+		return 0
+	}
+	max := int64(^uint(0) >> 1)
+	if value > max {
+		return int(max)
+	}
+	return int(value)
+}
+
+func discourseIDs(raw json.RawMessage) []int64 {
+	values := discourseArray(raw)
+	ids := make([]int64, 0, len(values))
+	for _, value := range values {
+		if id := discourseInt64(value); id > 0 {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+func decodeDiscoursePost(raw json.RawMessage) (discoursePost, bool) {
+	fields, err := discourseObject(raw)
+	if err != nil {
+		return discoursePost{}, false
+	}
+	return discoursePost{
+		ID:        discourseInt64(fields["id"]),
+		Number:    discourseCount(fields["post_number"]),
+		Body:      discourseString(fields["cooked"]),
+		Username:  discourseString(fields["username"]),
+		Name:      discourseString(fields["name"]),
+		Avatar:    discourseString(fields["avatar_template"]),
+		Created:   discourseString(fields["created_at"]),
+		Likes:     discourseCount(fields["like_count"]),
+		ReplyTo:   discourseCount(fields["reply_to_post_number"]),
+		ReplyUser: discourseReplyUser(fields["reply_to_user"]),
+		ReplyID:   discourseInt64(fields["reply_to_post_id"]),
+	}, true
+}
+
+func discourseReplyUser(raw json.RawMessage) string {
+	if value := discourseString(raw); value != "" {
+		return value
+	}
+	fields, err := discourseObject(raw)
+	if err != nil {
+		return ""
+	}
+	return firstNonEmpty(discourseString(fields["username"]), discourseString(fields["name"]))
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func maxInt64(values ...int64) int64 {
+	var result int64
+	for _, value := range values {
+		if value > result {
+			result = value
+		}
+	}
+	return result
 }
 
 func (c *Client) Latest(ctx context.Context, page int) (discovery.Feed, error) {
