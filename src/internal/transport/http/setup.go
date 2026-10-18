@@ -46,6 +46,7 @@ func New(library *content.Service, discover *discovery.Service, assets fs.FS, op
 			SubscriptionGroups: optionsValue.SubscriptionGroups, SubscriptionInbox: optionsValue.SubscriptionInbox, Favorites: optionsValue.Favorites,
 			Subscriptions: optionsValue.Subscriptions, SavedViews: optionsValue.SavedViews,
 		},
+		Backup: optionsValue.Backup,
 	}, assets)
 }
 
@@ -64,6 +65,7 @@ func NewWithDependencies(deps Dependencies, assets fs.FS) http.Handler {
 		podcast:       &podcastHandler{podcast: deps.Podcast, browsing: limits.browsing},
 		notes:         &notesHandler{notes: deps.Notes},
 		feeds:         &feedsHandler{feeds: deps.Feeds},
+		backup:        &backupHandler{service: deps.Backup},
 		assets:        assets,
 	}
 	mux := http.NewServeMux()

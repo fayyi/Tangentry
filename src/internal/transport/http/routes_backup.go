@@ -1,0 +1,15 @@
+package httptransport
+
+import "net/http"
+
+func (h *Handler) registerBackupRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/backup/targets", h.backup.targets)
+	mux.HandleFunc("POST /api/backup/targets", h.backup.saveTarget)
+	mux.HandleFunc("DELETE /api/backup/targets/{id}", h.backup.deleteTarget)
+	mux.HandleFunc("GET /api/backup/tasks", h.backup.tasks)
+	mux.HandleFunc("POST /api/backup/tasks", h.backup.saveTask)
+	mux.HandleFunc("DELETE /api/backup/tasks/{id}", h.backup.deleteTask)
+	mux.HandleFunc("GET /api/backup/snapshots", h.backup.snapshots)
+	mux.HandleFunc("POST /api/backup/tasks/{id}/run", h.backup.run)
+	mux.HandleFunc("POST /api/backup/restore", h.backup.restore)
+}

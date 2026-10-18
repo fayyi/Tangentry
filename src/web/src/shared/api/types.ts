@@ -244,6 +244,10 @@ export interface ToolReport {
   cookieConfigured: boolean
 }
 
+export interface BackupTarget { id: string; name: string; type: 'local'; path?: string; enabled: boolean }
+export interface BackupTask { id: string; name: string; targetIds: string[]; includeDownloads: boolean; retention: number; enabled: boolean }
+export interface BackupSnapshot { id: string; taskId?: string; createdAt: string; size: number; status: string }
+
 export interface SubtitleCue {
   start: number
   end: number

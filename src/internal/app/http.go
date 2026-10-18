@@ -23,9 +23,10 @@ func newHTTPWiring(s *services) httpWiring {
 		Podcast: httpPodcastDependencies(s, adapters, func(ctx context.Context, id string) string {
 			return podcastEpisodeID(ctx, s.features.api.inbox, s.features.content, id)
 		}),
-		Media: httpMediaDependencies(s, adapters),
-		Notes: httpNoteDependencies(s),
-		Feeds: httpSubscriptionDependencies(s),
+		Media:  httpMediaDependencies(s, adapters),
+		Notes:  httpNoteDependencies(s),
+		Feeds:  httpSubscriptionDependencies(s),
+		Backup: s.runtime.backup,
 	}}
 }
 

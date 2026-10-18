@@ -14,6 +14,7 @@ type Handler struct {
 	podcast       *podcastHandler
 	notes         *notesHandler
 	feeds         *feedsHandler
+	backup        *backupHandler
 	assets        fs.FS
 }
 
