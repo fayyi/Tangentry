@@ -1,9 +1,9 @@
 import type { ContentItem, UnifiedSearchResponse } from '../../shared/api/types'
+import { creatorViewSupported } from '../../shared/ui/cardHelpers'
 
 export type SearchGroup = { key: string; title: string; items: ContentItem[]; error?: string }
 export type SearchMode = 'grouped' | 'mixed'
 
-const creatorViewPlatforms = ['bilibili', 'youtube', 'linuxdo', 'xiaoyuzhou'] as const
 const creatorSubscriptionPlatforms = ['bilibili', 'youtube'] as const
 
 export type CreatorPlatformSupport = {
@@ -21,7 +21,7 @@ export type SearchFilters = {
 
 export function creatorPlatformSupport(platform: string): CreatorPlatformSupport {
   return {
-    view: (creatorViewPlatforms as readonly string[]).includes(platform),
+    view: creatorViewSupported(platform),
     subscribe: (creatorSubscriptionPlatforms as readonly string[]).includes(platform),
   }
 }

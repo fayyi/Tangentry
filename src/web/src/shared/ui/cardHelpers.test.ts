@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { platformColorToken, platformLabel } from './cardHelpers'
+import { creatorViewSupported, platformColorToken, platformLabel } from './cardHelpers'
 
 describe('platform metadata', () => {
   test('maps known platform names and theme tokens', () => {
@@ -12,5 +12,16 @@ describe('platform metadata', () => {
   test('uses the neutral token for unknown platforms', () => {
     expect(platformLabel('custom-feed')).toBe('custom-feed')
     expect(platformColorToken('custom-feed')).toBe('--platform-neutral')
+  })
+})
+
+describe('creator view platform support', () => {
+  test('supports creator views only on platforms with creator feeds', () => {
+    expect(creatorViewSupported('bilibili')).toBe(true)
+    expect(creatorViewSupported('youtube')).toBe(true)
+    expect(creatorViewSupported('linuxdo')).toBe(true)
+    expect(creatorViewSupported('xiaoyuzhou')).toBe(true)
+    expect(creatorViewSupported('douyin')).toBe(false)
+    expect(creatorViewSupported('xiaohongshu')).toBe(false)
   })
 })
