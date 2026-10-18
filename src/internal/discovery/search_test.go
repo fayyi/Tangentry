@@ -58,3 +58,48 @@ func TestUnifiedSearchFiltersPlatformPages(t *testing.T) {
 		t.Fatalf("unexpected filtered page: %+v", page)
 	}
 }
+
+func TestUnifiedSearchMergesMatchingSubscribedItemsIntoLocalResults(t *testing.T) {
+	service := NewSearchService(func(context.Context, content.Query) (content.Page, error) {
+		return content.Page{Items: []content.Item{
+			{ID: "shared:1", Platform: "bilibili", Kind: "video", Title: "统一搜索测试"},
+			{ID: "library:2", Platform: "youtube", Kind: "video", Title: "另一条测试"},
+		}}, nil
+	}, nil)
+	service.Subscribed = func(context.Context) (Feed, error) {
+		return Feed{Items: []content.Item{
+			{ID: "shared:1", Platform: "bilibili", Kind: "video", Title: "统一搜索测试"},
+			{ID: "subscribed:1", Platform: "youtube", Kind: "video", Title: "订阅内容测试"},
+			{ID: "subscribed:2", Platform: "youtube", Kind: "video", Title: "不匹配的内容"},
+		}}, nil
+	}
+
+	result, err := service.Search(context.Background(), "测试", SearchOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(result.Local.Items); got != 3 {
+		t.Fatalf("got %d local items, want 3: %+v", got, result.Local.Items)
+	}
+	if result.Local.Items[0].ID != "shared:1" || result.Local.Items[1].ID != "library:2" || result.Local.Items[2].ID != "subscribed:1" {
+		t.Fatalf("unexpected merged order or duplicate: %+v", result.Local.Items)
+	}
+	if result.Local.Total != 3 {
+		t.Fatalf("got local total %d, want 3", result.Local.Total)
+	}
+}
+
+func TestUnifiedSearchDoesNotMergeSubscriptionsWhenPlatformIsFiltered(t *testing.T) {
+	service := NewSearchService(nil, nil)
+	service.Subscribed = func(context.Context) (Feed, error) {
+		return Feed{Items: []content.Item{{ID: "subscribed:1", Platform: "youtube", Kind: "video", Title: "订阅测试"}}}, nil
+	}
+
+	result, err := service.Search(context.Background(), "测试", SearchOptions{Platform: "bilibili"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Local.Items) != 0 {
+		t.Fatalf("subscriptions leaked into platform-filtered local results: %+v", result.Local.Items)
+	}
+}

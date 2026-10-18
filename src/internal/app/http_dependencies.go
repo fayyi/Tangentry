@@ -25,6 +25,10 @@ func httpDiscoveryDependencies(s *services, adapters httpAdapterBundle) httptran
 		"xiaohongshu": p.notes,
 		"douyin":      p.douyin,
 	})
+	// Subscription snapshots are part of the local search surface. They are
+	// merged after the FTS-backed library query so saved and subscribed content
+	// share one local result group without changing the library repository.
+	search.Subscribed = s.features.sources.Gallery
 	search.Creators = map[string]discovery.CreatorSearchProvider{
 		"bilibili":   p.bilibili,
 		"youtube":    p.youtube,
