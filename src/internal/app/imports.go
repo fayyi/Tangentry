@@ -5,9 +5,11 @@ import (
 	"log/slog"
 	"strings"
 
+	paperadapter "tangentry/internal/adapters/papers"
 	"tangentry/internal/adapters/platforms/discourse"
 	"tangentry/internal/content"
 	"tangentry/internal/discovery"
+	papersdomain "tangentry/internal/papers"
 )
 
 // contentImporter resolves pasted addresses using platform clients and the
@@ -16,6 +18,7 @@ type contentImporter struct {
 	platforms platformImports
 	records   xiaohongshuRecords
 	documents documentFetcher
+	papers    *paperadapter.Client
 }
 
 // importSource resolves one pasted address into a feed. RSS returns the whole
@@ -58,9 +61,33 @@ func (i contentImporter) importItem(ctx context.Context, source, raw string) (co
 		return p.podcasts.Episode(ctx, raw)
 	case "pdf":
 		return i.documents.Fetch(ctx, raw)
+	case "paper":
+		return i.importPaper(ctx, raw)
 	default:
 		return content.Item{}, discovery.ErrInvalidQuery
 	}
+}
+
+func (i contentImporter) importPaper(ctx context.Context, raw string) (content.Item, error) {
+	if i.papers == nil || i.documents == nil {
+		return content.Item{}, discovery.ErrUnavailable
+	}
+	item, err := i.papers.Fetch(ctx, raw)
+	if err != nil {
+		return content.Item{}, err
+	}
+	ref, err := papersdomain.ParseReference(raw)
+	if err != nil {
+		return content.Item{}, discovery.ErrInvalidQuery
+	}
+	document, err := i.documents.Fetch(ctx, ref.PDFURL)
+	if err != nil {
+		return content.Item{}, err
+	}
+	item.Paper.DocumentID = document.PlatformID
+	item.URL = document.URL
+	item.MediaURL = document.URL
+	return item, nil
 }
 
 // importXiaohongshu reuses a previously stored signed address when the pasted

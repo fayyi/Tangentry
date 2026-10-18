@@ -10,6 +10,7 @@ import (
 var identities = map[string]*regexp.Regexp{
 	"bilibili":    regexp.MustCompile(`^(?:BV[0-9A-Za-z]{10}|dynamic:[0-9A-Za-z_-]{1,64})$`),
 	"youtube":     regexp.MustCompile(`^[A-Za-z0-9_-]{11}$`),
+	"arxiv":       regexp.MustCompile(`^(?:[0-9]{4}\.[0-9]{4,5}|[a-z][a-z0-9-]*(?:\.[a-zA-Z]{2})?/[0-9]{7})$`),
 	"douyin":      regexp.MustCompile(`^[1-9][0-9]{15,19}$`),
 	"xiaohongshu": regexp.MustCompile(`^[a-f0-9]{24}$`),
 	"rss":         regexp.MustCompile(`^[a-f0-9]{64}$`),

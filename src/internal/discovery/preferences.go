@@ -2,7 +2,7 @@ package discovery
 
 import "context"
 
-var recommendationPlatforms = []string{"bilibili", "youtube", "xiaohongshu", "linuxdo", "xiaoyuzhou", "douyin"}
+var recommendationPlatforms = []string{"bilibili", "youtube", "xiaohongshu", "linuxdo", "xiaoyuzhou", "douyin", "huggingface"}
 
 func RecommendationPlatform(source string) bool {
 	for _, platform := range recommendationPlatforms {
@@ -38,8 +38,8 @@ func (p *Preferences) List(ctx context.Context) ([]RecommendationPreference, err
 	for _, source := range recommendationPlatforms {
 		enabled, exists := saved[source]
 		if !exists {
-			// Preserve existing sources; the experimental Douyin adapter is opt-in.
-			enabled = source != "douyin"
+			// Preserve existing sources; experimental sources are opt-in.
+			enabled = source != "douyin" && source != "huggingface"
 		}
 		result = append(result, RecommendationPreference{Source: source, Enabled: enabled})
 	}

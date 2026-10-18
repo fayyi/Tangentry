@@ -4,14 +4,14 @@ import type { ContentItem, Feed } from '../../shared/api/types'
 import { useRecommendationPreferences } from '../settings/useRecommendationPreferences'
 import { recommendationRequests } from './recommendationRequests'
 
-export const gallerySources = ['subscriptions', 'bilibili', 'youtube', 'xiaohongshu', 'linuxdo', 'xiaoyuzhou', 'douyin'] as const
+export const gallerySources = ['subscriptions', 'bilibili', 'youtube', 'xiaohongshu', 'linuxdo', 'xiaoyuzhou', 'douyin', 'huggingface'] as const
 export type GallerySource = typeof gallerySources[number]
 type State = { feed: Feed | null; loading: boolean; error: string; known: boolean; exhausted: boolean }
 const initial = (): State => ({feed:null,loading:false,error:'',known:false,exhausted:false})
 export function useGallery(active: boolean, scope: readonly GallerySource[] = gallerySources) {
   const preferences = useRecommendationPreferences()
   const enabled = useRef(preferences.values); enabled.current = preferences.values
-  const [sources,setSources] = useState<Record<GallerySource,State>>({subscriptions:initial(),bilibili:initial(),youtube:initial(),xiaohongshu:initial(),linuxdo:initial(),xiaoyuzhou:initial(),douyin:initial()})
+  const [sources,setSources] = useState<Record<GallerySource,State>>({subscriptions:initial(),bilibili:initial(),youtube:initial(),xiaohongshu:initial(),linuxdo:initial(),xiaoyuzhou:initial(),douyin:initial(),huggingface:initial()})
   const [linuxdoFilter, setLinuxdoFilterState] = useState<'latest' | 'top' | 'new' | 'unread'>('latest')
   const previousLinuxdoFilter = useRef(linuxdoFilter)
   const linuxdoFilterRef = useRef(linuxdoFilter)
@@ -158,7 +158,7 @@ export function useGallery(active: boolean, scope: readonly GallerySource[] = ga
     setSources(previous => ({ ...previous, [source]: { feed, loading: false, error: '', known: true, exhausted: !feed.hasMore } }))
   }, [])
   const invalidate = useCallback((platform: string) => {
-    if (platform !== 'bilibili' && platform !== 'youtube' && platform !== 'xiaohongshu' && platform !== 'linuxdo' && platform !== 'xiaoyuzhou' && platform !== 'douyin') return
+    if (platform !== 'bilibili' && platform !== 'youtube' && platform !== 'xiaohongshu' && platform !== 'linuxdo' && platform !== 'xiaoyuzhou' && platform !== 'douyin' && platform !== 'huggingface') return
     delete recommendationSessions.current[platform]
     inventory.current[platform] = undefined
     controllers.current[platform]?.abort()

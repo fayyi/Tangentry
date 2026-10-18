@@ -110,6 +110,7 @@ type DiscoveryDependencies struct {
 	XiaohongshuImages       ImageCache
 	XiaohongshuImageVersion func(string) string
 	XiaohongshuImageItems   func(context.Context, string) ([]content.Item, error)
+	PaperImport             func(context.Context, string, string) (discovery.Feed, error)
 }
 
 type LibraryDependencies struct {

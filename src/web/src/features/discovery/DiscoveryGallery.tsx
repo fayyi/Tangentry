@@ -14,8 +14,9 @@ import { openDesktopPlatformLogin, useCapabilities, type PlatformWebView } from 
 import { discoveryReasonType, getDiscoverySourceLabel, readDiscoveryFilterState, updateDiscoveryFilterState, useDiscoveryBatch } from './useDiscoveryBatch'
 import { useDiscoveryTopics } from './useDiscoveryTopics'
 import { feedbackMessage, type DiscoveryFeedbackTarget, type DiscoveryFeedbackType } from './discoveryFeedback'
+import { PaperCard } from '../documents/PaperCard'
 
-const labels: Record<GallerySource, string> = { subscriptions: '订阅更新', bilibili: 'B站推荐', youtube: 'YouTube 推荐', xiaohongshu: '小红书推荐', linuxdo: 'Linux.do 话题', xiaoyuzhou: '小宇宙发现', douyin: '抖音推荐' }
+const labels: Record<GallerySource | 'huggingface', string> = { subscriptions: '订阅更新', bilibili: 'B站推荐', youtube: 'YouTube 推荐', xiaohongshu: '小红书推荐', linuxdo: 'Linux.do 话题', xiaoyuzhou: '小宇宙发现', douyin: '抖音推荐', huggingface: 'HF 每日论文' }
 
 export function DiscoveryGallery({ kind, onKind, query, onClearQuery, notice, noticeError, gallery, savedIDs, pending, savingUnavailable, onSave, onRead, onDownload, onSearch, onSubscriptions, onBilibili }: {
   kind: string; onKind: (kind: string) => void; origin: string; onOrigin: (origin: string) => void; notice: string; noticeError: boolean
@@ -82,7 +83,7 @@ export function DiscoveryGallery({ kind, onKind, query, onClearQuery, notice, no
     else void topicState.create(value)
   }
   const openRecommendation = (item: ContentItem) => {
-    if (['bilibili', 'youtube', 'xiaohongshu', 'linuxdo', 'xiaoyuzhou', 'douyin'].includes(item.platform)) void request(`/recommendations/${item.platform}/marks`, { method: 'PUT', keepalive: true, body: JSON.stringify({ contentId: item.id, opened: true }) }).catch(() => {})
+    if (['bilibili', 'youtube', 'xiaohongshu', 'linuxdo', 'xiaoyuzhou', 'douyin', 'huggingface'].includes(item.platform)) void request(`/recommendations/${item.platform}/marks`, { method: 'PUT', keepalive: true, body: JSON.stringify({ contentId: item.id, opened: true }) }).catch(() => {})
     onRead(item)
   }
   async function sendFeedback(type: DiscoveryFeedbackType, target: DiscoveryFeedbackTarget, value: string, item: ContentItem) {
@@ -127,7 +128,7 @@ export function DiscoveryGallery({ kind, onKind, query, onClearQuery, notice, no
     {notice && <p className="inline-feedback collection-save-feedback" role={noticeError ? 'alert' : 'status'}>{notice}</p>}
     {savingUnavailable && <p className="field-hint" role="status">资料库暂不可用，收藏操作等待重新连接。</p>}
     {search && <p className="discovery-search-result" role="status">当前已加载内容中找到 {items.length} 条结果<button type="button" className="text-button" onClick={onClearQuery}>清除搜索</button></p>}
-    {items.length > 0 ? <CardCollection masonry={!['video', 'audio'].includes(kind)} rowGap={20} data-media={kind} className="mixed-gallery" aria-label="发现内容">{items.map(({ item, source, reason, carriedOver }) => <ModernGalleryCard key={item.id} discovery item={item} origin={getDiscoverySourceLabel(source, reason, carriedOver)} discoveryReason={reason} discoveryType={discoveryReasonType(source, reason, carriedOver)} saved={savedIDs.has(item.id)} pending={savingUnavailable || pending.has(item.id)} onRead={openRecommendation} onSave={onSave} onDownload={onDownload} onFeedback={(type, target, value) => void sendFeedback(type, target, value, item)} />)}</CardCollection> : loading ? <SkeletonGallery count={8} /> : search ? <section className="empty-state"><h2>没有找到匹配的内容</h2><p>试试其他关键词，或清除搜索查看当前内容。</p><button type="button" className="button button-secondary" onClick={onClearQuery}>查看全部内容</button></section> : <section className="empty-state"><h2>这里还没有推荐内容</h2><p>添加一个内容链接，或在设置中连接你使用的平台。</p><button className="button button-primary" onClick={onSearch}>添加内容</button><button className="text-button" onClick={onSubscriptions}>管理订阅</button></section>}
+    {items.length > 0 ? <CardCollection masonry={!['video', 'audio'].includes(kind)} rowGap={20} data-media={kind} className="mixed-gallery" aria-label="发现内容">{items.map(({ item, source, reason, carriedOver }) => item.paper ? <PaperCard key={item.id} item={item} saved={savedIDs.has(item.id)} pending={savingUnavailable || pending.has(item.id)} onRead={openRecommendation} onSave={onSave} /> : <ModernGalleryCard key={item.id} discovery item={item} origin={getDiscoverySourceLabel(source, reason, carriedOver)} discoveryReason={reason} discoveryType={discoveryReasonType(source, reason, carriedOver)} saved={savedIDs.has(item.id)} pending={savingUnavailable || pending.has(item.id)} onRead={openRecommendation} onSave={onSave} onDownload={onDownload} onFeedback={(type, target, value) => void sendFeedback(type, target, value, item)} />)}</CardCollection> : loading ? <SkeletonGallery count={8} /> : search ? <section className="empty-state"><h2>没有找到匹配的内容</h2><p>试试其他关键词，或清除搜索查看当前内容。</p><button type="button" className="button button-secondary" onClick={onClearQuery}>查看全部内容</button></section> : <section className="empty-state"><h2>这里还没有推荐内容</h2><p>添加一个内容链接，或在设置中连接你使用的平台。</p><button className="button button-primary" onClick={onSearch}>添加内容</button><button className="text-button" onClick={onSubscriptions}>管理订阅</button></section>}
     <div ref={sentinel} className="gallery-load-more discovery-feed-status" aria-live="polite">{batchState.error ? <><span role="alert">{batchState.error}</span><button className="button button-secondary" onClick={batchState.retry}><RefreshCw size={15} />重试</button></> : loading ? <><LoaderCircle size={15} className="spin" />正在加载更多…</> : batchState.batch?.hasNextBatch ? <span>继续下滑加载更多</span> : items.length ? <><span>暂时没有更多了</span><button className="button button-secondary" onClick={batchState.retry}><RefreshCw size={15} />刷新</button></> : null}</div>
   </>
 }

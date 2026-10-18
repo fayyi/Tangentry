@@ -2,10 +2,12 @@ import { ArrowRight, FileUp, Link2, LoaderCircle } from 'lucide-react'
 import type { RefObject } from 'react'
 import type { ContentItem } from '../../shared/api/types'
 import { PDFImport } from '../documents/PDFImport'
+import { isPaperQuery } from '../documents/paperIdentity'
 import { discoverySources, type DiscoverySource } from './sources'
 
 export function detectSource(value: string): DiscoverySource | null {
   const text = value.trim()
+  if (isPaperQuery(text)) return 'paper'
   if (/youtube\.com|youtu\.be/i.test(text)) return 'youtube'
   if (/xiaohongshu\.com|xhslink\.com/i.test(text)) return 'xiaohongshu'
   if (/douyin\.com/i.test(text)) return 'douyin'

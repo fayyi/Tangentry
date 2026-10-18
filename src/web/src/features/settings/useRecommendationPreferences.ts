@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { request } from '../../shared/api/client'
 
-export const recommendationPlatforms = ['bilibili', 'youtube', 'xiaohongshu', 'linuxdo', 'xiaoyuzhou', 'douyin'] as const
+export const recommendationPlatforms = ['bilibili', 'youtube', 'xiaohongshu', 'linuxdo', 'xiaoyuzhou', 'douyin', 'huggingface'] as const
 export type RecommendationPlatform = typeof recommendationPlatforms[number]
 type Preferences = Record<RecommendationPlatform, boolean>
 type Response = { sources: { source: RecommendationPlatform; enabled: boolean }[] }

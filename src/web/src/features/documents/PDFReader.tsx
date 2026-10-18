@@ -1,7 +1,7 @@
 import { ChevronLeft, ChevronRight, LoaderCircle, Quote, RotateCw, StickyNote, TextSelect, ZoomIn, ZoomOut } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PageViewport, PDFDocumentProxy, RenderTask, TextLayer } from 'pdfjs-dist'
-import type { PDFAnchor, ReadingNote } from '../../shared/api/types'
+import type { PaperMetadata, PDFAnchor, ReadingNote } from '../../shared/api/types'
 import workerURL from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import { pdfSelection, viewportPDFRect } from './pdfAnchors'
 import { pdfSummarySegments } from './pdfAnchors'
@@ -21,7 +21,7 @@ export interface PDFAnnotationProps {
 }
 interface RenderedPage { page: number; rotation: number; zoom: number; width: number; viewport: PageViewport; text: string }
 
-export function PDFReader({ id, notes = [], focus, onQuote, onOpenNotes, onUnresolved }: { id: string } & PDFAnnotationProps) {
+export function PDFReader({ id, contentId = id, paper, notes = [], focus, onQuote, onOpenNotes, onUnresolved }: { id: string; contentId?: string; paper?: PaperMetadata } & PDFAnnotationProps) {
   const notebook = useReadingNotebook()
   const navigatedFocus = useRef<{ id: string; token: number } | null>(null)
   const focusedLocation = useRef<{ id: string; token: number } | null>(null)
@@ -135,14 +135,16 @@ export function PDFReader({ id, notes = [], focus, onQuote, onOpenNotes, onUnres
     const current = window.getSelection(); current?.removeAllRanges(); current?.addRange(range); capture()
   }
   const highlights = ready && rendered ? valid.filter(note => note.pdfAnchor!.page === page).map(note => ({ note, rects: note.pdfAnchor!.rects.map(rect => viewportPDFRect(rendered.viewport, rect)) })) : []
-  const summarySegments = useMemo(() => pdfSummarySegments(summaryPages), [summaryPages])
-  const summary = useSummary(id, 'pdf', undefined, undefined, undefined, summarySegments)
+  const metadataText = paper ? [paper.title ? `标题：${paper.title}` : '', paper.authors.length ? `作者：${paper.authors.join('、')}` : '', paper.categories.length ? `分类：${paper.categories.join('、')}` : '', paper.abstract ? `摘要：${paper.abstract}` : '', paper.arxivId ? `arXiv：${paper.arxivId}${paper.version ? `v${paper.version}` : ''}` : ''].filter(Boolean).join('\n') : ''
+  const summaryPagesWithMetadata = useMemo(() => metadataText && summaryPages.length ? summaryPages.map((value, index) => index === 0 ? { ...value, text: metadataText + '\n\n' + value.text } : value) : summaryPages, [metadataText, summaryPages])
+  const summarySegments = useMemo(() => pdfSummarySegments(summaryPagesWithMetadata), [summaryPagesWithMetadata])
+  const summary = useSummary(contentId, 'pdf', undefined, undefined, undefined, summarySegments)
   const locatePage = useCallback((target: number) => { if (target >= 1 && target <= (document?.numPages ?? 1)) setPage(target) }, [document])
   useEffect(() => {
     if (!notebook) return
-    notebook.setAIContent(<AIInsights summary={summary} onLocatePage={locatePage} contentId={id} context={summaryPages.map(value => value.text).join('\n')} revision={summary.inspection?.settings.revision ?? 0}/>)
+    notebook.setAIContent(<AIInsights summary={summary} onLocatePage={locatePage} contentId={contentId} context={summaryPagesWithMetadata.map(value => value.text).join('\n')} revision={summary.inspection?.settings.revision ?? 0}/>)
     return () => notebook.setAIContent(null)
-  }, [notebook, id, locatePage, summary.inspection, summary.loading, summary.pending, summary.error, summary.notice, summaryPages])
+  }, [notebook, contentId, id, locatePage, summary.inspection, summary.loading, summary.pending, summary.error, summary.notice, summaryPagesWithMetadata])
 
   return <section className="pdf-reader" aria-label="PDF 阅读器" onMouseUp={event => { event.stopPropagation(); capture() }} onKeyUp={event => event.stopPropagation()}>
     <link rel="stylesheet" href="/pdfjs/text_layer.css" precedence="pdf-text-layer" />

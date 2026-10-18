@@ -16,11 +16,11 @@ func TestRecommendationPreferencesPersistWithoutDeletingContent(t *testing.T) {
 	}
 	p := discovery.NewPreferences(s)
 	values, err := p.List(ctx)
-	if err != nil || len(values) != 6 {
+	if err != nil || len(values) != 7 {
 		t.Fatal(values, err)
 	}
 	for _, value := range values {
-		if value.Enabled != (value.Source != "douyin") {
+		if value.Enabled != (value.Source != "douyin" && value.Source != "huggingface") {
 			t.Fatal(value)
 		}
 	}

@@ -1,0 +1,21 @@
+.paper-card { display: grid; gap: 10px; padding: 16px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); min-height: 220px; }
+.paper-card-open { display: grid; gap: 8px; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.paper-card-open strong { font-size: 16px; line-height: 1.45; }
+.paper-card-type, .paper-card-authors, .paper-card-categories, .paper-card-abstract { color: var(--muted); font-size: 12px; line-height: 1.55; }
+.paper-card-type { display: inline-flex; align-items: center; gap: 6px; color: var(--accent-ink); }
+.paper-card-abstract { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 4; }
+.paper-card-keywords { display: flex; flex-wrap: wrap; gap: 5px; }
+.paper-card-keywords span { padding: 2px 7px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 11px; }
+.paper-card-footer, .paper-info-heading, .paper-info-details, .paper-info-links { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.paper-card-footer { justify-content: flex-end; color: var(--muted); font-size: 12px; }
+.paper-card-footer > span { margin-right: auto; }
+.paper-card-footer a, .paper-info-links a { display: inline-flex; align-items: center; gap: 4px; color: var(--accent-ink); }
+.paper-card-save { display: grid; place-items: center; width: 30px; height: 30px; border: 0; background: transparent; color: var(--muted); cursor: pointer; }
+.paper-card-save.active { color: var(--accent); }
+.paper-info { display: grid; gap: 10px; margin: 16px 0; padding: 14px 16px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+.paper-info-heading { color: var(--accent-ink); font-size: 13px; font-weight: 600; }
+.paper-info-heading a { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; color: var(--accent-ink); }
+.paper-info-authors { margin: 0; color: var(--ink); font-size: 13px; line-height: 1.6; }
+.paper-info-details { color: var(--muted); font-size: 12px; }
+.paper-info-details span + span::before { content: '·'; margin-right: 9px; color: var(--line-strong); }
+.paper-info-abstract { margin: 0; white-space: pre-wrap; color: var(--ink); font-size: 13px; line-height: 1.8; }

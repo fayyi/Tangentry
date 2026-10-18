@@ -5,6 +5,7 @@ type Item struct {
 	Images          []Image        `json:"images,omitempty"`
 	ArticleBlocks   []ArticleBlock `json:"articleBlocks,omitempty"`
 	Discussion      *Discussion    `json:"discussion,omitempty"`
+	Paper           *PaperMetadata `json:"paper,omitempty"`
 	MediaURL        string         `json:"mediaUrl,omitempty"`
 	ID              string         `json:"id"`
 	Platform        string         `json:"platform"`
@@ -29,6 +30,29 @@ type Item struct {
 	// Partial marks a card projection: bodies, transcripts and long
 	// descriptions are left out, so it must never be saved back.
 	Partial bool `json:"partial,omitempty"`
+}
+
+// PaperMetadata carries scholarly links and source metadata without folding
+// them into the free-form description shown by ordinary content items.
+type PaperMetadata struct {
+	ArxivID     string   `json:"arxivId"`
+	Title       string   `json:"title,omitempty"`
+	DocumentID  string   `json:"documentId,omitempty"`
+	Authors     []string `json:"authors,omitempty"`
+	Categories  []string `json:"categories,omitempty"`
+	AIKeywords  []string `json:"aiKeywords,omitempty"`
+	Abstract    string   `json:"abstract,omitempty"`
+	Version     int      `json:"version,omitempty"`
+	PublishedAt int64    `json:"publishedAt,omitempty"`
+	UpdatedAt   int64    `json:"updatedAt,omitempty"`
+	PDFURL      string   `json:"pdfUrl,omitempty"`
+	ArxivURL    string   `json:"arxivUrl,omitempty"`
+	HFURL       string   `json:"hfUrl,omitempty"`
+	GitHubURL   string   `json:"githubUrl,omitempty"`
+	AlphaXivURL string   `json:"alphaXivUrl,omitempty"`
+	AISummary   string   `json:"aiSummary,omitempty"`
+	GitHubStars int      `json:"githubStars,omitempty"`
+	Upvotes     int      `json:"upvotes,omitempty"`
 }
 
 type Discussion struct {
