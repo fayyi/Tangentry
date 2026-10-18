@@ -13,19 +13,16 @@ type themeInput struct {
 }
 
 func (h *Handler) themeGet(w http.ResponseWriter, r *http.Request) {
-	theme := preferences.ThemeSystem
-	saved := false
-	if h.theme != nil {
-		loaded, persisted, err := h.theme.Load(r.Context())
-		if err == nil {
-			theme, saved = loaded, persisted
-		}
+	value, saved, err := h.preferenceValue(r, preferences.ThemeKey)
+	if err != nil {
+		value, saved = string(preferences.ThemeSystem), false
 	}
+	theme := preferences.ParseTheme(value)
 	write(w, http.StatusOK, map[string]any{"theme": theme, "saved": saved})
 }
 
 func (h *Handler) themePut(w http.ResponseWriter, r *http.Request) {
-	if h.theme == nil {
+	if h.preferences == nil {
 		write(w, http.StatusServiceUnavailable, apiError{"theme_unavailable", "主题设置暂时不可用。"})
 		return
 	}
@@ -41,7 +38,7 @@ func (h *Handler) themePut(w http.ResponseWriter, r *http.Request) {
 		write(w, http.StatusBadRequest, apiError{"invalid_theme", "请选择浅色、深色或跟随系统。"})
 		return
 	}
-	if err := h.theme.Save(r.Context(), theme); err != nil {
+	if err := h.preferences.Set(r.Context(), preferences.ThemeKey, string(theme)); err != nil {
 		write(w, http.StatusServiceUnavailable, apiError{"theme_unavailable", "主题设置未能保存，请检查数据目录权限。"})
 		return
 	}

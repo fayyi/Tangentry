@@ -1,5 +1,37 @@
 package preferences
 
+import (
+	"context"
+	"fmt"
+)
+
+const (
+	ThemeKey     = "theme"
+	MaxKeyLength = 64
+	MaxValueSize = 256
+)
+
+// Store is the stable application-level preference port. Implementations must
+// keep values outside browser origins so they survive a new loopback port.
+type Store interface {
+	Get(context.Context, string) (string, bool, error)
+	Set(context.Context, string, string) error
+}
+
+func ValidateKey(key string) error {
+	if key != ThemeKey || len(key) > MaxKeyLength {
+		return fmt.Errorf("unsupported preference key %q", key)
+	}
+	return nil
+}
+
+func ValidateValue(value string) error {
+	if len(value) > MaxValueSize {
+		return fmt.Errorf("preference value exceeds %d bytes", MaxValueSize)
+	}
+	return nil
+}
+
 // Theme is the user's interface color preference. System resolves against
 // the operating system appearance in the web view.
 type Theme string

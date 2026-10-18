@@ -15,7 +15,7 @@ import (
 // Options is retained for focused HTTP handler tests. Application wiring uses
 // Dependencies so each feature receives only its own collaborators.
 type Options struct {
-	Theme                   ThemePreferences
+	Preferences             preferences.Store
 	BilibiliBrowser         BilibiliBrowser
 	LinuxdoLogin            BrowserLoginFlow[LinuxdoState]
 	LinuxdoSession          func(context.Context) (LinuxdoSession, error)
@@ -76,7 +76,7 @@ type SavedViewService interface {
 }
 
 type Dependencies struct {
-	Theme    ThemePreferences
+	Preferences preferences.Store
 	Accounts AccountDependencies
 	Browse   DiscoveryDependencies
 	Library  LibraryDependencies
@@ -85,13 +85,6 @@ type Dependencies struct {
 	Media    MediaDependencies
 	Notes    NoteDependencies
 	Feeds    SubscriptionDependencies
-}
-
-// ThemePreferences is the narrow persistence port used by the theme API and
-// first-response HTML injection.
-type ThemePreferences interface {
-	Load(context.Context) (preferences.Theme, bool, error)
-	Save(context.Context, preferences.Theme) error
 }
 
 type AccountDependencies struct {

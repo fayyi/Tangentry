@@ -27,8 +27,8 @@ func newThemeTestHandler(t *testing.T, store *filesystem.ThemePreferences) http.
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	return New(content.NewService(db), discovery.NewService(testProvider{}), fstest.MapFS{
-		"index.html": {Data: []byte(`<script>const theme = "__TANGENTRY_THEME__"; const saved = "__TANGENTRY_THEME_SAVED__" === 'true'</script>`)},
-	}, Options{Theme: store})
+		"index.html": {Data: []byte(`<script>const theme = "__TANGENTRY_THEME__"; const saved = __TANGENTRY_THEME_SAVED__</script>`)},
+	}, Options{Preferences: store})
 }
 
 func themeRequest(handler http.Handler, method, path string, body io.Reader) *httptest.ResponseRecorder {
@@ -101,6 +101,40 @@ func TestThemeAPIValueSurvivesHandlerReconstruction(t *testing.T) {
 	}
 }
 
+func TestInterfacePreferenceAPIUsesValidatedKeyValueProtocol(t *testing.T) {
+	store := filesystem.NewPreferences(filepath.Join(t.TempDir(), "preferences.json"))
+	handler := newThemeTestHandler(t, store)
+	response := themeRequest(handler, http.MethodPut, "/api/preferences/theme", bytes.NewBufferString(`{"value":"dark"}`))
+	if response.Code != http.StatusOK {
+		t.Fatalf("generic PUT status = %d, body = %s", response.Code, response.Body.String())
+	}
+	response = themeRequest(handler, http.MethodGet, "/api/preferences/theme", nil)
+	var saved struct {
+		Key   string `json:"key"`
+		Value string `json:"value"`
+		Saved bool   `json:"saved"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&saved); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusOK || saved.Key != "theme" || saved.Value != "dark" || !saved.Saved {
+		t.Fatalf("generic preference = %+v status=%d", saved, response.Code)
+	}
+	for path, payload := range map[string]string{
+		"/api/preferences/unknown": `{"value":"dark"}`,
+		"/api/preferences/theme":   `{"value":"neon"}`,
+	} {
+		response = themeRequest(handler, http.MethodPut, path, bytes.NewBufferString(payload))
+		if response.Code != http.StatusBadRequest {
+			t.Errorf("invalid request %s status = %d", path, response.Code)
+		}
+	}
+	response = themeRequest(handler, http.MethodPut, "/api/preferences/theme", bytes.NewBufferString(`{"value":"`+strings.Repeat("x", preferences.MaxValueSize+1)+`"}`))
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("oversized value status = %d", response.Code)
+	}
+}
+
 func TestIndexHTMLInjectsPersistedThemeBeforeAppScripts(t *testing.T) {
 	store := filesystem.NewThemePreferences(filepath.Join(t.TempDir(), "preferences.json"))
 	if err := store.Save(context.Background(), preferences.ThemeDark); err != nil {
@@ -113,7 +147,7 @@ func TestIndexHTMLInjectsPersistedThemeBeforeAppScripts(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("index status = %d", response.Code)
 	}
-	if !strings.Contains(html, `const theme = "dark"`) || !strings.Contains(html, `const saved = "true" === 'true'`) {
+	if !strings.Contains(html, `const theme = "dark"`) || !strings.Contains(html, `const saved = true`) {
 		t.Fatalf("theme was not injected: %s", html)
 	}
 	if strings.Contains(html, "__TANGENTRY_THEME") {

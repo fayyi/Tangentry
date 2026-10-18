@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"io/fs"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"tangentry/internal/preferences"
@@ -56,13 +55,16 @@ func (h *Handler) static(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) injectTheme(r *http.Request, data []byte) []byte {
 	theme := preferences.ThemeSystem
 	saved := false
-	if h.theme != nil {
-		if loaded, persisted, err := h.theme.Load(r.Context()); err == nil {
-			theme, saved = loaded, persisted
+	if h.preferences != nil {
+		if value, persisted, err := h.preferences.Get(r.Context(), preferences.ThemeKey); err == nil {
+			loaded := preferences.ParseTheme(value)
+			if value == "" || loaded == preferences.Theme(value) {
+				theme, saved = loaded, persisted
+			}
 		}
 	}
 	encodedTheme, _ := json.Marshal(string(theme))
-	encodedSaved, _ := json.Marshal(strconv.FormatBool(saved))
+	encodedSaved, _ := json.Marshal(saved)
 	data = bytes.Replace(data, []byte(`"__TANGENTRY_THEME__"`), encodedTheme, 1)
-	return bytes.Replace(data, []byte(`"__TANGENTRY_THEME_SAVED__"`), encodedSaved, 1)
+	return bytes.Replace(data, []byte(`__TANGENTRY_THEME_SAVED__`), encodedSaved, 1)
 }

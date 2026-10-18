@@ -11,62 +11,96 @@ import (
 	"tangentry/internal/preferences"
 )
 
-// ThemePreferences keeps interface preferences outside the origin-scoped
-// browser storage. The file lives in the stable application data directory.
-type ThemePreferences struct {
+// Preferences keeps interface preferences outside the origin-scoped browser
+// storage. The file lives in the stable application data directory.
+type Preferences struct {
 	path string
 	mu   sync.Mutex
 }
 
-type themeRecord struct {
-	Theme string `json:"theme"`
+type preferenceRecord struct {
+	Values      map[string]string `json:"values"`
+	LegacyTheme string            `json:"theme,omitempty"`
 }
 
-func NewThemePreferences(path string) *ThemePreferences {
-	return &ThemePreferences{path: path}
+func NewPreferences(path string) *Preferences {
+	return &Preferences{path: path}
 }
 
-func (s *ThemePreferences) Load(ctx context.Context) (preferences.Theme, bool, error) {
+func (s *Preferences) read(ctx context.Context) (preferenceRecord, error) {
 	if err := ctx.Err(); err != nil {
-		return preferences.ThemeSystem, false, err
+		return preferenceRecord{}, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	data, err := os.ReadFile(s.path)
 	if errors.Is(err, os.ErrNotExist) {
-		return preferences.ThemeSystem, false, nil
+		return preferenceRecord{Values: map[string]string{}}, nil
 	}
 	if err != nil {
-		return preferences.ThemeSystem, false, err
+		return preferenceRecord{}, err
 	}
-	var record themeRecord
+	var record preferenceRecord
 	if err := json.Unmarshal(data, &record); err != nil {
-		return preferences.ThemeSystem, false, nil
+		return preferenceRecord{Values: map[string]string{}}, nil
 	}
-	theme := preferences.ParseTheme(record.Theme)
-	if theme != preferences.Theme(record.Theme) {
-		return preferences.ThemeSystem, false, nil
+	if record.Values == nil {
+		record.Values = map[string]string{}
 	}
-	return theme, true, nil
+	if record.LegacyTheme != "" {
+		record.Values[preferences.ThemeKey] = record.LegacyTheme
+	}
+	return record, nil
 }
 
-func (s *ThemePreferences) Save(ctx context.Context, theme preferences.Theme) error {
+func (s *Preferences) Get(ctx context.Context, key string) (string, bool, error) {
+	if err := preferences.ValidateKey(key); err != nil {
+		return "", false, err
+	}
+	record, err := s.read(ctx)
+	if err != nil {
+		return "", false, err
+	}
+	value, ok := record.Values[key]
+	return value, ok, nil
+}
+
+func (s *Preferences) Set(ctx context.Context, key, value string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if !theme.Valid() {
-		return errors.New("invalid theme preference")
+	if err := preferences.ValidateKey(key); err != nil {
+		return err
 	}
-	data, err := json.Marshal(themeRecord{Theme: string(theme)})
-	if err != nil {
+	if err := preferences.ValidateValue(value); err != nil {
 		return err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	data, err := os.ReadFile(s.path)
+	var record preferenceRecord
+	if errors.Is(err, os.ErrNotExist) {
+		record.Values = map[string]string{}
+	} else if err != nil {
+		return err
+	} else if json.Unmarshal(data, &record) != nil {
+		record.Values = map[string]string{}
+	}
+	if record.Values == nil {
+		record.Values = map[string]string{}
+	}
+	record.Values[key] = value
+	if key == preferences.ThemeKey {
+		record.LegacyTheme = ""
+	}
+	data, err = json.Marshal(record)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(s.path), 0700); err != nil {
 		return err
 	}
-	temporary, err := os.CreateTemp(filepath.Dir(s.path), ".theme-preferences-*")
+	temporary, err := os.CreateTemp(filepath.Dir(s.path), ".preferences-*")
 	if err != nil {
 		return err
 	}
@@ -84,4 +118,25 @@ func (s *ThemePreferences) Save(ctx context.Context, theme preferences.Theme) er
 		return err
 	}
 	return os.Rename(temporaryPath, s.path)
+}
+
+// ThemePreferences is retained as a focused constructor for existing callers.
+type ThemePreferences = Preferences
+
+func NewThemePreferences(path string) *Preferences { return NewPreferences(path) }
+
+func (s *Preferences) Load(ctx context.Context) (preferences.Theme, bool, error) {
+	value, saved, err := s.Get(ctx, preferences.ThemeKey)
+	if err != nil {
+		return preferences.ThemeSystem, false, err
+	}
+	theme := preferences.ParseTheme(value)
+	return theme, saved && theme == preferences.Theme(value), nil
+}
+
+func (s *Preferences) Save(ctx context.Context, theme preferences.Theme) error {
+	if !theme.Valid() {
+		return errors.New("invalid theme preference")
+	}
+	return s.Set(ctx, preferences.ThemeKey, string(theme))
 }

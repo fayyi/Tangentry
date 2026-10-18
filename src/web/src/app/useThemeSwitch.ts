@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type MouseEvent } from 'react'
 import { flushSync } from 'react-dom'
-import { request } from '../shared/api/client'
+import { getInterfacePreference, setInterfacePreference } from '../shared/preferences/interfacePreferences'
 
 export type ThemePreference = 'light' | 'dark' | 'system'
 export const THEME_PREFERENCES: readonly ThemePreference[] = ['light', 'dark', 'system']
@@ -22,14 +22,21 @@ export function readLegacyPreference(storage?: Pick<Storage, 'getItem'>): ThemeP
   }
 }
 
-function readInitialPreference(): ThemePreference {
-  const state = window as Window & { __TANGENTRY_THEME__?: unknown; __TANGENTRY_THEME_SAVED__?: boolean }
-  const injected = state.__TANGENTRY_THEME__
+export function readInitialPreference(input: { injected?: unknown; saved?: boolean; legacy?: unknown; datasetTheme?: string } = {}): ThemePreference {
+  const state = (typeof window === 'undefined' ? {} : window) as { __TANGENTRY_THEME__?: unknown; __TANGENTRY_THEME_SAVED__?: boolean }
+  const injected = input.injected === undefined ? state.__TANGENTRY_THEME__ : input.injected
+  const saved = input.saved === undefined ? state.__TANGENTRY_THEME_SAVED__ : input.saved
+  const legacy = input.legacy === undefined
+    ? readLegacyPreference()
+    : input.legacy === 'light' || input.legacy === 'dark' || input.legacy === 'system' ? input.legacy : null
   if (injected !== undefined && injected !== '__TANGENTRY_THEME__') {
-    if (state.__TANGENTRY_THEME_SAVED__) return parseThemePreference(injected)
-    return readLegacyPreference() ?? parseThemePreference(injected)
+    if (saved) return parseThemePreference(injected)
+    return legacy ?? parseThemePreference(injected)
   }
-  return readLegacyPreference() ?? parseThemePreference(document.documentElement.dataset.theme === 'dark' ? 'dark' : 'system')
+  const datasetTheme = input.datasetTheme === undefined
+    ? (typeof document === 'undefined' ? undefined : document.documentElement.dataset.theme)
+    : input.datasetTheme
+  return legacy ?? parseThemePreference(datasetTheme === 'dark' ? 'dark' : 'system')
 }
 
 function systemIsDark() {
@@ -64,15 +71,15 @@ export function useThemeSwitch() {
   useEffect(() => {
     if (!hydrated) return
     try { localStorage.setItem('tangentry-theme', preference) } catch { /* Browser fallback is best effort. */ }
-    void request<{ theme: ThemePreference }>('/settings/theme', { method: 'PUT', body: JSON.stringify({ theme: preference }) }).catch(() => {})
+    void setInterfacePreference('theme', preference).catch(() => {})
   }, [preference, hydrated])
 
   useEffect(() => {
     let cancelled = false
-    void request<{ theme: ThemePreference; saved?: boolean }>('/settings/theme').then(result => {
+    void getInterfacePreference('theme').then(result => {
       if (cancelled) return
-      if (result && THEME_PREFERENCES.includes(result.theme) && !userSelected.current) {
-        if (result.saved !== false) setPreference(result.theme)
+      if (result && THEME_PREFERENCES.includes(result.value as ThemePreference) && !userSelected.current) {
+        if (result.saved !== false) setPreference(result.value as ThemePreference)
         else {
           const legacy = readLegacyPreference()
           if (legacy) setPreference(legacy)
