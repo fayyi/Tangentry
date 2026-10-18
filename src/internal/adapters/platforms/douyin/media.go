@@ -23,28 +23,6 @@ func PlaybackURL(raw string) bool {
 	return host == "douyinvod.com" || strings.HasSuffix(host, ".douyinvod.com")
 }
 
-// PlaybackCandidates keeps a small, de-duplicated set of safe addresses and
-// drops URLs whose signed deadline has already elapsed.
-func PlaybackCandidates(raw []string, now time.Time) []string {
-	result := make([]string, 0, 3)
-	seen := make(map[string]struct{}, len(raw))
-	for _, value := range raw {
-		value = strings.TrimSpace(value)
-		if !PlaybackURL(value) || !playbackURLLive(value, now) {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		result = append(result, value)
-		if len(result) == 3 {
-			break
-		}
-	}
-	return result
-}
-
 func playbackURLLive(raw string, now time.Time) bool {
 	u, err := url.Parse(raw)
 	if err != nil {

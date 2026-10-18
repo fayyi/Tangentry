@@ -84,15 +84,14 @@ type DOMDiagnostics struct {
 // DOMCard is the credential-free projection of a recommendation card read
 // from a platform page. It intentionally contains no cookies or raw HTML.
 type DOMCard struct {
-	ID           string   `json:"id"`
-	URL          string   `json:"url"`
-	ThumbnailURL string   `json:"thumbnailURL"`
-	Title        string   `json:"title"`
-	Author       string   `json:"author"`
-	AuthorID     string   `json:"authorID"`
-	LikeCount    int      `json:"likeCount"`
-	Duration     int      `json:"duration"`
-	MediaURLs    []string `json:"mediaURLs,omitempty"`
+	ID           string `json:"id"`
+	URL          string `json:"url"`
+	ThumbnailURL string `json:"thumbnailURL"`
+	Title        string `json:"title"`
+	Author       string `json:"author"`
+	AuthorID     string `json:"authorID"`
+	LikeCount    int    `json:"likeCount"`
+	Duration     int    `json:"duration"`
 }
 
 // FeedCaptureFetcher is optional. Adapters must continue to work with a

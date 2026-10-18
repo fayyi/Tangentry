@@ -131,6 +131,11 @@ var errorResponses = []errorResponse{
 }
 
 func fail(w http.ResponseWriter, err error) {
+	var platform *discovery.PlatformError
+	if errors.As(err, &platform) {
+		platformUnavailable(w, err)
+		return
+	}
 	for _, response := range errorResponses {
 		if !errors.Is(err, response.err) {
 			continue

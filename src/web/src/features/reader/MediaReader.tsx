@@ -37,7 +37,8 @@ function useDouyinPlayback(identity: string, id: string) {
   const [attempt, setAttempt] = useState(0)
   const [source, setSource] = useState('')
   const [error, setError] = useState('')
-  useEffect(() => { setAttempt(0); setSource(''); setError('') }, [identity, id])
+  const automaticRetries = useRef(0)
+  useEffect(() => { setAttempt(0); setSource(''); setError(''); automaticRetries.current = 0 }, [identity, id])
   useEffect(() => {
     if (!attempt || !id) return
     let active = true
@@ -50,7 +51,16 @@ function useDouyinPlayback(identity: string, id: string) {
     }).catch(cause => { if (active) setError(cause instanceof Error ? cause.message : '抖音在线视频暂不可用。') })
     return () => { active = false; controller.abort(); if (token) void request(`/playback/sessions/${encodeURIComponent(token)}`, { method: 'DELETE', keepalive: true }).catch(() => {}) }
   }, [attempt, id])
-  return { source, error, active: attempt > 0, start: () => { setError(''); setSource(''); setAttempt(value => value + 1) }, fail: () => { setSource(''); setError('抖音播放地址已过期，请重试。') } }
+  return { source, error, active: attempt > 0, start: () => { automaticRetries.current = 0; setError(''); setSource(''); setAttempt(value => value + 1) }, fail: () => {
+    setSource('')
+    if (automaticRetries.current < 1) {
+      automaticRetries.current += 1
+      setError('播放地址已失效，正在重新解析抖音视频…')
+      setAttempt(value => value + 1)
+    } else {
+      setError('抖音播放地址已过期，请重试。')
+    }
+  } }
 }
 
 function ResizableReaderPlayer({ children }: { children: ReactNode }) {
@@ -116,10 +126,10 @@ export function MediaReader({ id, initialItem, jobs, jobsLoading = false, video,
   const douyinPlayback = useDouyinPlayback(id, item?.platform === 'douyin' ? item.platformId : '')
   const compatibilityBlocked = compatibility.active && !compatibility.source
   useEffect(() => {
-    if (item?.kind !== 'video' || item.platform !== 'douyin' || local || douyinPlayback.active || compatibility.active || compatibilityAutoStarted.current === id) return
+    if (item?.kind !== 'video' || item.platform !== 'douyin' || local || douyinPlayback.active || douyinPlayback.source || compatibilityAutoStarted.current === id) return
     compatibilityAutoStarted.current = id
-    compatibility.start()
-  }, [id, item?.kind, item?.platform, local, douyinPlayback.active, compatibility.active])
+    douyinPlayback.start()
+  }, [id, item?.kind, item?.platform, local, douyinPlayback.active, douyinPlayback.source])
   async function verifyLinuxdo() {
     try {
       await openDesktopPlatformLogin('linuxdo')
@@ -161,12 +171,14 @@ export function MediaReader({ id, initialItem, jobs, jobsLoading = false, video,
   }
   useEffect(() => {
     // Cached media can already have metadata before React receives its event.
+    // Douyin uses its own server-side playback session and must never fall
+    // through to the legacy compatibility renderer.
     const node = native.current
-    if ((item?.platform === 'xiaohongshu' || item?.platform === 'douyin') && !local && !compatibility.active && node instanceof HTMLVideoElement && node.readyState >= 1 && node.videoWidth === 0) startCompatibility()
+    if (item?.platform === 'xiaohongshu' && !local && !compatibility.active && node instanceof HTMLVideoElement && node.readyState >= 1 && node.videoWidth === 0) startCompatibility()
   })
   function videoLoaded() {
     const node = native.current
-    if ((item?.platform === 'xiaohongshu' || item?.platform === 'douyin') && !local && node instanceof HTMLVideoElement && node.videoWidth === 0) {
+    if (item?.platform === 'xiaohongshu' && !local && node instanceof HTMLVideoElement && node.videoWidth === 0) {
       if (compatibility.active) compatibility.fail()
       else startCompatibility()
       return
@@ -200,7 +212,7 @@ export function MediaReader({ id, initialItem, jobs, jobsLoading = false, video,
   const quoteText = onQuote ? (text: string, anchor?: TextAnchor) => { setFocusReading(false); onQuote(text, anchor) } : undefined
   const revealNotes = onOpenNotes ? (ids: string[]) => { setFocusReading(false); onOpenNotes(ids) } : undefined
   const pdfAnnotations={notes:annotations,focus:textFocus,onQuote:onPDFQuote ? (text: string, anchor: PDFAnchor) => { setFocusReading(false); onPDFQuote(text, anchor) } : undefined,onOpenNotes:revealNotes,onUnresolved}
-  const descriptionSeek = onSeek ?? (!video && (item?.kind === 'audio' && item.mediaUrl || item?.kind === 'video' && (local || item.mediaUrl || compatibility.source)) ? (seconds: number) => {
+  const descriptionSeek = onSeek ?? (!video && (item?.kind === 'audio' && item.mediaUrl || item?.kind === 'video' && (local || item.mediaUrl || compatibility.source || douyinPlayback.source)) ? (seconds: number) => {
     const node = native.current
     if (!node || Number.isFinite(node.duration) && seconds > node.duration) return
     node.currentTime = seconds
@@ -244,7 +256,7 @@ export function MediaReader({ id, initialItem, jobs, jobsLoading = false, video,
         {audioLayout && description}
         {item.kind==='audio'&&reading}
         {item.kind === 'video' && !video && (onlineVideoRequired ? (item.platform === 'douyin' ? (!douyinPlayback.source ? <div className={douyinPlayback.error ? 'error-panel' : 'field-hint'} role={douyinPlayback.error ? 'alert' : 'status'}><p>{compatibilityMessage}</p><div className="reader-source-error-actions"><button className="button button-secondary" onClick={douyinPlayback.start}><RotateCw size={14}/>重试</button>{douyinPlayback.error && <a className="button button-secondary" href={item.url} target="_blank" rel="noopener noreferrer">打开原内容<ExternalLink size={15}/></a>}</div></div> : <video ref={bindMedia} onLoadedMetadata={videoLoaded} onError={() => douyinPlayback.fail()} className="local-video" aria-label="抖音在线视频播放器" controls playsInline preload="metadata" poster={item.thumbnailUrl} src={onlineSource}/>) : (compatibilityBlocked || !hasPlayableOnlineSource(item.mediaUrl, compatibility.source) ? <div className={compatibility.error ? 'error-panel' : 'field-hint'} role={compatibility.error ? 'alert' : 'status'}><p>{compatibilityMessage}</p><div className="reader-source-error-actions">{compatibility.error && <button className="button button-secondary" onClick={compatibility.start}><RotateCw size={14}/>重试</button>}{compatibility.error && <a className="button button-secondary" href={'/downloads?url=' + encodeURIComponent(item.url)}><Download size={14}/>下载视频</a>}{!compatibility.error && <button className="button button-secondary" onClick={compatibility.cancel}>取消兼容处理</button>}</div></div> : <video ref={bindMedia} onLoadedMetadata={videoLoaded} className="local-video" controls playsInline preload="metadata" poster={item.thumbnailUrl} src={onlineSource}/>)) : local ? <video ref={bindMedia} onLoadedMetadata={() => { onReady?.(true); report() }} className="local-video" controls playsInline preload="metadata" src={'/api/downloads/' + encodeURIComponent(local.id) + '/media'}/> : (item.platform === 'bilibili' || item.platform === 'youtube') ? <IframePlayer ref={playbackRef} item={item} onReady={onReady} onPosition={onPosition} initialTime={0}/> : !detailLoading && <p className="field-hint">来源未提供可播放的视频地址，可打开原内容查看。</p>)}
-        {item.kind==='video'&&!video&&!compatibilityBlocked&&(local || ((item.platform==='rss'||item.platform==='xiaohongshu')&&item.mediaUrl) || compatibility.source)&&<NativeReadingProgress contentId={id} media={native} identity={`${id}:${local?.id ?? (compatibility.source || item.mediaUrl)}`}/>}
+        {item.kind==='video'&&!video&&!compatibilityBlocked&&(local || ((item.platform==='rss'||item.platform==='xiaohongshu')&&item.mediaUrl) || compatibility.source || douyinPlayback.source)&&<NativeReadingProgress contentId={id} media={native} identity={`${id}:${local?.id ?? (douyinPlayback.source || compatibility.source || item.mediaUrl)}`}/>}
         {item.kind==='video'&&!video&&reading}
         {item.kind==='image'&&<ImageAlbum key={item.id} item={item} onRefresh={item.platform==='xiaohongshu'?refreshDetails:undefined} onUpdateSource={item.platform==='xiaohongshu'?()=>setSourceEditing(true):undefined} refreshing={detailLoading}/>}
 

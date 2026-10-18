@@ -3,13 +3,79 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"tangentry/internal/config"
 	"tangentry/internal/credentials"
+	"tangentry/internal/downloads"
+	"tangentry/internal/playback"
 	"testing"
 )
+
+type douyinTransport func(*http.Request) (*http.Response, error)
+
+func (f douyinTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestClassifyDouyinFreshCookieFailureDistinguishesConfiguration(t *testing.T) {
+	raw := "ERROR: HTTP Error 403: Forbidden; Fresh cookies (not necessarily logged in) are needed"
+	withoutCookie := classifyDouyin(raw, false).Error()
+	withCookie := classifyDouyin(raw, true).Error()
+	if !strings.Contains(withoutCookie, "未配置抖音 Cookie") {
+		t.Fatalf("missing-cookie classification: %s", withoutCookie)
+	}
+	if !strings.Contains(withCookie, "解析器被抖音接口拒绝") || strings.Contains(withCookie, "Cookie 无效") {
+		t.Fatalf("parser-rejection classification: %s", withCookie)
+	}
+}
+
+func TestDouyinDownloadUsesWebViewFallbackWithoutYTDLPAndBackup(t *testing.T) {
+	if os.PathSeparator != '/' {
+		t.Skip("POSIX fixture")
+	}
+	tk := New(config.Config{YTDLPPath: filepath.Join(t.TempDir(), "missing"), FFmpegPath: filepath.Join(t.TempDir(), "missing-ffmpeg")})
+	tk.SetDouyinPlaybackResolver(func(context.Context, string) (playback.Source, error) {
+		return playback.Source{
+			URL:      "https://primary.douyinvod.com/video.mp4?deadline=4102444800",
+			Backups:  []string{"https://backup.douyinvod.com/video.mp4?deadline=4102444800"},
+			Platform: "douyin",
+		}, nil
+	})
+	tk.SetDouyinHTTPClient(&http.Client{Transport: douyinTransport(func(r *http.Request) (*http.Response, error) {
+		if r.Header.Get("Cookie") != "" || r.Header.Get("Authorization") != "" || r.Header.Get("Referer") != "https://www.douyin.com/video/6961737553342991651" {
+			t.Fatalf("unsafe fallback request: %+v", r.Header)
+		}
+		if r.URL.Hostname() == "primary.douyinvod.com" {
+			return &http.Response{StatusCode: http.StatusForbidden, Header: http.Header{"Content-Type": {"text/html"}}, Body: io.NopCloser(strings.NewReader("forbidden"))}, nil
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"video/mp4"}}, Body: io.NopCloser(strings.NewReader("fixture-video"))}, nil
+	})})
+	directory := t.TempDir()
+	result, err := tk.DownloadMedia(context.Background(), "https://www.douyin.com/video/6961737553342991651", directory, 0, downloads.Options{Mode: "video"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.FileName != "6961737553342991651.mp4" {
+		t.Fatalf("unexpected file: %+v", result)
+	}
+	body, err := os.ReadFile(filepath.Join(directory, result.FileName))
+	if err != nil || string(body) != "fixture-video" {
+		t.Fatalf("fallback file = %q, %v", body, err)
+	}
+}
+
+func TestDouyinDownloadFallbackRejectsAudioOption(t *testing.T) {
+	tk := New(config.Config{YTDLPPath: filepath.Join(t.TempDir(), "missing")})
+	tk.SetDouyinPlaybackResolver(func(context.Context, string) (playback.Source, error) {
+		return playback.Source{URL: "https://fixture.douyinvod.com/video.mp4"}, nil
+	})
+	_, err := tk.DownloadMedia(context.Background(), "https://www.douyin.com/video/6961737553342991651", t.TempDir(), 0, downloads.Options{Mode: "audio"})
+	if err == nil || !strings.Contains(err.Error(), "仅音频") {
+		t.Fatalf("audio fallback was not rejected: %v", err)
+	}
+}
 
 func TestDouyinMetadataAudioAndCookieIsolation(t *testing.T) {
 	if os.PathSeparator != '/' {

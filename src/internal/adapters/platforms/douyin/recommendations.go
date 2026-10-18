@@ -279,11 +279,19 @@ func (c *Client) ResolveVideoMedia(ctx context.Context, id string) (platformfetc
 	if err != nil {
 		return platformfetch.VideoMediaResponse{}, err
 	}
-	candidates := PlaybackCandidates(append([]string{result.URL}, result.Backups...), time.Now())
-	if len(candidates) == 0 {
-		if result.Restricted {
-			return platformfetch.VideoMediaResponse{}, &discovery.PlatformError{Restricted: true, Message: "应用内抖音页面需要验证，请在应用内完成登录或验证码验证后重试。"}
+	if result.Restricted {
+		return platformfetch.VideoMediaResponse{}, &discovery.PlatformError{Restricted: true, Message: "应用内抖音页面需要验证，请在应用内完成登录或验证码验证后重试。"}
+	}
+	candidates := make([]string, 0, 3)
+	for _, candidate := range append([]string{result.URL}, result.Backups...) {
+		if PlaybackURL(candidate) && playbackURLLive(candidate, time.Now()) {
+			candidates = append(candidates, candidate)
+			if len(candidates) == 3 {
+				break
+			}
 		}
+	}
+	if len(candidates) == 0 {
 		return platformfetch.VideoMediaResponse{}, discovery.ErrUnavailable
 	}
 	result.URL, result.Backups = candidates[0], candidates[1:]
@@ -547,10 +555,7 @@ type feedVideo struct {
 	} `json:"statistics"`
 	Video struct {
 		Duration int `json:"duration"`
-		PlayAddr struct {
-			URLs []string `json:"url_list"`
-		} `json:"play_addr"`
-		Cover struct {
+		Cover    struct {
 			URLs []string `json:"url_list"`
 		} `json:"cover"`
 	} `json:"video"`
@@ -595,9 +600,6 @@ func mapDOMCards(cards []platformfetch.DOMCard, page int) discovery.Feed {
 			title = strings.TrimSpace(card.Author) + "的视频"
 		}
 		item := content.Item{ID: "douyin:" + id, Platform: "douyin", PlatformID: id, Kind: "video", Title: title, Author: strings.TrimSpace(card.Author), AuthorID: strings.TrimSpace(card.AuthorID), URL: ref.URL, ThumbnailURL: safeHTTPSURL(card.ThumbnailURL), DurationSeconds: maxInt(card.Duration, 0), LikeCount: maxInt(card.LikeCount, 0)}
-		if candidates := PlaybackCandidates(card.MediaURLs, time.Now()); len(candidates) > 0 {
-			item.MediaURL = candidates[0]
-		}
 		if content.Validate(item) != nil {
 			continue
 		}
@@ -711,9 +713,6 @@ func decodeRecommendations(body []byte, page int, denied error) (discovery.Feed,
 			title = video.Author.Name + "的视频"
 		}
 		item := content.Item{ID: "douyin:" + video.ID, Platform: "douyin", PlatformID: video.ID, Kind: "video", Title: title, Description: video.Description, Author: video.Author.Name, AuthorID: video.Author.ID, URL: ref.URL, DurationSeconds: video.Video.Duration / 1000, PublishedAt: video.Created, LikeCount: video.Statistics.Likes}
-		if candidates := PlaybackCandidates(video.Video.PlayAddr.URLs, time.Now()); len(candidates) > 0 {
-			item.MediaURL = candidates[0]
-		}
 		for _, raw := range video.Video.Cover.URLs {
 			u, err := url.Parse(raw)
 			if err == nil && u.Scheme == "https" && u.Hostname() != "" && u.User == nil {

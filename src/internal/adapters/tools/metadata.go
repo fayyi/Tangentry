@@ -130,10 +130,10 @@ func (t *Toolkit) DouyinPlayback(ctx context.Context, raw string) (playback.Sour
 		Height   int     `json:"height"`
 		Duration float64 `json:"duration"`
 	}
-	if err := json.Unmarshal(stdout.Bytes(), &data); err != nil || data.ID != ref.ID || data.URL == "" || data.Protocol != "https" || data.Ext != "mp4" || data.Height > 1080 || data.VCodec == "" || data.ACodec == "" || math.IsNaN(data.Duration) || math.IsInf(data.Duration, 0) || data.Duration < 0 || data.Duration > 1800 || !playback.ValidCompatibilitySource(data.URL) {
+	if err := json.Unmarshal(stdout.Bytes(), &data); err != nil || data.ID != ref.ID || data.URL == "" || data.Protocol != "https" || data.Ext != "mp4" || data.Height > 1080 || data.VCodec == "" || data.ACodec == "" || math.IsNaN(data.Duration) || math.IsInf(data.Duration, 0) || data.Duration < 0 || data.Duration > 1800 || !playback.ValidSource(playback.Source{URL: data.URL, Platform: "douyin"}) {
 		return playback.Source{}, &discovery.PlatformError{Message: "抖音没有返回可兼容播放的 MP4 视频，请下载视频或打开原内容。"}
 	}
-	return playback.Source{URL: data.URL, Quality: data.Height, Duration: int(data.Duration)}, nil
+	return playback.Source{URL: data.URL, Quality: data.Height, Duration: int(data.Duration), Platform: "douyin", Referer: ref.URL}, nil
 }
 func (t *Toolkit) extractVideo(ctx context.Context, platform, id, url string) (content.Item, error) {
 	if !t.ytdlpReady() {

@@ -12,9 +12,32 @@ import (
 	"strings"
 	"tangentry/internal/adapters/sqlite"
 	"tangentry/internal/downloads"
+	"tangentry/internal/playback"
 	"testing"
 	"time"
 )
+
+func TestPlaybackRoutesKeepPlatformIdentifiersSeparate(t *testing.T) {
+	var resolves int
+	service := playback.New(func(context.Context, string) (playback.Source, error) {
+		resolves++
+		return playback.Source{URL: "https://media.bilivideo.com/fixture.mp4"}, nil
+	}, &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"video/mp4"}}, Body: io.NopCloser(strings.NewReader("fixture"))}, nil
+	})})
+	h := New(nil, nil, nil, Options{Playback: service})
+	for _, path := range []string{"/api/playback/bilibili/7340916925458779430", "/api/playback/douyin/BV17x411w7KC"} {
+		request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1"+path, nil)
+		response := httptest.NewRecorder()
+		h.ServeHTTP(response, request)
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("%s returned %d: %s", path, response.Code, response.Body.String())
+		}
+	}
+	if resolves != 0 {
+		t.Fatalf("invalid platform identifiers reached resolver %d times", resolves)
+	}
+}
 
 type inactiveMediaRunner struct{}
 

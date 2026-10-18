@@ -100,7 +100,18 @@ func (t *Toolkit) mediaArguments(rawURL, directory string, height int, options d
 }
 
 func (t *Toolkit) DownloadMedia(ctx context.Context, rawURL, directory string, height int, options downloads.Options) (downloads.Result, error) {
+	var douyinFallbackErr error
+	if ref, parseErr := discovery.ParseDouyin(rawURL); parseErr == nil && ref.ID != "" {
+		if result, fallbackErr := t.downloadDouyinFallback(ctx, ref.URL, directory, height, options); fallbackErr == nil {
+			return result, nil
+		} else {
+			douyinFallbackErr = fallbackErr
+		}
+	}
 	if !t.Ready() {
+		if options.Mode == "audio" || douyinFallbackErr != nil && !errors.Is(douyinFallbackErr, downloads.ErrTools) {
+			return downloads.Result{}, douyinFallbackErr
+		}
 		return downloads.Result{}, downloads.ErrTools
 	}
 	if err := os.MkdirAll(directory, 0700); err != nil {
@@ -114,6 +125,11 @@ func (t *Toolkit) DownloadMedia(ctx context.Context, rawURL, directory string, h
 	args := append(cookies, t.mediaArguments(rawURL, directory, height, options)...)
 	cmd, err := t.ytdlpCommand(ctx, args...)
 	if err != nil {
+		if ref, parseErr := discovery.ParseDouyin(rawURL); parseErr == nil && ref.ID != "" {
+			if result, fallbackErr := t.downloadDouyinFallback(ctx, ref.URL, directory, height, options); fallbackErr == nil {
+				return result, nil
+			}
+		}
 		if err = t.toolDownloadError(ctx, err); errors.Is(err, downloads.ErrTools) {
 			err = errors.New("yt-dlp 未能下载，请检查网络后重试；工具设置中可查看下载状态。")
 		}
@@ -126,7 +142,7 @@ func (t *Toolkit) DownloadMedia(ctx context.Context, rawURL, directory string, h
 			return downloads.Result{}, ctx.Err()
 		}
 		if ref, parseErr := discovery.ParseDouyin(rawURL); parseErr == nil && ref.ID != "" {
-			if result, fallbackErr := t.downloadDouyinFallback(ctx, ref.URL, directory); fallbackErr == nil {
+			if result, fallbackErr := t.downloadDouyinFallback(ctx, ref.URL, directory, height, options); fallbackErr == nil {
 				return result, nil
 			}
 			cookieArgs, _, _ := t.cookieArguments(rawURL)

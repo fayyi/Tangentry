@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	articleadapter "tangentry/internal/adapters/articles"
@@ -95,10 +96,23 @@ func wireFeatures(dataDir string, configuration config.Config, option Options, r
 			if strings.HasPrefix(id, "BV") {
 				return p.media.bilibili.Playback(ctx, id)
 			}
-			if media, err := p.media.douyin.ResolveVideoMedia(ctx, id); err == nil && media.URL != "" {
+			media, err := p.media.douyin.ResolveVideoMedia(ctx, id)
+			if err == nil && media.URL != "" {
 				return playback.Source{URL: media.URL, Backups: media.Backups, Platform: "douyin", Referer: "https://www.douyin.com/video/" + id}, nil
 			}
-			return p.network.toolkit.DouyinPlayback(ctx, "https://www.douyin.com/video/"+id)
+			var restricted *discovery.PlatformError
+			if err != nil && errors.As(err, &restricted) && restricted.Restricted {
+				return playback.Source{}, err
+			}
+			if err != nil && (errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil) {
+				return playback.Source{}, err
+			}
+			source, err := p.network.toolkit.DouyinPlayback(ctx, "https://www.douyin.com/video/"+id)
+			if err != nil {
+				return playback.Source{}, err
+			}
+			source.Platform, source.Referer = "douyin", "https://www.douyin.com/video/"+id
+			return source, nil
 		}
 	}
 	if option.Playback != nil {

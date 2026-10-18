@@ -10,22 +10,7 @@ import (
 	"tangentry/internal/discovery"
 	"tangentry/internal/platformfetch"
 	"testing"
-	"time"
 )
-
-func TestPlaybackCandidatesAllowlistAndDeadline(t *testing.T) {
-	now := time.Unix(2000, 0)
-	got := PlaybackCandidates([]string{
-		"https://cdn.douyinvod.com/video.mp4?deadline=1999",
-		"http://cdn.douyinvod.com/video.mp4",
-		"https://douyinvod.com.evil.example/video.mp4",
-		"https://cdn.douyinvod.com/video.mp4?deadline=3000",
-		"https://cdn.douyinvod.com/video.mp4?deadline=3000",
-	}, now)
-	if len(got) != 1 || got[0] != "https://cdn.douyinvod.com/video.mp4?deadline=3000" {
-		t.Fatalf("candidates=%v", got)
-	}
-}
 
 // Synthetic, credential-free response fixture for the supported nested shape.
 //
@@ -272,6 +257,39 @@ func TestRecommendationNestedPayloadAndAuthorAvatar(t *testing.T) {
 	if err != nil || len(feed.Items) != 1 || feed.Items[0].LikeCount != 12 || feed.Items[0].AuthorAvatarURL == "" {
 		t.Fatalf("nested response not mapped: %+v %v", feed, err)
 	}
+}
+
+func TestResolveVideoMediaFiltersRestrictedAndExpiredCandidates(t *testing.T) {
+	for name, response := range map[string]platformfetch.VideoMediaResponse{
+		"restricted": {Restricted: true, URL: "https://fixture.douyinvod.com/video.mp4"},
+		"expired":    {URL: "https://fixture.douyinvod.com/video.mp4?deadline=1"},
+		"unsafe":     {URL: "https://evil.example/video.mp4"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			client := &Client{Page: videoMediaPage{resolve: func(context.Context, string) (platformfetch.VideoMediaResponse, error) {
+				return response, nil
+			}}}
+			_, err := client.ResolveVideoMedia(context.Background(), "6961737553342991651")
+			if err == nil {
+				t.Fatal("unsafe media response accepted")
+			}
+			var restricted *discovery.PlatformError
+			if name == "restricted" && (!errors.As(err, &restricted) || !restricted.Restricted) {
+				t.Fatalf("restricted response lost classification: %v", err)
+			}
+		})
+	}
+}
+
+type videoMediaPage struct {
+	resolve func(context.Context, string) (platformfetch.VideoMediaResponse, error)
+}
+
+func (f videoMediaPage) ResolveVideoMedia(ctx context.Context, id string) (platformfetch.VideoMediaResponse, error) {
+	return f.resolve(ctx, id)
+}
+func (videoMediaPage) Fetch(context.Context, string, string, platformfetch.Request) (platformfetch.Response, error) {
+	return platformfetch.Response{}, errors.New("unused")
 }
 
 func TestRecommendationUsesPageBridgeBeforeCookieFallback(t *testing.T) {

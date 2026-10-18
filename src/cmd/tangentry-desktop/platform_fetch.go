@@ -142,10 +142,8 @@ const douyinFeedCaptureScript = `(function(){
     const author = video.author || {};
     const cover = video.video && video.video.cover;
     const rawCover = cover && (cover.url_list || cover.urlList);
-    const play = video.video && (video.video.play_addr || video.video.playAddr);
-    const rawMedia = play && (play.url_list || play.urlList);
     const thumbnailURL = Array.isArray(rawCover) ? rawCover.map(absolute).find(value => /^https:\/\//i.test(value)) || '' : '';
-    return {id:id, url:'https://www.douyin.com/video/' + id, thumbnailURL:thumbnailURL, mediaURLs:Array.isArray(rawMedia) ? rawMedia.map(absolute).filter(value => /^https:\/\//i.test(value)).slice(0, 8) : [], title:String(video.desc || video.description || '').slice(0, 1000), author:String(author.nickname || author.name || '').slice(0, 200), authorID:String(author.uid || author.id || '').slice(0, 200), likeCount:countOf(video.statistics && (video.statistics.digg_count || video.statistics.diggCount)), duration:Math.round(countOf(video.video && video.video.duration) / 1000)};
+    return {id:id, url:'https://www.douyin.com/video/' + id, thumbnailURL:thumbnailURL, title:String(video.desc || video.description || '').slice(0, 1000), author:String(author.nickname || author.name || '').slice(0, 200), authorID:String(author.uid || author.id || '').slice(0, 200), likeCount:countOf(video.statistics && (video.statistics.digg_count || video.statistics.diggCount)), duration:Math.round(countOf(video.video && video.video.duration) / 1000)};
   };
   const projectBody = body => {
     try { const value = typeof body === 'string' ? JSON.parse(body) : body; const root = value && value.data && typeof value.data === 'object' ? value.data : value; const status = root && root.status_code != null ? root.status_code : value && value.status_code; const code = status == null ? 0 : Number(status)||0; const list = root && (root.aweme_list || root.awemeList); const parsed = Array.isArray(list) && (code === 0 || code === 2154); return {status:code,parsed:parsed,hasMore:code === 0 && Number(root && root.has_more)>0,cards:code === 0 && Array.isArray(list) ? list.map(project).filter(Boolean).slice(0, 500) : []}; } catch (_) { return null; }
@@ -191,21 +189,25 @@ const douyinRecommendNextScript = `(function(){ const target=document.activeElem
 
 const douyinFeedReadScript = `(function(){ return {pageUrl: location.href, title: document.title || "", ready: document.readyState, responses: (window.__tangentryDouyinFeed || []).splice(0, 32), fetchHookInstalled:window.fetch === window.__tangentryDouyinFetchWrapper, xhrHookInstalled:XMLHttpRequest.prototype.send === window.__tangentryDouyinXHRSend}; })();`
 
+const douyinVideoMediaMaxBody = 4 * 1024 * 1024
+
 func douyinVideoMediaScript(id string) string {
 	encoded, _ := json.Marshal(id)
+	limit := strconv.Itoa(douyinVideoMediaMaxBody)
 	return `(async function(){
   const id=` + string(encoded) + `;
   const absolute = raw => { try { return new URL(String(raw || ''), location.href).href; } catch (_) { return ''; } };
   const urls = [];
   const add = value => { if (Array.isArray(value)) value.forEach(add); else if (typeof value === 'string') urls.push(absolute(value)); };
   const walk = value => { if (!value || typeof value !== 'object') return; if (value.play_addr) add(value.play_addr.url_list || value.play_addr.urlList); if (value.url_list) add(value.url_list); Object.keys(value).slice(0, 200).forEach(key => { if (key !== 'url_list') walk(value[key]); }); };
-  let status=0, restricted=false;
-  try { const response = await fetch('/aweme/v1/web/aweme/detail/?aweme_id=' + encodeURIComponent(id), {credentials:'include', headers:{accept:'application/json'}}); status=response.status; if (!response.ok) restricted = response.status === 401 || response.status === 403 || response.status === 429; const type=(response.headers.get('content-type')||'').toLowerCase(); if (type.includes('json')) walk(await response.json()); } catch (_) {}
+  let status=0, restricted=false, networkError=false;
+  try { const response = await fetch('/aweme/v1/web/aweme/detail/?aweme_id=' + encodeURIComponent(id), {credentials:'include', headers:{accept:'application/json'}}); status=response.status; if (!response.ok) restricted = response.status === 401 || response.status === 403 || response.status === 429; const type=(response.headers.get('content-type')||'').toLowerCase(); if (type.includes('json')) { const length=Number(response.headers.get('content-length')||0); if (length > ` + limit + `) restricted=true; else { const body=await response.text(); if (body.length > ` + limit + `) restricted=true; else walk(JSON.parse(body)); } } } catch (_) { networkError=true; }
   document.querySelectorAll('video').forEach(node => add(node.currentSrc || node.src));
   const pageUrl=location.href, title=document.title||'';
   if (!/^https:\/\/(?:www\.)?douyin\.com\/video\/` + id + `(?:[/?#]|$)/i.test(pageUrl)) restricted=true;
   if (/login|登录|captcha|验证|verify/i.test(pageUrl+' '+title)) restricted=true;
-  return {status:status, restricted:restricted, pageUrl:pageUrl, title:title, urls:urls.slice(0,32)};
+  if (restricted) urls.length = 0;
+  return {status:status, restricted:restricted, networkError:networkError, pageUrl:pageUrl, title:title, urls:urls.slice(0,32)};
 })();`
 }
 
@@ -236,8 +238,7 @@ const douyinDomReadScript = `(function(){
     const author = findText(node, ['[class*="author"]','[class*="user"]','[data-e2e*="user"]','a[href*="/user/"]','a[href*="/search/"]']);
     const likeText = findText(node, ['[class*="like"]','[data-e2e*="like"]']);
     const duration = durationOf(findText(node, ['[class*="duration"]','[class*="time"]']) || rawText);
-    const media = Array.from(node.querySelectorAll('video')).map(video => absolute(video.currentSrc || video.src)).filter(value => /^https:\/\//i.test(value));
-    cards.push({id:id, url:url.split('?')[0], thumbnailURL:imageFrom(node), mediaURLs:media.slice(0, 8), title:title, author:author, likeCount:countOf(likeText), duration:duration}); seen.add(id);
+    cards.push({id:id, url:url.split('?')[0], thumbnailURL:imageFrom(node), title:title, author:author, likeCount:countOf(likeText), duration:duration}); seen.add(id);
   }
   const resources = performance.getEntriesByType('resource').filter(entry => /\/aweme\//i.test(entry.name)).map(entry => { try { return {path:new URL(entry.name).pathname, initiatorType:String(entry.initiatorType || '')}; } catch (_) { return null; } }).filter(Boolean);
   return {pageUrl:location.href, title:document.title || '', ready:document.readyState, cards:cards, responses:(window.__tangentryDouyinFeed || []).splice(0, 32), resources:resources, fetchHookInstalled:window.fetch === window.__tangentryDouyinFetchWrapper, xhrHookInstalled:XMLHttpRequest.prototype.send === window.__tangentryDouyinXHRSend, domDiagnostics:{url:location.href,videoLinkCount:links.length,candidateSelectorHits:candidateSelectorHits,cardsRead:cards.length}};
@@ -356,13 +357,17 @@ func (b *platformPageBridge) ResolveVideoMedia(ctx context.Context, id string) (
 		return platformfetch.VideoMediaResponse{}, err
 	}
 	var result struct {
-		Status     int      `json:"status"`
-		Restricted bool     `json:"restricted"`
-		PageURL    string   `json:"pageUrl"`
-		URLs       []string `json:"urls"`
+		Status       int      `json:"status"`
+		Restricted   bool     `json:"restricted"`
+		NetworkError bool     `json:"networkError"`
+		PageURL      string   `json:"pageUrl"`
+		URLs         []string `json:"urls"`
 	}
 	if err := json.Unmarshal(encoded, &result); err != nil {
 		return platformfetch.VideoMediaResponse{}, err
+	}
+	if result.NetworkError {
+		return platformfetch.VideoMediaResponse{}, errors.New("应用内抖音页面媒体请求失败")
 	}
 	media := safeDouyinMedia(result.URLs)
 	primary := ""
@@ -682,7 +687,6 @@ func sanitizeDouyinCaptureResponse(response douyinCaptureResponse) platformfetch
 }
 
 func sanitizeDouyinCard(card platformfetch.DOMCard) platformfetch.DOMCard {
-	media := safeDouyinMedia(card.MediaURLs)
 	return platformfetch.DOMCard{
 		ID:           truncateCaptureField(card.ID, 64),
 		URL:          safeCaptureURL(card.URL),
@@ -692,7 +696,6 @@ func sanitizeDouyinCard(card platformfetch.DOMCard) platformfetch.DOMCard {
 		AuthorID:     truncateCaptureField(card.AuthorID, 200),
 		LikeCount:    clampCaptureNumber(card.LikeCount),
 		Duration:     clampCaptureNumber(card.Duration),
-		MediaURLs:    media,
 	}
 }
 
@@ -842,9 +845,6 @@ func mergeDOMCards(existing, incoming []platformfetch.DOMCard) []platformfetch.D
 			}
 			if current.Duration == 0 {
 				current.Duration = card.Duration
-			}
-			if len(current.MediaURLs) == 0 {
-				current.MediaURLs = card.MediaURLs
 			}
 			continue
 		}

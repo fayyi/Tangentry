@@ -15,10 +15,15 @@ func normalizeSource(source Source) (Source, error) {
 	if !allowedFor(source.Platform, source.URL) {
 		return Source{}, ErrUnavailable
 	}
+	now := time.Now()
+	if deadline := sourceDeadline(source.URL); !deadline.IsZero() && !deadline.After(now) {
+		return Source{}, ErrUnavailable
+	}
 	seen := map[string]bool{source.URL: true}
 	backups := make([]string, 0, 3)
 	for _, raw := range source.Backups {
-		if allowedFor(source.Platform, raw) && !seen[raw] {
+		deadline := sourceDeadline(raw)
+		if allowedFor(source.Platform, raw) && (deadline.IsZero() || deadline.After(now)) && !seen[raw] {
 			seen[raw] = true
 			backups = append(backups, raw)
 			if len(backups) == 3 {

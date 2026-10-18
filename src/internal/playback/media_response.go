@@ -16,7 +16,7 @@ type cancelBody struct {
 
 func (b *cancelBody) Close() error { defer b.cancel(); return b.ReadCloser.Close() }
 
-func (s *Service) fetchCandidate(ctx context.Context, method, raw, byteRange, referer string) (*http.Response, context.CancelFunc, error) {
+func (s *Service) fetchCandidate(ctx context.Context, method, raw, byteRange, platform, referer string) (*http.Response, context.CancelFunc, error) {
 	attempt, cancel := context.WithCancel(ctx)
 	req, err := http.NewRequestWithContext(attempt, method, raw, nil)
 	if err != nil {
@@ -35,7 +35,19 @@ func (s *Service) fetchCandidate(ctx context.Context, method, raw, byteRange, re
 	// on a healthy long video body. Four candidates + one refresh stay bounded.
 	headerDone := make(chan struct{})
 	timer := time.AfterFunc(3*time.Second, func() { cancel(); close(headerDone) })
-	response, err := s.http.Do(req)
+	client := *s.http
+	client.CheckRedirect = func(next *http.Request, via []*http.Request) error {
+		if len(via) >= 5 || !allowedFor(platform, next.URL.String()) {
+			return ErrUnavailable
+		}
+		next.Header.Del("Cookie")
+		next.Header.Del("Authorization")
+		if referer != "" {
+			next.Header.Set("Referer", referer)
+		}
+		return nil
+	}
+	response, err := client.Do(req)
 	if !timer.Stop() {
 		<-headerDone
 	}
