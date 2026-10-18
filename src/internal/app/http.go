@@ -16,6 +16,7 @@ type httpWiring struct{ dependencies httptransport.Dependencies }
 func newHTTPWiring(s *services) httpWiring {
 	adapters := newHTTPAdapterBundle(s.adapters, s.features.downloads)
 	return httpWiring{dependencies: httptransport.Dependencies{
+		Theme:    s.runtime.theme,
 		Accounts: httpAccountDependencies(adapters),
 		Browse:   httpDiscoveryDependencies(s, adapters),
 		Library:  httpLibraryDependencies(s),

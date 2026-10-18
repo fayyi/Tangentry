@@ -13,6 +13,7 @@ import (
 
 type runtimeResources struct {
 	store        *sqlite.Store
+	theme        *filesystem.ThemePreferences
 	cookies      *credentials.Store
 	toolkit      *tools.Toolkit
 	platforms    *platforms
@@ -29,6 +30,7 @@ func openRuntimeResources(dataDir string, configuration config.Config, option Op
 		return nil, err
 	}
 	started.addErr(store.Close)
+	theme := filesystem.NewThemePreferences(filepath.Join(dataDir, "preferences.json"))
 	credentialDir := filepath.Join(dataDir, "credentials")
 	var cookies *credentials.Store
 	if len(option.CredentialKey) > 0 {
@@ -56,5 +58,5 @@ func openRuntimeResources(dataDir string, configuration config.Config, option Op
 		return nil, err
 	}
 	records := repositories{xiaohongshu: store, subscription: store}
-	return &runtimeResources{store: store, cookies: cookies, toolkit: toolkit, platforms: p, documents: documents, downloads: processing, repositories: records}, nil
+	return &runtimeResources{store: store, theme: theme, cookies: cookies, toolkit: toolkit, platforms: p, documents: documents, downloads: processing, repositories: records}, nil
 }
