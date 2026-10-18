@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"strings"
 	"sync"
@@ -41,6 +42,83 @@ type platformPageSession struct {
 	ready             chan struct{}
 	readyOnce         sync.Once
 	blockedNavigation atomic.Value
+}
+
+const (
+	platformPageWindowWidth  = 1024
+	platformPageWindowHeight = 768
+	platformPageWindowGap    = 32
+)
+
+// platformPageWindowPosition places the bridge outside the union of all
+// connected displays. macOS may still constrain a native window back onto a
+// display; concealPlatformPageWindow handles that fallback after creation.
+func platformPageWindowPosition(displays []mygo.Display, width, height int) (int, int) {
+	if len(displays) == 0 {
+		return -width - platformPageWindowGap, -height - platformPageWindowGap
+	}
+	minX, minY := displays[0].Bounds.X, displays[0].Bounds.Y
+	maxX := displays[0].Bounds.X + displays[0].Bounds.Width
+	maxY := displays[0].Bounds.Y + displays[0].Bounds.Height
+	for _, display := range displays[1:] {
+		minX = minInt(minX, display.Bounds.X)
+		minY = minInt(minY, display.Bounds.Y)
+		maxX = maxInt(maxX, display.Bounds.X+display.Bounds.Width)
+		maxY = maxInt(maxY, display.Bounds.Y+display.Bounds.Height)
+	}
+	return minX - width - platformPageWindowGap, minY - height - platformPageWindowGap
+}
+
+func rectanglesOverlap(a, b mygo.Rectangle) bool {
+	return a.X < b.X+b.Width && b.X < a.X+a.Width && a.Y < b.Y+b.Height && b.Y < a.Y+a.Height
+}
+
+func platformPageWindowScreen(bounds mygo.Rectangle, displays []mygo.Display) string {
+	for _, display := range displays {
+		if rectanglesOverlap(bounds, display.Bounds) {
+			if display.Label != "" {
+				return display.Label
+			}
+			return fmt.Sprintf("display-%d", display.ID)
+		}
+	}
+	return "屏幕外"
+}
+
+func platformPageWindowNeedsFallback(bounds mygo.Rectangle, displays []mygo.Display) bool {
+	return platformPageWindowScreen(bounds, displays) != "屏幕外"
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func concealPlatformPageWindow(window *mygo.Window, planned mygo.Rectangle) {
+	if window == nil || window.IsDestroyed() {
+		return
+	}
+	displays := mygo.Screen.Displays()
+	actual := window.Bounds()
+	screen := platformPageWindowScreen(actual, displays)
+	fallback := platformPageWindowNeedsFallback(actual, displays)
+	// Opacity=0 is applied after creation because WindowOptions intentionally
+	// normalizes non-positive opacity to 1. The native page remains composited,
+	// while the bridge cannot be seen, focused, clicked, or captured.
+	window.SetOpacity(0)
+	window.SetIgnoreMouseEvents(true)
+	window.SetContentProtection(true)
+	window.Blur()
+	slog.Info("平台请求窗口已隐藏", "frame", actual, "screen", screen, "planned", planned, "fallback", fallback)
 }
 
 const douyinFeedCaptureScript = `(function(){
@@ -512,16 +590,22 @@ func (b *platformPageBridge) session(platform, origin string) (*platformPageSess
 	}
 	session := &platformPageSession{platform: platform, origin: origin, lastUsed: time.Now(), ready: make(chan struct{})}
 	session.blockedNavigation.Store("")
+	x, y := platformPageWindowPosition(mygo.Screen.Displays(), platformPageWindowWidth, platformPageWindowHeight)
+	planned := mygo.Rectangle{X: x, Y: y, Width: platformPageWindowWidth, Height: platformPageWindowHeight}
 	window := mygo.NewWindow(mygo.WindowOptions{
-		Title: "Tangentry 平台请求", X: -1200, Y: -900,
-		Width: 1024, Height: 768, MinWidth: 640, MinHeight: 480,
-		SkipTaskbar: true, Page: mygo.PageOptions{TrustedOrigins: []string{origin}, PreloadScript: func() string {
+		Title: "Tangentry 平台请求", X: x, Y: y,
+		Width: platformPageWindowWidth, Height: platformPageWindowHeight, MinWidth: 640, MinHeight: 480,
+		Frameless: true, Transparent: true, Panel: true,
+		DisableResize: true, DisableMove: true, DisableMinimize: true, DisableMaximize: true,
+		DisableClose: true, DisableFullScreen: true, SkipTaskbar: true,
+		Page: mygo.PageOptions{TrustedOrigins: []string{origin}, PreloadScript: func() string {
 			if platform == "douyin" {
 				return douyinFeedCaptureScript
 			}
 			return ""
 		}()},
 	})
+	concealPlatformPageWindow(window, planned)
 	window.Page().OnPageTitleUpdated(func(event *mygo.TitleEvent) { event.PreventDefault() })
 	window.Page().OnDOMReady(func() { session.readyOnce.Do(func() { close(session.ready) }) })
 	window.Page().OnWillNavigate(func(event *mygo.NavigateEvent) {
@@ -541,11 +625,6 @@ func (b *platformPageBridge) session(platform, origin string) (*platformPageSess
 	session.window = window
 	b.sessions[platform] = session
 	b.mu.Unlock()
-	// Keep the WebView composited and timer-active without stealing focus from
-	// the Tangentry window. It is visible but positioned outside the screen;
-	// Hidden WebViews are throttled by WebKit.
-	window.ShowInactive()
-	window.Blur()
 	if err := window.Page().LoadURL(origin); err != nil {
 		b.mu.Lock()
 		if b.sessions[platform] == session {
