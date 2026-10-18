@@ -17,8 +17,16 @@ func httpAccountDependencies(adapters httpAdapterBundle) httptransport.AccountDe
 
 func httpDiscoveryDependencies(s *services, adapters httpAdapterBundle) httptransport.DiscoveryDependencies {
 	p := s.adapters.discovery
+	search := discovery.NewSearchService(s.features.content.Page, map[string]discovery.SearchProvider{
+		"bilibili":    p.bilibili,
+		"youtube":     youtubeSearchProvider{toolkit: s.adapters.network.toolkit},
+		"linuxdo":     p.forum,
+		"xiaoyuzhou":  p.podcasts,
+		"xiaohongshu": unsupportedSearchProvider{platform: "小红书"},
+		"douyin":      unsupportedSearchProvider{platform: "抖音"},
+	})
 	return httptransport.DiscoveryDependencies{
-		Search: discovery.NewService(p.creators), BilibiliBrowser: adapters.bilibiliBrowser,
+		Search: discovery.NewService(p.creators), UnifiedSearch: search, BilibiliBrowser: adapters.bilibiliBrowser,
 		RecommendationConfig: s.features.api.preferences, RecommendationQueue: s.features.recommendations.queue,
 		RecommendationPage: s.features.recommendations.Page, Imports: s.imports.importSource,
 		LinuxdoPosts: func(ctx context.Context, id string, postIDs []int64) (content.Discussion, error) {
@@ -31,6 +39,22 @@ func httpDiscoveryDependencies(s *services, adapters httpAdapterBundle) httptran
 		XiaohongshuImages:     adapters.imageCache, XiaohongshuImageVersion: adapters.imageVersion,
 		XiaohongshuRefresh: s.imports.refreshXiaohongshu,
 	}
+}
+
+type youtubeSearchProvider struct {
+	toolkit interface {
+		YouTubeSearch(context.Context, string, string) (discovery.SearchPage, error)
+	}
+}
+
+func (p youtubeSearchProvider) Search(ctx context.Context, query, cursor string) (discovery.SearchPage, error) {
+	return p.toolkit.YouTubeSearch(ctx, query, cursor)
+}
+
+type unsupportedSearchProvider struct{ platform string }
+
+func (p unsupportedSearchProvider) Search(context.Context, string, string) (discovery.SearchPage, error) {
+	return discovery.SearchPage{Platform: p.platform}, &discovery.PlatformError{Message: p.platform + "关键词搜索仅桌面版支持，请在应用内打开搜索结果。"}
 }
 
 func httpLibraryDependencies(s *services) httptransport.LibraryDependencies {

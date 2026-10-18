@@ -72,7 +72,7 @@ export function useAppNavigation(input: RefObject<HTMLInputElement | null>) {
       if ((event.metaKey || event.ctrlKey) && event.key === 'k') {
         event.preventDefault()
         if (view !== 'search') navigate('search')
-        window.setTimeout(() => input.current?.focus(), 100)
+        window.setTimeout(() => (document.querySelector<HTMLInputElement>('.unified-search-form input') ?? input.current)?.focus(), 100)
       }
     }
     window.addEventListener('popstate', popstate)

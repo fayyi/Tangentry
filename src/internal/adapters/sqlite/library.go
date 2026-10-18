@@ -92,8 +92,8 @@ func libraryFilter(q content.Query) (string, []any) {
 			continue
 		}
 		pattern := "%" + strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(term) + "%"
-		conditions = append(conditions, `id IN (SELECT id FROM library_search WHERE title LIKE ? ESCAPE '\' OR author LIKE ? ESCAPE '\' OR description LIKE ? ESCAPE '\')`)
-		args = append(args, pattern, pattern, pattern)
+		conditions = append(conditions, `id IN (SELECT id FROM library_search WHERE title LIKE ? ESCAPE '\' OR author LIKE ? ESCAPE '\' OR description LIKE ? ESCAPE '\' OR body LIKE ? ESCAPE '\' OR subtitles LIKE ? ESCAPE '\')`)
+		args = append(args, pattern, pattern, pattern, pattern, pattern)
 	}
 	if len(match) > 0 {
 		conditions = append(conditions, `id IN (SELECT id FROM library_search WHERE library_search MATCH ?)`)

@@ -25,9 +25,10 @@ const destinations: readonly { view: View; label: string; Icon: typeof Compass }
 const quick = ['discovery', 'podcasts', 'subscriptions', 'library', 'downloads'] as const
 const groupOf = (view: View) => view === 'tools' ? '应用' : view === 'reader' || view === 'search' ? '' : groups.find(group => group.items.some(item => item.view === view))?.label ?? (view === 'bilibili' ? '浏览' : '')
 
-export function ExperienceShell({ view, onNavigate, onHome, activeDownloads, savedCount, onAdd, discoveryQuery, onDiscoveryQuery, resume, onResume, onDismissResume, children }: {
+export function ExperienceShell({ view, onNavigate, onSearchQuery, onHome, activeDownloads, savedCount, onAdd, discoveryQuery, onDiscoveryQuery, resume, onResume, onDismissResume, children }: {
   view: View
   onNavigate: (view: View) => void
+  onSearchQuery: (query: string) => void
   onHome: (animate: boolean) => void
   activeDownloads: number
   savedCount: number
@@ -112,7 +113,7 @@ export function ExperienceShell({ view, onNavigate, onHome, activeDownloads, sav
         </span>
         <span className="experience-location-title">{section && <span className="experience-location-section">{section}</span>}<strong>{viewNames[view]}</strong></span>
       </div>
-      {view === 'discovery' && <div className="discovery-search" role="search"><Search size={16} aria-hidden="true"/><input type="search" aria-label="搜索发现内容" placeholder="在已加载的推荐里搜索" value={discoveryQuery} onChange={event => onDiscoveryQuery(event.target.value)}/>{discoveryQuery && <button type="button" className="icon-button" aria-label="清除发现搜索" title="清除搜索" onClick={() => onDiscoveryQuery('')}><X size={15}/></button>}</div>}
+      {view === 'discovery' && <div className="discovery-search" role="search"><Search size={16} aria-hidden="true"/><input type="search" aria-label="搜索发现内容" placeholder="搜索本机与各平台" value={discoveryQuery} onChange={event => onDiscoveryQuery(event.target.value)} onFocus={() => onSearchQuery(discoveryQuery)}/>{discoveryQuery && <button type="button" className="icon-button" aria-label="清除发现搜索" title="清除搜索" onClick={() => onDiscoveryQuery('')}><X size={15}/></button>}</div>}
       <div className="experience-header-actions">
         <button type="button" className="experience-add" aria-label="添加内容" title="粘贴链接或导入 PDF" onClick={onAdd}><Plus size={17} aria-hidden="true"/><span>添加内容</span></button>
         <button type="button" className="icon-button theme-switch" aria-label={dark ? '切换浅色模式' : '切换深色模式'} title={dark ? '切换浅色模式' : '切换深色模式'} onClick={switchTheme}>{dark ? <Sun size={18}/> : <Moon size={18}/>}</button>

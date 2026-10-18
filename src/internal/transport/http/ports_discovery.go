@@ -10,6 +10,10 @@ type DiscoveryService interface {
 	Search(context.Context, string, int) (discovery.Feed, error)
 }
 
+type UnifiedSearchService interface {
+	Search(context.Context, string, discovery.SearchOptions) (discovery.SearchResponse, error)
+}
+
 type RecommendationQueue interface {
 	PendingPage(context.Context, string, int, string) (discovery.QueuePage, error)
 	Mark(context.Context, string, string, bool) error

@@ -81,6 +81,7 @@ type AccountDependencies struct {
 
 type DiscoveryDependencies struct {
 	Search                  DiscoveryService
+	UnifiedSearch           UnifiedSearchService
 	BilibiliBrowser         BilibiliBrowser
 	RecommendationQueue     RecommendationQueue
 	RecommendationConfig    RecommendationConfig
