@@ -25,6 +25,29 @@ func (testProvider) CreatorVideos(context.Context, string, int) (discovery.Feed,
 }
 func (testProvider) Video(context.Context, string) (content.Item, error) { return testItem, nil }
 
+func TestWriteEncodesNilListsAsEmptyArrays(t *testing.T) {
+	response := httptest.NewRecorder()
+	write(response, http.StatusOK, map[string]any{
+		"items":   []string(nil),
+		"nested":  []any{map[string]any{"values": []int(nil)}},
+		"payload": []byte("fixture"),
+	})
+	var value map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &value); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusOK || value["items"] == nil || len(value["items"].([]any)) != 0 {
+		t.Fatalf("nil list was not encoded as an empty array: %s", response.Body.String())
+	}
+	nested := value["nested"].([]any)[0].(map[string]any)
+	if nested["values"] == nil || len(nested["values"].([]any)) != 0 {
+		t.Fatalf("nested nil list was not encoded as an empty array: %s", response.Body.String())
+	}
+	if value["payload"] != "Zml4dHVyZQ==" {
+		t.Fatalf("byte slice JSON behavior changed: %v", value["payload"])
+	}
+}
+
 func TestBrowseDoesNotSaveAndLibraryRoundTrip(t *testing.T) {
 	store, err := sqlite.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
