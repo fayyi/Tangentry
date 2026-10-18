@@ -3,11 +3,20 @@ package ai
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/longbridgeapp/opencc"
 )
+
+func summarySegmentsText(segments []SummarySegment) string {
+	var builder strings.Builder
+	for _, segment := range segments {
+		fmt.Fprintf(&builder, "[%d] %s\n", segment.Index, segment.Text)
+	}
+	return builder.String()
+}
 
 // SummaryGenerate coordinates one resumable summary operation. Cache encoding
 // and migration stay behind summaryStore; this file only owns provider calls,
@@ -201,7 +210,13 @@ func (s *Service) generateSummaryLeaves(ctx context.Context, provider Summarizer
 			allowed[segment.Index] = true
 		}
 		batchCtx, batchCancel := context.WithTimeout(ctx, 90*time.Second)
-		draft, callErr := provider.Summarize(batchCtx, config, SummaryRequest{Mode: "leaf", Prompt: summaryPrompt(config.SummaryPrompt), Segments: group})
+		templates := promptTemplates(config)
+		userPrompt, promptErr := RenderPrompt(templates.Summary.User, map[string]string{"title": "", "source_type": "summary leaf", "content": summarySegmentsText(group), "target_language": "简体中文"})
+		if promptErr != nil {
+			batchCancel()
+			return ErrFormat
+		}
+		draft, callErr := provider.Summarize(batchCtx, config, SummaryRequest{Mode: "leaf", Prompt: templates.Summary.System, UserPrompt: userPrompt, Segments: group})
 		batchCancel()
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -246,7 +261,13 @@ func (s *Service) reduceSummaryDrafts(ctx context.Context, provider Summarizer, 
 				collectOutlineIndices(d.Outline, allowed)
 			}
 			batchCtx, batchCancel := context.WithTimeout(ctx, 90*time.Second)
-			draft, callErr := provider.Summarize(batchCtx, config, SummaryRequest{Mode: "reduce", Prompt: summaryPrompt(config.SummaryPrompt), Drafts: drafts})
+			templates := promptTemplates(config)
+			userPrompt, promptErr := RenderPrompt(templates.Summary.User, map[string]string{"title": "", "source_type": "summary reduction", "content": "", "target_language": "简体中文"})
+			if promptErr != nil {
+				batchCancel()
+				return ErrFormat
+			}
+			draft, callErr := provider.Summarize(batchCtx, config, SummaryRequest{Mode: "reduce", Prompt: templates.Summary.System, UserPrompt: userPrompt, Drafts: drafts})
 			batchCancel()
 			if ctx.Err() != nil {
 				return ctx.Err()
