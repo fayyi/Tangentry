@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"tangentry/internal/adapters/sqlite"
+	"tangentry/internal/discovery"
 	"tangentry/internal/downloads"
 )
 
@@ -43,6 +44,30 @@ func TestDouyinDownloadCanEnterQueueWhenToolsAreUnavailable(t *testing.T) {
 	}
 	if job.State != "queued" {
 		t.Fatalf("job state = %q", job.State)
+	}
+}
+
+func TestDouyinShortLinkNeedsResolvedIDBeforeQueueWithoutTools(t *testing.T) {
+	root := t.TempDir()
+	store, err := sqlite.Open(filepath.Join(root, "douyin-short.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	service, err := downloads.NewService(store, unavailableRunner{}, filepath.Join(root, "media"), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Close()
+	if _, err := service.Start(context.Background(), downloads.Request{URL: "https://v.douyin.com/fixtureCode/"}); !errors.Is(err, downloads.ErrDouyinShortLink) {
+		t.Fatalf("unresolved short link error = %v", err)
+	}
+	service.SetDouyinResolver(func(context.Context, string) (discovery.DouyinReference, error) {
+		return discovery.DouyinReference{ID: "6961737553342991651", URL: "https://www.douyin.com/video/6961737553342991651"}, nil
+	})
+	job, err := service.Start(context.Background(), downloads.Request{URL: "https://v.douyin.com/fixtureCode/"})
+	if err != nil || job.URL != "https://www.douyin.com/video/6961737553342991651" {
+		t.Fatalf("resolved short link job=%+v err=%v", job, err)
 	}
 }
 

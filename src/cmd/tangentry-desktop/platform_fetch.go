@@ -148,12 +148,12 @@ const douyinFeedCaptureScript = `(function(){
   const projectBody = body => {
     try { const value = typeof body === 'string' ? JSON.parse(body) : body; const root = value && value.data && typeof value.data === 'object' ? value.data : value; const status = root && root.status_code != null ? root.status_code : value && value.status_code; const code = status == null ? 0 : Number(status)||0; const list = root && (root.aweme_list || root.awemeList); const parsed = Array.isArray(list) && (code === 0 || code === 2154); return {status:code,parsed:parsed,hasMore:code === 0 && Number(root && root.has_more)>0,cards:code === 0 && Array.isArray(list) ? list.map(project).filter(Boolean).slice(0, 500) : []}; } catch (_) { return null; }
   };
-  const push = (url, status, contentType, body) => {
+  const push = (url, status, contentType, body, tooLarge) => {
     const resolvedURL = absolute(url);
     if (!isFeed(resolvedURL)) return;
     const type = String(contentType || '');
     const payload = jsonType(type) ? projectBody(body) : null;
-    window.__tangentryDouyinFeed.push({url:resolvedURL, status:Number(status)||0, contentType:type, apiStatus:payload && payload.status || 0, parsed:payload ? payload.parsed : false, hasMore:payload ? payload.hasMore : false, cards:payload ? payload.cards : []});
+    window.__tangentryDouyinFeed.push({url:resolvedURL, status:Number(status)||0, contentType:type, apiStatus:payload && payload.status || 0, parsed:payload ? payload.parsed : false, hasMore:payload ? payload.hasMore : false, tooLarge:Boolean(tooLarge), cards:payload ? payload.cards : []});
     if (window.__tangentryDouyinFeed.length > 32) window.__tangentryDouyinFeed.splice(0, window.__tangentryDouyinFeed.length - 32);
   };
   const originalFetch = window.fetch;
@@ -162,7 +162,7 @@ const douyinFeedCaptureScript = `(function(){
     const url = typeof request === 'string' ? request : request && request.url;
     return originalFetch.apply(this, arguments).then(response => {
       if (!isFeed(url || response.url)) return response;
-      try { const contentType = response.headers && response.headers.get ? response.headers.get('content-type') : ''; if (jsonType(contentType)) response.clone().text().then(body => push(url || response.url, response.status, contentType, body.length <= max ? body : null)).catch(() => {}); else push(url || response.url, response.status, contentType, null); } catch (_) {}
+      try { const contentType = response.headers && response.headers.get ? response.headers.get('content-type') : ''; if (jsonType(contentType)) { const length=Number(response.headers && response.headers.get ? response.headers.get('content-length') || 0 : 0); if (length > max || !response.body && !length) push(url || response.url, response.status, contentType, null, true); else if (response.body) { const clone=response.clone(); if (!clone.body) { if (!length) push(url || response.url, response.status, contentType, null, true); else clone.text().then(body => push(url || response.url, response.status, contentType, body, body.length > max)).catch(()=>{}); } else { const reader=clone.body.getReader(), decoder=new TextDecoder(); let body='', bytes=0; (async()=>{ for(;;){ const part=await reader.read(); if(part.done) break; bytes+=part.value.byteLength; if(bytes>max){ await reader.cancel(); push(url || response.url, response.status, contentType, null, true); return; } body+=decoder.decode(part.value,{stream:true}); } body+=decoder.decode(); push(url || response.url, response.status, contentType, body, false); })().catch(()=>{}); } } else if (length) response.clone().text().then(body => { const tooLarge=body.length > max; push(url || response.url, response.status, contentType, tooLarge ? null : body, tooLarge); }).catch(()=>{}); else push(url || response.url, response.status, contentType, null, true); } else push(url || response.url, response.status, contentType, null, false); } catch (_) {}
       return response;
     });
   };
@@ -172,7 +172,7 @@ const douyinFeedCaptureScript = `(function(){
   const send = XMLHttpRequest.prototype.send;
   XMLHttpRequest.prototype.open = function(method, url){ this.__tangentryURL = url; return open.apply(this, arguments); };
   const xhrSendWrapper = function(){
-    this.addEventListener('load', function(){ try { const contentType = this.getResponseHeader('content-type') || ''; const body = jsonType(contentType) && (this.responseType === 'json' ? this.response : this.responseText); push(this.__tangentryURL || this.responseURL, this.status, contentType, typeof body === 'string' && body.length > max ? null : body); } catch (_) {} });
+    this.addEventListener('load', function(){ try { const contentType = this.getResponseHeader('content-type') || ''; const length=Number(this.getResponseHeader('content-length') || 0); if (!jsonType(contentType)) { push(this.__tangentryURL || this.responseURL, this.status, contentType, null, false); return; } if (length > max || !length) { push(this.__tangentryURL || this.responseURL, this.status, contentType, null, true); return; } const body=this.responseType === 'json' ? this.response : this.responseText; push(this.__tangentryURL || this.responseURL, this.status, contentType, body, false); } catch (_) {} });
     return send.apply(this, arguments);
   };
   window.__tangentryDouyinXHRSend = xhrSendWrapper;
@@ -201,10 +201,11 @@ func douyinVideoMediaScript(id string) string {
   const absolute = raw => { try { return new URL(String(raw || ''), location.href).href; } catch (_) { return ''; } };
   const urls = [];
   const add = value => { if (Array.isArray(value)) value.forEach(add); else if (typeof value === 'string') urls.push(absolute(value)); };
+  const businessRestricted = value => { let blocked=false; const scan = node => { if (!node || typeof node !== 'object' || blocked) return; const message=String(node.status_msg || node.statusMsg || node.status_message || node.message || ''); const code=Number(node.status_code ?? node.statusCode ?? 0) || 0; if (code !== 0 && (code === 401 || code === 403 || code === 429 || /login|登录|captcha|验证码|verify|验证|challenge|passport|risk[ -]?control|风控|滑块|人机/i.test(message))) { blocked=true; return; } Object.keys(node).slice(0, 200).forEach(key => scan(node[key])); }; scan(value); return blocked; };
   const walk = value => { if (!value || typeof value !== 'object') return; if (value.play_addr) add(value.play_addr.url_list || value.play_addr.urlList); if (value.url_list) add(value.url_list); Object.keys(value).slice(0, 200).forEach(key => { if (key !== 'url_list') walk(value[key]); }); };
 	let status=0, restricted=false, networkError=false, timedOut=false, tooLarge=false;
   const controller=new AbortController(), timer=setTimeout(()=>controller.abort(),` + timeout + `);
-  try { const response = await fetch('/aweme/v1/web/aweme/detail/?aweme_id=' + encodeURIComponent(id), {credentials:'include', headers:{accept:'application/json'}, signal:controller.signal}); status=response.status; const responseURL=new URL(response.url || location.href, location.href); if (responseURL.hostname !== 'www.douyin.com' || !responseURL.pathname.startsWith('/aweme/v1/web/aweme/detail')) restricted=true; if (!response.ok) restricted = restricted || response.status === 401 || response.status === 403 || response.status === 429; const type=(response.headers.get('content-type')||'').toLowerCase(); if (!type.includes('json')) { if (type.includes('html') || response.status >= 400) restricted=true; } else { const length=Number(response.headers.get('content-length')||0); if (length > ` + limit + ` || !response.body) { tooLarge=length > ` + limit + `; restricted=!tooLarge; if (tooLarge) controller.abort(); } else { const reader=response.body.getReader(); const decoder=new TextDecoder(); let body='', bytes=0; try { for (;;) { const part=await reader.read(); if (part.done) break; bytes += part.value.byteLength; if (bytes > ` + limit + `) { tooLarge=true; controller.abort(); await reader.cancel(); break; } body += decoder.decode(part.value, {stream:true}); } body += decoder.decode(); } finally { reader.releaseLock(); } if (!restricted && !tooLarge) { try { walk(JSON.parse(body)); } catch (_) { restricted=true; } } } } } catch (error) { timedOut=error && error.name === 'AbortError'; networkError=!timedOut; } finally { clearTimeout(timer); }
+  try { const response = await fetch('/aweme/v1/web/aweme/detail/?aweme_id=' + encodeURIComponent(id), {credentials:'include', headers:{accept:'application/json'}, signal:controller.signal}); status=response.status; const responseURL=new URL(response.url || location.href, location.href); if (responseURL.hostname !== 'www.douyin.com' || !responseURL.pathname.startsWith('/aweme/v1/web/aweme/detail')) restricted=true; if (!response.ok) restricted = restricted || response.status === 401 || response.status === 403 || response.status === 429; const type=(response.headers.get('content-type')||'').toLowerCase(); if (!type.includes('json')) { if (type.includes('html') || response.status >= 400) restricted=true; } else { const length=Number(response.headers.get('content-length')||0); if (length > ` + limit + ` || (!response.body && !length)) { tooLarge=length > ` + limit + ` || !response.body; restricted=!tooLarge; if (tooLarge) controller.abort(); } else if (!response.body) { const body=await response.text(); try { const parsed=JSON.parse(body); if (businessRestricted(parsed)) restricted=true; else walk(parsed); } catch (_) { restricted=true; } } else { const reader=response.body.getReader(); const decoder=new TextDecoder(); let body='', bytes=0; try { for (;;) { const part=await reader.read(); if (part.done) break; bytes += part.value.byteLength; if (bytes > ` + limit + `) { tooLarge=true; controller.abort(); await reader.cancel(); break; } body += decoder.decode(part.value, {stream:true}); } body += decoder.decode(); } finally { reader.releaseLock(); } if (!restricted && !tooLarge) { try { const parsed=JSON.parse(body); if (businessRestricted(parsed)) restricted=true; else walk(parsed); } catch (_) { restricted=true; } } } } } catch (error) { timedOut=error && error.name === 'AbortError'; networkError=!timedOut; } finally { clearTimeout(timer); }
   document.querySelectorAll('video').forEach(node => add(node.currentSrc || node.src));
   const pageUrl=location.href, title=document.title||'';
   if (!/^https:\/\/(?:www\.)?douyin\.com\/video\/` + id + `(?:[/?#]|$)/i.test(pageUrl)) restricted=true;
@@ -687,6 +688,7 @@ type douyinCaptureResponse struct {
 	APIStatus   int                     `json:"apiStatus"`
 	Parsed      bool                    `json:"parsed"`
 	HasMore     bool                    `json:"hasMore"`
+	TooLarge    bool                    `json:"tooLarge"`
 	ContentType string                  `json:"contentType"`
 	Cards       []platformfetch.DOMCard `json:"cards"`
 }
@@ -694,7 +696,7 @@ type douyinCaptureResponse struct {
 func sanitizeDouyinCaptureResponse(response douyinCaptureResponse) platformfetch.FeedResponse {
 	return platformfetch.FeedResponse{
 		Status: response.Status, APIStatus: response.APIStatus, Parsed: response.Parsed,
-		HasMore: response.HasMore, URL: safeCaptureURL(response.URL), ContentType: truncateCaptureContentType(response.ContentType),
+		HasMore: response.HasMore, TooLarge: response.TooLarge, URL: safeCaptureURL(response.URL), ContentType: truncateCaptureContentType(response.ContentType),
 	}
 }
 
@@ -1110,7 +1112,7 @@ func platformPageURLAllowed(raw, platform string) bool {
 
 func validatePlatformFetchResponse(result platformFetchResult) error {
 	if result.TooLarge || len(result.Body) > platformFetchMaxBody {
-		return errors.New("平台页面响应超过大小限制")
+		return errors.New("平台页面响应过大或无法限制大小")
 	}
 	return nil
 }
@@ -1141,7 +1143,7 @@ func platformFetchScript(path string, request app.PlatformPageRequest) (string, 
 	if request.Method != "GET" && request.Method != "HEAD" {
 		bodyOption = ", body:" + string(body)
 	}
-	return fmt.Sprintf(`const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), %d); try { return await fetch(location.origin + %s, {method:%s, headers:%s, credentials:"include"%s, signal:controller.signal}).then(async response => { const max=%d; const meta={status:response.status, url:response.url || "", contentType:response.headers.get("content-type") || ""}; const type=String(meta.contentType).toLowerCase().split(";",1)[0].trim(); const jsonType=!type || type === "application/json" || type === "text/json" || type.endsWith("+json"); if (!jsonType) return {...meta, body:"", tooLarge:false}; if (!response.body) { const body=await response.text(); return {...meta, body:body.length>max?"":body, tooLarge:body.length>max}; } const reader=response.body.getReader(); const decoder=new TextDecoder(); let body="", bytes=0; try { for (;;) { const part=await reader.read(); if (part.done) break; bytes+=part.value.byteLength; if (bytes>max) { await reader.cancel(); return {...meta, body:"", tooLarge:true}; } body+=decoder.decode(part.value,{stream:true}); } body+=decoder.decode(); return {...meta, body:body, tooLarge:false}; } finally { reader.releaseLock(); } }); } finally { clearTimeout(timer); }`, platformFetchTimeout.Milliseconds(), pathJSON, method, headers, bodyOption, platformFetchMaxBody), nil
+	return fmt.Sprintf(`const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), %d); try { return await fetch(location.origin + %s, {method:%s, headers:%s, credentials:"include"%s, signal:controller.signal}).then(async response => { const max=%d; const meta={status:response.status, url:response.url || "", contentType:response.headers.get("content-type") || ""}; const type=String(meta.contentType).toLowerCase().split(";",1)[0].trim(); const length=Number(response.headers.get("content-length") || 0); const jsonType=!type || type === "application/json" || type === "text/json" || type.endsWith("+json"); if (!jsonType) return {...meta, body:"", tooLarge:false}; if (!response.body) { if (!length || length>max) return {...meta, body:"", tooLarge:true}; const body=await response.text(); return {...meta, body:body, tooLarge:false}; } const reader=response.body.getReader(); const decoder=new TextDecoder(); let body="", bytes=0; try { for (;;) { const part=await reader.read(); if (part.done) break; bytes+=part.value.byteLength; if (bytes>max) { await reader.cancel(); return {...meta, body:"", tooLarge:true}; } body+=decoder.decode(part.value,{stream:true}); } body+=decoder.decode(); return {...meta, body:body, tooLarge:false}; } finally { reader.releaseLock(); } }); } finally { clearTimeout(timer); }`, platformFetchTimeout.Milliseconds(), pathJSON, method, headers, bodyOption, platformFetchMaxBody), nil
 }
 
 func isCloudflarePage(status int, body string, contentTypes ...string) bool {

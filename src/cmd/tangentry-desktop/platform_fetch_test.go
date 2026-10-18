@@ -91,7 +91,7 @@ func TestPlatformFetchScriptHonorsMethodBodyAndLimits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, part := range []string{"/feed.json", "method:\"POST\"", "body:\"a=1\"", "AbortController", "tooLarge"} {
+	for _, part := range []string{"/feed.json", "method:\"POST\"", "body:\"a=1\"", "AbortController", "tooLarge", "content-length"} {
 		if !strings.Contains(code, part) {
 			t.Fatalf("script does not contain %q: %s", part, code)
 		}
@@ -132,13 +132,13 @@ func TestDouyinFeedCaptureScriptHooksPageRequests(t *testing.T) {
 
 func TestDouyinVideoMediaScriptUsesBoundedPageContextReads(t *testing.T) {
 	code := douyinVideoMediaScript("6961737553342991651")
-	for _, part := range []string{"credentials:'include'", "getReader()", "reader.cancel()", "tooLarge", "AbortController", "captcha", "风控", "video"} {
+	for _, part := range []string{"credentials:'include'", "getReader()", "reader.cancel()", "tooLarge", "AbortController", "captcha", "风控", "status_msg", "video"} {
 		if !strings.Contains(code, part) {
 			t.Fatalf("video media script does not contain %q", part)
 		}
 	}
-	if strings.Contains(code, "response.text()") {
-		t.Fatal("video media script reads the whole response before enforcing the limit")
+	if !strings.Contains(code, "!response.body && !length") {
+		t.Fatal("video media script does not reject unbounded responses without a body")
 	}
 }
 
@@ -297,7 +297,7 @@ func TestPlatformFetchRequestAndResponseLimits(t *testing.T) {
 	if err := validatePlatformFetchRequest(&request); err == nil {
 		t.Fatal("oversized request accepted")
 	}
-	if err := validatePlatformFetchResponse(platformFetchResult{TooLarge: true}); err == nil {
+	if err := validatePlatformFetchResponse(platformFetchResult{TooLarge: true}); err == nil || !strings.Contains(err.Error(), "过大或无法限制大小") {
 		t.Fatal("oversized response marker accepted")
 	}
 	if err := validatePlatformFetchResponse(platformFetchResult{Body: strings.Repeat("x", platformFetchMaxBody+1)}); err == nil {

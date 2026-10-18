@@ -281,6 +281,17 @@ func TestResolveVideoMediaFiltersRestrictedAndExpiredCandidates(t *testing.T) {
 	}
 }
 
+func TestCaptureBusinessStatusRejectsVerificationResponse(t *testing.T) {
+	page := captureFetcherFunc(func(context.Context, string, int) (platformfetch.FeedCaptureResponse, error) {
+		return platformfetch.FeedCaptureResponse{FeedParsed: true, Responses: []platformfetch.FeedResponse{{Status: http.StatusOK, APIStatus: 401, Parsed: true, ContentType: "application/json", URL: "https://www.douyin.com/aweme/v2/web/module/feed/"}}}, nil
+	})
+	client := &Client{Page: page}
+	_, err := client.Recommendations(context.Background(), 1)
+	if err == nil || !strings.Contains(err.Error(), "验证") {
+		t.Fatalf("business verification response error = %v", err)
+	}
+}
+
 type videoMediaPage struct {
 	resolve func(context.Context, string) (platformfetch.VideoMediaResponse, error)
 }

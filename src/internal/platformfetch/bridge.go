@@ -27,6 +27,7 @@ type FeedResponse struct {
 	APIStatus   int
 	Parsed      bool
 	HasMore     bool
+	TooLarge    bool
 	URL         string
 	ContentType string
 }

@@ -75,6 +75,9 @@ func (c *Client) Recommendations(ctx context.Context, page int) (discovery.Feed,
 			}
 			captureRestricted := false
 			for _, response := range captured.Responses {
+				if response.TooLarge {
+					return discovery.Feed{}, &discovery.PlatformError{Message: "应用内抖音页面响应过大或无法限制大小，请稍后重试。"}
+				}
 				if response.Status != http.StatusOK {
 					diagnostics = append(diagnostics, "页面 feed 响应不可用："+describeNonJSONPageResponse(response.Status, false, response.ContentType, response.URL))
 					captureRestricted = captureRestricted || response.Status == http.StatusForbidden || response.Status == http.StatusTooManyRequests
