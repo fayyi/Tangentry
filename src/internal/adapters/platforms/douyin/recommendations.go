@@ -14,6 +14,7 @@ import (
 	"tangentry/internal/content"
 	"tangentry/internal/discovery"
 	"tangentry/internal/platformfetch"
+	"time"
 )
 
 // The desktop bridge executes this request in douyin.com's page context, so
@@ -261,6 +262,32 @@ func (c *Client) Recommendations(ctx context.Context, page int) (discovery.Feed,
 		return discovery.Feed{}, &discovery.PlatformError{Message: "抖音当前暂无推荐，请稍后重试。"}
 	}
 	return feed, nil
+}
+
+// ResolveVideoMedia asks the authenticated WebView to resolve the video in
+// page context. It is intentionally called only with a canonical video ID.
+func (c *Client) ResolveVideoMedia(ctx context.Context, id string) (platformfetch.VideoMediaResponse, error) {
+	ref, err := discovery.ParseDouyin("https://www.douyin.com/video/" + strings.TrimSpace(id))
+	if err != nil || ref.ID != id {
+		return platformfetch.VideoMediaResponse{}, discovery.ErrInvalidQuery
+	}
+	bridge, ok := c.Page.(platformfetch.VideoMediaFetcher)
+	if !ok {
+		return platformfetch.VideoMediaResponse{}, discovery.ErrUnavailable
+	}
+	result, err := bridge.ResolveVideoMedia(ctx, id)
+	if err != nil {
+		return platformfetch.VideoMediaResponse{}, err
+	}
+	candidates := PlaybackCandidates(append([]string{result.URL}, result.Backups...), time.Now())
+	if len(candidates) == 0 {
+		if result.Restricted {
+			return platformfetch.VideoMediaResponse{}, &discovery.PlatformError{Restricted: true, Message: "应用内抖音页面需要验证，请在应用内完成登录或验证码验证后重试。"}
+		}
+		return platformfetch.VideoMediaResponse{}, discovery.ErrUnavailable
+	}
+	result.URL, result.Backups = candidates[0], candidates[1:]
+	return result, nil
 }
 
 func captureAPIStatus(responses []platformfetch.FeedResponse) int {
@@ -520,7 +547,10 @@ type feedVideo struct {
 	} `json:"statistics"`
 	Video struct {
 		Duration int `json:"duration"`
-		Cover    struct {
+		PlayAddr struct {
+			URLs []string `json:"url_list"`
+		} `json:"play_addr"`
+		Cover struct {
 			URLs []string `json:"url_list"`
 		} `json:"cover"`
 	} `json:"video"`
@@ -565,6 +595,9 @@ func mapDOMCards(cards []platformfetch.DOMCard, page int) discovery.Feed {
 			title = strings.TrimSpace(card.Author) + "的视频"
 		}
 		item := content.Item{ID: "douyin:" + id, Platform: "douyin", PlatformID: id, Kind: "video", Title: title, Author: strings.TrimSpace(card.Author), AuthorID: strings.TrimSpace(card.AuthorID), URL: ref.URL, ThumbnailURL: safeHTTPSURL(card.ThumbnailURL), DurationSeconds: maxInt(card.Duration, 0), LikeCount: maxInt(card.LikeCount, 0)}
+		if candidates := PlaybackCandidates(card.MediaURLs, time.Now()); len(candidates) > 0 {
+			item.MediaURL = candidates[0]
+		}
 		if content.Validate(item) != nil {
 			continue
 		}
@@ -678,6 +711,9 @@ func decodeRecommendations(body []byte, page int, denied error) (discovery.Feed,
 			title = video.Author.Name + "的视频"
 		}
 		item := content.Item{ID: "douyin:" + video.ID, Platform: "douyin", PlatformID: video.ID, Kind: "video", Title: title, Description: video.Description, Author: video.Author.Name, AuthorID: video.Author.ID, URL: ref.URL, DurationSeconds: video.Video.Duration / 1000, PublishedAt: video.Created, LikeCount: video.Statistics.Likes}
+		if candidates := PlaybackCandidates(video.Video.PlayAddr.URLs, time.Now()); len(candidates) > 0 {
+			item.MediaURL = candidates[0]
+		}
 		for _, raw := range video.Video.Cover.URLs {
 			u, err := url.Parse(raw)
 			if err == nil && u.Scheme == "https" && u.Hostname() != "" && u.User == nil {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -141,8 +142,10 @@ const douyinFeedCaptureScript = `(function(){
     const author = video.author || {};
     const cover = video.video && video.video.cover;
     const rawCover = cover && (cover.url_list || cover.urlList);
+    const play = video.video && (video.video.play_addr || video.video.playAddr);
+    const rawMedia = play && (play.url_list || play.urlList);
     const thumbnailURL = Array.isArray(rawCover) ? rawCover.map(absolute).find(value => /^https:\/\//i.test(value)) || '' : '';
-    return {id:id, url:'https://www.douyin.com/video/' + id, thumbnailURL:thumbnailURL, title:String(video.desc || video.description || '').slice(0, 1000), author:String(author.nickname || author.name || '').slice(0, 200), authorID:String(author.uid || author.id || '').slice(0, 200), likeCount:countOf(video.statistics && (video.statistics.digg_count || video.statistics.diggCount)), duration:Math.round(countOf(video.video && video.video.duration) / 1000)};
+    return {id:id, url:'https://www.douyin.com/video/' + id, thumbnailURL:thumbnailURL, mediaURLs:Array.isArray(rawMedia) ? rawMedia.map(absolute).filter(value => /^https:\/\//i.test(value)).slice(0, 8) : [], title:String(video.desc || video.description || '').slice(0, 1000), author:String(author.nickname || author.name || '').slice(0, 200), authorID:String(author.uid || author.id || '').slice(0, 200), likeCount:countOf(video.statistics && (video.statistics.digg_count || video.statistics.diggCount)), duration:Math.round(countOf(video.video && video.video.duration) / 1000)};
   };
   const projectBody = body => {
     try { const value = typeof body === 'string' ? JSON.parse(body) : body; const root = value && value.data && typeof value.data === 'object' ? value.data : value; const status = root && root.status_code != null ? root.status_code : value && value.status_code; const code = status == null ? 0 : Number(status)||0; const list = root && (root.aweme_list || root.awemeList); const parsed = Array.isArray(list) && (code === 0 || code === 2154); return {status:code,parsed:parsed,hasMore:code === 0 && Number(root && root.has_more)>0,cards:code === 0 && Array.isArray(list) ? list.map(project).filter(Boolean).slice(0, 500) : []}; } catch (_) { return null; }
@@ -188,6 +191,24 @@ const douyinRecommendNextScript = `(function(){ const target=document.activeElem
 
 const douyinFeedReadScript = `(function(){ return {pageUrl: location.href, title: document.title || "", ready: document.readyState, responses: (window.__tangentryDouyinFeed || []).splice(0, 32), fetchHookInstalled:window.fetch === window.__tangentryDouyinFetchWrapper, xhrHookInstalled:XMLHttpRequest.prototype.send === window.__tangentryDouyinXHRSend}; })();`
 
+func douyinVideoMediaScript(id string) string {
+	encoded, _ := json.Marshal(id)
+	return `(async function(){
+  const id=` + string(encoded) + `;
+  const absolute = raw => { try { return new URL(String(raw || ''), location.href).href; } catch (_) { return ''; } };
+  const urls = [];
+  const add = value => { if (Array.isArray(value)) value.forEach(add); else if (typeof value === 'string') urls.push(absolute(value)); };
+  const walk = value => { if (!value || typeof value !== 'object') return; if (value.play_addr) add(value.play_addr.url_list || value.play_addr.urlList); if (value.url_list) add(value.url_list); Object.keys(value).slice(0, 200).forEach(key => { if (key !== 'url_list') walk(value[key]); }); };
+  let status=0, restricted=false;
+  try { const response = await fetch('/aweme/v1/web/aweme/detail/?aweme_id=' + encodeURIComponent(id), {credentials:'include', headers:{accept:'application/json'}}); status=response.status; if (!response.ok) restricted = response.status === 401 || response.status === 403 || response.status === 429; const type=(response.headers.get('content-type')||'').toLowerCase(); if (type.includes('json')) walk(await response.json()); } catch (_) {}
+  document.querySelectorAll('video').forEach(node => add(node.currentSrc || node.src));
+  const pageUrl=location.href, title=document.title||'';
+  if (!/^https:\/\/(?:www\.)?douyin\.com\/video\/` + id + `(?:[/?#]|$)/i.test(pageUrl)) restricted=true;
+  if (/login|登录|captcha|验证|verify/i.test(pageUrl+' '+title)) restricted=true;
+  return {status:status, restricted:restricted, pageUrl:pageUrl, title:title, urls:urls.slice(0,32)};
+})();`
+}
+
 const douyinDomReadScript = `(function(){
   const text = node => (node && (node.innerText || node.textContent) || '').trim();
   const absolute = raw => { try { return new URL(raw || '', location.href).href; } catch (_) { return ''; } };
@@ -215,7 +236,8 @@ const douyinDomReadScript = `(function(){
     const author = findText(node, ['[class*="author"]','[class*="user"]','[data-e2e*="user"]','a[href*="/user/"]','a[href*="/search/"]']);
     const likeText = findText(node, ['[class*="like"]','[data-e2e*="like"]']);
     const duration = durationOf(findText(node, ['[class*="duration"]','[class*="time"]']) || rawText);
-    cards.push({id:id, url:url.split('?')[0], thumbnailURL:imageFrom(node), title:title, author:author, likeCount:countOf(likeText), duration:duration}); seen.add(id);
+    const media = Array.from(node.querySelectorAll('video')).map(video => absolute(video.currentSrc || video.src)).filter(value => /^https:\/\//i.test(value));
+    cards.push({id:id, url:url.split('?')[0], thumbnailURL:imageFrom(node), mediaURLs:media.slice(0, 8), title:title, author:author, likeCount:countOf(likeText), duration:duration}); seen.add(id);
   }
   const resources = performance.getEntriesByType('resource').filter(entry => /\/aweme\//i.test(entry.name)).map(entry => { try { return {path:new URL(entry.name).pathname, initiatorType:String(entry.initiatorType || '')}; } catch (_) { return null; } }).filter(Boolean);
   return {pageUrl:location.href, title:document.title || '', ready:document.readyState, cards:cards, responses:(window.__tangentryDouyinFeed || []).splice(0, 32), resources:resources, fetchHookInstalled:window.fetch === window.__tangentryDouyinFetchWrapper, xhrHookInstalled:XMLHttpRequest.prototype.send === window.__tangentryDouyinXHRSend, domDiagnostics:{url:location.href,videoLinkCount:links.length,candidateSelectorHits:candidateSelectorHits,cardsRead:cards.length}};
@@ -303,6 +325,84 @@ func (b *platformPageBridge) Fetch(ctx context.Context, platform, path string, r
 		responseURL = session.window.Page().URL()
 	}
 	return app.PlatformPageResponse{Status: result.Status, Body: result.Body, Restricted: isCloudflarePage(result.Status, result.Body, result.ContentType), URL: responseURL, ContentType: result.ContentType}, nil
+}
+
+func (b *platformPageBridge) ResolveVideoMedia(ctx context.Context, id string) (platformfetch.VideoMediaResponse, error) {
+	if !regexp.MustCompile(`^[1-9][0-9]{15,19}$`).MatchString(id) {
+		return platformfetch.VideoMediaResponse{}, errors.New("抖音视频 ID 无效")
+	}
+	session, err := b.session("douyin", "https://www.douyin.com/")
+	if err != nil {
+		return platformfetch.VideoMediaResponse{}, err
+	}
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if err := waitPlatformPage(ctx, session.ready); err != nil {
+		return platformfetch.VideoMediaResponse{}, err
+	}
+	session.lastUsed = time.Now()
+	if err := session.window.Page().LoadURL("https://www.douyin.com/video/" + id); err != nil {
+		return platformfetch.VideoMediaResponse{}, err
+	}
+	if err := waitForPageReady(ctx, session.window.Page(), "video"); err != nil {
+		return platformfetch.VideoMediaResponse{}, err
+	}
+	raw, err := evalPageWithRetry(ctx, session.window.Page(), douyinVideoMediaScript(id))
+	if err != nil {
+		return platformfetch.VideoMediaResponse{}, err
+	}
+	encoded, err := json.Marshal(raw)
+	if err != nil {
+		return platformfetch.VideoMediaResponse{}, err
+	}
+	var result struct {
+		Status     int      `json:"status"`
+		Restricted bool     `json:"restricted"`
+		PageURL    string   `json:"pageUrl"`
+		URLs       []string `json:"urls"`
+	}
+	if err := json.Unmarshal(encoded, &result); err != nil {
+		return platformfetch.VideoMediaResponse{}, err
+	}
+	media := safeDouyinMedia(result.URLs)
+	primary := ""
+	backups := []string{}
+	if len(media) > 0 {
+		primary, backups = media[0], media[1:]
+	}
+	return platformfetch.VideoMediaResponse{Status: result.Status, Restricted: result.Restricted, PageURL: safeCaptureURL(result.PageURL), URL: primary, Backups: backups}, nil
+}
+
+func firstSafeDouyinMedia(values []string) string {
+	values = safeDouyinMedia(values)
+	if len(values) == 0 {
+		return ""
+	}
+	return values[0]
+}
+func safeDouyinMedia(values []string) []string {
+	result := make([]string, 0, 3)
+	seen := map[string]bool{}
+	for _, raw := range values {
+		u, err := url.Parse(strings.TrimSpace(raw))
+		if err != nil || u.Scheme != "https" || u.User != nil || u.Opaque != "" || len(raw) > 8192 || (u.Port() != "" && u.Port() != "443") {
+			continue
+		}
+		host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+		if host != "douyinvod.com" && !strings.HasSuffix(host, ".douyinvod.com") {
+			continue
+		}
+		u.RawQuery = u.RawQuery
+		value := u.String()
+		if !seen[value] {
+			seen[value] = true
+			result = append(result, value)
+		}
+		if len(result) == 3 {
+			break
+		}
+	}
+	return result
 }
 
 func (b *platformPageBridge) CaptureFeed(ctx context.Context, platform string, pages int) (platformfetch.FeedCaptureResponse, error) {
@@ -582,6 +682,7 @@ func sanitizeDouyinCaptureResponse(response douyinCaptureResponse) platformfetch
 }
 
 func sanitizeDouyinCard(card platformfetch.DOMCard) platformfetch.DOMCard {
+	media := safeDouyinMedia(card.MediaURLs)
 	return platformfetch.DOMCard{
 		ID:           truncateCaptureField(card.ID, 64),
 		URL:          safeCaptureURL(card.URL),
@@ -591,6 +692,7 @@ func sanitizeDouyinCard(card platformfetch.DOMCard) platformfetch.DOMCard {
 		AuthorID:     truncateCaptureField(card.AuthorID, 200),
 		LikeCount:    clampCaptureNumber(card.LikeCount),
 		Duration:     clampCaptureNumber(card.Duration),
+		MediaURLs:    media,
 	}
 }
 
@@ -740,6 +842,9 @@ func mergeDOMCards(existing, incoming []platformfetch.DOMCard) []platformfetch.D
 			}
 			if current.Duration == 0 {
 				current.Duration = card.Duration
+			}
+			if len(current.MediaURLs) == 0 {
+				current.MediaURLs = card.MediaURLs
 			}
 			continue
 		}

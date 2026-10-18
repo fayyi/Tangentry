@@ -7,14 +7,22 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
+	"tangentry/internal/adapters/platforms/douyin"
 	"tangentry/internal/adapters/platforms/youtube"
 	"tangentry/internal/config"
 	"tangentry/internal/credentials"
+	"tangentry/internal/discovery"
 	"tangentry/internal/downloads"
+	"tangentry/internal/playback"
 )
 
 type Toolkit struct {
@@ -31,8 +39,9 @@ type Toolkit struct {
 	status             downloads.ToolReport
 	// ytdlp and deno are downloaded into the app data directory on first use
 	// when the desktop runtime configures a tools directory.
-	ytdlp *managedTool
-	deno  *managedTool
+	ytdlp          *managedTool
+	deno           *managedTool
+	douyinPlayback func(context.Context, string) (playback.Source, error)
 }
 
 func New(c config.Config) *Toolkit {
@@ -137,6 +146,9 @@ func (t *Toolkit) Status() downloads.ToolReport {
 	return report
 }
 func (t *Toolkit) SetCredentials(value *credentials.Store) { t.credentials = value }
+func (t *Toolkit) SetDouyinPlaybackResolver(resolve func(context.Context, string) (playback.Source, error)) {
+	t.douyinPlayback = resolve
+}
 
 func (t *Toolkit) SetYouTubeUserAgent(provider func() string) { t.youtubeUserAgent = provider }
 
@@ -185,6 +197,71 @@ func classify(raw string) error {
 	default:
 		return fmt.Errorf("下载未完成，请检查视频是否可访问、网络和工具配置后重试。")
 	}
+}
+
+func classifyDouyin(raw string, cookieProvided bool) error {
+	text := strings.ToLower(raw)
+	if strings.Contains(text, "fresh cookies") || strings.Contains(text, "not necessarily logged in") || strings.Contains(text, "http error 403") || strings.Contains(text, "403 forbidden") {
+		if !cookieProvided {
+			return errors.New("未配置抖音 Cookie，且 yt-dlp 的抖音解析器被接口拒绝；请在应用内打开抖音完成登录或验证后重试。")
+		}
+		return errors.New("已配置 Cookie，但 yt-dlp 的抖音解析器被抖音接口拒绝（HTTP 403 / 需要新 Cookie）。这通常是 yt-dlp 暂不支持当前抖音接口，不一定是你的 Cookie 有问题；请在应用内抖音页面重试。")
+	}
+	return classify(raw)
+}
+
+func (t *Toolkit) downloadDouyinFallback(ctx context.Context, rawURL, directory string) (downloads.Result, error) {
+	if t.douyinPlayback == nil {
+		return downloads.Result{}, errors.New("应用内抖音页面不可用")
+	}
+	ref, err := discovery.ParseDouyin(rawURL)
+	if err != nil {
+		return downloads.Result{}, errors.New("抖音链接无效")
+	}
+	source, err := t.douyinPlayback(ctx, ref.ID)
+	if err != nil || !douyin.PlaybackURL(source.URL) {
+		return downloads.Result{}, errors.New("应用内抖音页面未提供可下载地址")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, source.URL, nil)
+	if err != nil {
+		return downloads.Result{}, errors.New("抖音播放地址无效")
+	}
+	req.Header.Set("Referer", "https://www.douyin.com/video/"+ref.ID)
+	client := &http.Client{Timeout: 30 * time.Minute, Jar: nil, CheckRedirect: func(req *http.Request, _ []*http.Request) error {
+		if !douyin.PlaybackURL(req.URL.String()) {
+			return errors.New("redirect denied")
+		}
+		req.Header.Del("Cookie")
+		req.Header.Del("Authorization")
+		req.Header.Set("Referer", "https://www.douyin.com/video/"+ref.ID)
+		return nil
+	}}
+	response, err := client.Do(req)
+	if err != nil || response.StatusCode < 200 || response.StatusCode >= 300 {
+		if response != nil {
+			response.Body.Close()
+		}
+		return downloads.Result{}, errors.New("抖音播放地址已过期或 CDN 拒绝，请重试。")
+	}
+	defer response.Body.Close()
+	if err := os.MkdirAll(directory, 0700); err != nil {
+		return downloads.Result{}, errors.New("无法创建下载目录，请检查磁盘权限。")
+	}
+	name := filepath.Join(directory, ref.ID+".mp4")
+	file, err := os.OpenFile(name, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+	if err != nil {
+		return downloads.Result{}, errors.New("无法创建下载文件，请检查磁盘权限。")
+	}
+	_, copyErr := io.Copy(file, io.LimitReader(response.Body, 2<<30))
+	closeErr := file.Close()
+	if copyErr != nil || closeErr != nil {
+		return downloads.Result{}, errors.New("抖音视频下载未完成，请重试。")
+	}
+	info, err := os.Stat(name)
+	if err != nil || info.Size() == 0 {
+		return downloads.Result{}, errors.New("抖音视频下载未产生完整文件。")
+	}
+	return downloads.Result{FileName: filepath.Base(name), FileSize: info.Size(), OriginalSize: info.Size(), Message: "已通过应用内抖音页面下载。"}, nil
 }
 
 // Subprocess output can be large and sensitive. Retain only a bounded tail in memory.

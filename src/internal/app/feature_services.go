@@ -90,6 +90,17 @@ func wireFeatures(dataDir string, configuration config.Config, option Options, r
 	discoveryBatch.SetFeedback(discoveryFeedback.List)
 
 	resolvePlayback := p.media.bilibili.Playback
+	if p.media.douyin != nil {
+		resolvePlayback = func(ctx context.Context, id string) (playback.Source, error) {
+			if strings.HasPrefix(id, "BV") {
+				return p.media.bilibili.Playback(ctx, id)
+			}
+			if media, err := p.media.douyin.ResolveVideoMedia(ctx, id); err == nil && media.URL != "" {
+				return playback.Source{URL: media.URL, Backups: media.Backups, Platform: "douyin", Referer: "https://www.douyin.com/video/" + id}, nil
+			}
+			return p.network.toolkit.DouyinPlayback(ctx, "https://www.douyin.com/video/"+id)
+		}
+	}
 	if option.Playback != nil {
 		resolvePlayback = option.Playback
 	}

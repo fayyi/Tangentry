@@ -16,14 +16,17 @@ type cancelBody struct {
 
 func (b *cancelBody) Close() error { defer b.cancel(); return b.ReadCloser.Close() }
 
-func (s *Service) fetchCandidate(ctx context.Context, method, raw, byteRange string) (*http.Response, context.CancelFunc, error) {
+func (s *Service) fetchCandidate(ctx context.Context, method, raw, byteRange, referer string) (*http.Response, context.CancelFunc, error) {
 	attempt, cancel := context.WithCancel(ctx)
 	req, err := http.NewRequestWithContext(attempt, method, raw, nil)
 	if err != nil {
 		return nil, cancel, err
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0")
-	req.Header.Set("Referer", "https://www.bilibili.com/")
+	if referer == "" {
+		referer = "https://www.bilibili.com/"
+	}
+	req.Header.Set("Referer", referer)
 	req.Header.Set("Accept-Encoding", "identity")
 	if byteRange != "" {
 		req.Header.Set("Range", byteRange)

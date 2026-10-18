@@ -10,7 +10,22 @@ import (
 	"tangentry/internal/discovery"
 	"tangentry/internal/platformfetch"
 	"testing"
+	"time"
 )
+
+func TestPlaybackCandidatesAllowlistAndDeadline(t *testing.T) {
+	now := time.Unix(2000, 0)
+	got := PlaybackCandidates([]string{
+		"https://cdn.douyinvod.com/video.mp4?deadline=1999",
+		"http://cdn.douyinvod.com/video.mp4",
+		"https://douyinvod.com.evil.example/video.mp4",
+		"https://cdn.douyinvod.com/video.mp4?deadline=3000",
+		"https://cdn.douyinvod.com/video.mp4?deadline=3000",
+	}, now)
+	if len(got) != 1 || got[0] != "https://cdn.douyinvod.com/video.mp4?deadline=3000" {
+		t.Fatalf("candidates=%v", got)
+	}
+}
 
 // Synthetic, credential-free response fixture for the supported nested shape.
 //

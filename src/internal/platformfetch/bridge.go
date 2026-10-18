@@ -35,6 +35,22 @@ type Fetcher interface {
 	Fetch(context.Context, string, string, Request) (Response, error)
 }
 
+// VideoMediaResponse is a metadata-only projection of media discovered by a
+// logged-in platform page. Cookies, response bodies and page HTML never cross
+// this port.
+type VideoMediaResponse struct {
+	URL        string
+	Backups    []string
+	Status     int
+	Restricted bool
+	PageURL    string
+	ExpiresAt  int64
+}
+
+type VideoMediaFetcher interface {
+	ResolveVideoMedia(context.Context, string) (VideoMediaResponse, error)
+}
+
 // FeedCaptureResponse is returned by native shells that can observe the
 // platform page's own feed requests. Responses are kept separate because the
 // page may issue several feed calls while scrolling.
@@ -68,14 +84,15 @@ type DOMDiagnostics struct {
 // DOMCard is the credential-free projection of a recommendation card read
 // from a platform page. It intentionally contains no cookies or raw HTML.
 type DOMCard struct {
-	ID           string `json:"id"`
-	URL          string `json:"url"`
-	ThumbnailURL string `json:"thumbnailURL"`
-	Title        string `json:"title"`
-	Author       string `json:"author"`
-	AuthorID     string `json:"authorID"`
-	LikeCount    int    `json:"likeCount"`
-	Duration     int    `json:"duration"`
+	ID           string   `json:"id"`
+	URL          string   `json:"url"`
+	ThumbnailURL string   `json:"thumbnailURL"`
+	Title        string   `json:"title"`
+	Author       string   `json:"author"`
+	AuthorID     string   `json:"authorID"`
+	LikeCount    int      `json:"likeCount"`
+	Duration     int      `json:"duration"`
+	MediaURLs    []string `json:"mediaURLs,omitempty"`
 }
 
 // FeedCaptureFetcher is optional. Adapters must continue to work with a

@@ -27,6 +27,8 @@ type Source struct {
 	Quality  int
 	Duration int
 	Backups  []string
+	Platform string
+	Referer  string
 }
 type Session struct {
 	ID      string `json:"id"`
@@ -53,7 +55,8 @@ type Service struct {
 
 // No arbitrary URL input: only a validated video identifier is resolved by the
 // platform adapter, and only public Bili CDN addresses may be fetched.
-func allowed(raw string) bool {
+func allowed(raw string) bool { return allowedFor("bilibili", raw) }
+func allowedFor(platform, raw string) bool {
 	if len(raw) > 8192 {
 		return false
 	}
@@ -61,7 +64,10 @@ func allowed(raw string) bool {
 	if err != nil || u.Scheme != "https" || u.User != nil || u.Opaque != "" || (u.Port() != "" && u.Port() != "443") {
 		return false
 	}
-	host := strings.ToLower(u.Hostname())
+	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+	if platform == "douyin" {
+		return host == "douyinvod.com" || strings.HasSuffix(host, ".douyinvod.com")
+	}
 	return strings.HasSuffix(host, ".bilivideo.com") || strings.HasSuffix(host, ".bilivideo.cn")
 }
 
@@ -71,7 +77,7 @@ func New(resolve func(context.Context, string) (Source, error), client *http.Cli
 	clone.Timeout = 0 // Media bodies can outlive the metadata client's timeout.
 	check := client.CheckRedirect
 	clone.CheckRedirect = func(req *http.Request, via []*http.Request) error {
-		if len(via) >= 5 || !allowed(req.URL.String()) {
+		if len(via) >= 5 || (!allowed(req.URL.String()) && !allowedFor("douyin", req.URL.String())) {
 			return ErrUnavailable
 		}
 		req.Header.Del("Cookie")
@@ -87,7 +93,7 @@ func New(resolve func(context.Context, string) (Source, error), client *http.Cli
 var videoID = regexp.MustCompile(`^BV[0-9A-Za-z]{10}$`)
 
 func (s *Service) Open(ctx context.Context, id string) (Session, error) {
-	if !videoID.MatchString(id) {
+	if !videoID.MatchString(id) && !regexp.MustCompile(`^[1-9][0-9]{15,19}$`).MatchString(id) {
 		return Session{}, ErrInvalid
 	}
 	select {
@@ -125,6 +131,15 @@ func (s *Service) Open(ctx context.Context, id string) (Session, error) {
 	// Active readers retain their streams; opening more fails instead of evicting them.
 	if len(s.sessions) >= 32 {
 		return Session{}, ErrBusy
+	}
+	if source.Platform == "" {
+		source.Platform = "bilibili"
+	}
+	if source.Referer == "" {
+		source.Referer = map[string]string{"douyin": "https://www.douyin.com/", "bilibili": "https://www.bilibili.com/"}[source.Platform]
+	}
+	if !allowedFor(source.Platform, source.URL) {
+		return Session{}, ErrUnavailable
 	}
 	sourceExpires := sourceDeadline(source.URL)
 	if !sourceExpires.IsZero() && !sourceExpires.After(now) {
@@ -176,7 +191,7 @@ func (s *Service) Fetch(ctx context.Context, token, method, byteRange string) (*
 		signatureFailure := false
 		sources := append([]string{value.source.URL}, value.source.Backups...)
 		for _, raw := range sources {
-			candidate, closeAttempt, err := s.fetchCandidate(ctx, method, raw, byteRange)
+			candidate, closeAttempt, err := s.fetchCandidate(ctx, method, raw, byteRange, value.source.Referer)
 			if err == nil {
 				if validMediaResponse(candidate, byteRange) && s.rememberSource(token, value.revision, raw, mediaSize(candidate)) {
 					response = candidate

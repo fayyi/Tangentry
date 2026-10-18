@@ -125,6 +125,13 @@ func (t *Toolkit) DownloadMedia(ctx context.Context, rawURL, directory string, h
 		if ctx.Err() != nil {
 			return downloads.Result{}, ctx.Err()
 		}
+		if ref, parseErr := discovery.ParseDouyin(rawURL); parseErr == nil && ref.ID != "" {
+			if result, fallbackErr := t.downloadDouyinFallback(ctx, ref.URL, directory); fallbackErr == nil {
+				return result, nil
+			}
+			cookieArgs, _, _ := t.cookieArguments(rawURL)
+			return downloads.Result{}, classifyDouyin(stderr.String(), len(cookieArgs) > 0)
+		}
 		return downloads.Result{}, classify(stderr.String())
 	}
 	lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")

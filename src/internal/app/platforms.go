@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"net/http"
 	"path/filepath"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"tangentry/internal/credentials"
 	"tangentry/internal/discovery"
 	"tangentry/internal/netpolicy"
+	"tangentry/internal/playback"
 )
 
 // platforms is an application-level capability registry. The concrete clients
@@ -70,6 +72,7 @@ type platformSubscriptions struct {
 
 type platformMedia struct {
 	bilibili *bilibili.Client
+	douyin   *douyin.Client
 	toolkit  *tools.Toolkit
 	notes    *xiaohongshu.Client
 	podcasts *xiaoyuzhou.Client
@@ -101,6 +104,13 @@ func newPlatforms(dataDir string, configuration config.Config, toolkit *tools.To
 	youtubeClient := youtube.New(public)
 	youtubeClient.SetChannelFallback(toolkit.YouTubeChannelFeed)
 	douyinClient := &douyin.Client{HTTP: public, Cookie: cookieFor(cookies, "douyin"), UserAgent: userAgentFor(cookies, "douyin"), Page: option.PlatformPageFetcher}
+	toolkit.SetDouyinPlaybackResolver(func(ctx context.Context, id string) (playback.Source, error) {
+		media, err := douyinClient.ResolveVideoMedia(ctx, id)
+		if err != nil {
+			return playback.Source{}, err
+		}
+		return playback.Source{URL: media.URL, Backups: media.Backups, Platform: "douyin", Referer: "https://www.douyin.com/video/" + id}, nil
+	})
 	notesClient := &xiaohongshu.Client{HTTP: public, Cookie: cookieFor(cookies, "xiaohongshu"), UserAgent: userAgentFor(cookies, "xiaohongshu"), Page: option.PlatformPageFetcher}
 	forumClient := &discourse.Client{HTTP: public, UserAgent: userAgentFor(cookies, "linuxdo"), Session: cookies.PrepareLinuxdoSession, UserKey: cookies.LinuxdoUserKey, Page: option.PlatformPageFetcher}
 	return &platforms{
@@ -108,7 +118,7 @@ func newPlatforms(dataDir string, configuration config.Config, toolkit *tools.To
 		discovery:     platformDiscovery{creators: creators, bilibili: client, douyin: douyinClient, notes: notesClient, forum: forumClient, podcasts: podcasts, youtube: youtubeClient},
 		imports:       platformImports{feeds: feedClient, youtube: youtubeClient, douyin: douyinClient, notes: notesClient, forum: forumClient, podcasts: podcasts, toolkit: toolkit, noteImages: noteImages},
 		subscriptions: platformSubscriptions{feeds: feedClient, youtube: youtubeClient, creators: creators, toolkit: toolkit, papers: paperClient},
-		media:         platformMedia{bilibili: client, toolkit: toolkit, notes: notesClient, podcasts: podcasts},
+		media:         platformMedia{bilibili: client, douyin: douyinClient, toolkit: toolkit, notes: notesClient, podcasts: podcasts},
 	}, nil
 }
 
