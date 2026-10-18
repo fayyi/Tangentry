@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import type { ContentItem } from '../api/types'
 import { publicationText } from './ContentCard'
 import { cachedNote } from '../data/noteDetails'
 import { cachedPublication, readPublication } from '../data/publicationDetails'
 import { retryThroughProxy, sourceImageURL } from '../media/sourceImage'
-import { platformColorToken, platformLabel } from './cardHelpers'
+import { creatorViewSupported, platformColorToken, platformLabel } from './cardHelpers'
 
 export function AuthorAvatar({ item }: { item: ContentItem }) {
   const node = useRef<HTMLDivElement>(null)
@@ -35,6 +35,14 @@ export function AuthorAvatar({ item }: { item: ContentItem }) {
 export function AuthorName({ item, showPlatform = true, discoveryType, discoveryReason }: { item: ContentItem; showPlatform?: boolean; discoveryType?: '订阅' | '推荐' | '探索'; discoveryReason?: string }) {
   const platformStyle = { '--platform-color': `var(${platformColorToken(item.platform)})` } as CSSProperties
   return <span className="card-source-line"><span className="author-name">{item.author || (item.platform === 'rss' ? '订阅来源' : '未知作者')}</span>{showPlatform && <span className="card-platform" data-platform={item.platform} style={platformStyle}>{platformLabel(item.platform)}</span>}{discoveryType && <span className="discovery-reason-badge" title={discoveryReason || undefined}>{discoveryType}</span>}</span>
+}
+
+export function AuthorLink({ item, onCreator, showAvatar = true, showPlatform = true, discoveryType, discoveryReason, children }: { item: ContentItem; onCreator?: (item: ContentItem) => void; showAvatar?: boolean; showPlatform?: boolean; discoveryType?: '订阅' | '推荐' | '探索'; discoveryReason?: string; children?: ReactNode }) {
+  const author = item.author || (item.platform === 'rss' ? '订阅来源' : '未知作者')
+  const interactive = Boolean(onCreator && item.authorId && creatorViewSupported(item.platform))
+  const content = <>{showAvatar && <AuthorAvatar item={item} />}<div className="author-info"><AuthorName item={item} showPlatform={showPlatform} discoveryType={discoveryType} discoveryReason={discoveryReason} />{children}</div></>
+  if (!interactive) return content
+  return <button type="button" className="author-link" aria-label={`查看 ${author} 的最近内容`} title={`查看 ${author} 的最近内容`} onClick={() => onCreator?.(item)}>{content}</button>
 }
 
 export function AuthorPublication({ item }: { item: ContentItem }) {

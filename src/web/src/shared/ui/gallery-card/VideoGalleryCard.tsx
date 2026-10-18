@@ -8,9 +8,9 @@ import { useCardCover } from './useCardCover'
 import { formatDuration } from '../ContentCard'
 import { HoverVideoPreview } from '../../media/HoverVideoPreview'
 import { retryThroughProxy, sourceImageURL } from '../../media/sourceImage'
-import { AuthorAvatar, AuthorName, AuthorPublication } from '../CardAuthor'
+import { AuthorLink, AuthorPublication } from '../CardAuthor'
 
-export function VideoGalleryCard({ item, origin, discoveryReason, discoveryType, saved, pending, onRead, onSave, onDownload, progress, status, discovery = false, excerpt, onFeedback }: GalleryCardContentProps) {
+export function VideoGalleryCard({ item, origin, discoveryReason, discoveryType, saved, pending, onRead, onSave, onCreator, onDownload, progress, status, discovery = false, excerpt, onFeedback }: GalleryCardContentProps) {
   const { failed: coverFailed, setFailed: setCoverFailed } = useCardCover(item.thumbnailUrl)
   const [hoverPreview, setHoverPreview] = useState(false)
   const [previewVisit, setPreviewVisit] = useState(0)
@@ -73,11 +73,7 @@ export function VideoGalleryCard({ item, origin, discoveryReason, discoveryType,
         {excerpt}
         {item.likeCount ? <div className="discovery-card-stats">{item.likeCount} 赞</div> : null}
         <div className="modern-card-author">
-          <AuthorAvatar item={item} />
-          <div className="author-info">
-            <AuthorName item={item} discoveryType={discovery ? discoveryType : undefined} discoveryReason={discoveryReason} />
-            <AuthorPublication item={item} />
-          </div>
+          <AuthorLink item={item} onCreator={onCreator} discoveryType={discovery ? discoveryType : undefined} discoveryReason={discoveryReason}><AuthorPublication item={item} /></AuthorLink>
           {!discovery && actions}
         </div>
       </div>
