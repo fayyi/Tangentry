@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { request } from '../../shared/api/client'
 import type { DiscoverySource } from './sources'
-import type { Feed } from '../../shared/api/types'
+import type { ContentItem, Feed } from '../../shared/api/types'
 
 const cacheKey = 'tangentry.discovery.v1'
 function readCache(): Feed | null {
@@ -43,10 +43,9 @@ export function useFeed() {
     lastAppend.current = Boolean(continuing)
     const page = continuing && feed ? feed.page + 1 : 1
     try {
-      const endpoint = selected === 'paper'
-        ? `/discovery/paper?q=${encodeURIComponent(query.trim())}`
-        : `/discovery/${selected}?q=${encodeURIComponent(query.trim())}&page=${page}`
-      const result = await request<Feed>(endpoint, { signal: controller.current.signal })
+      const result: Feed = selected === 'paper'
+        ? await request<ContentItem>('/papers/import', { method: 'POST', body: JSON.stringify({ query: query.trim() }), signal: controller.current.signal }).then(item => ({ items: [item], page: 1, total: 1, hasMore: false, sourceTitle: '论文', query: query.trim() }))
+        : await request<Feed>(`/discovery/${selected}?q=${encodeURIComponent(query.trim())}&page=${page}`, { signal: controller.current.signal })
       if (id !== requestID.current) return
       result.source = selected
       setFeed(current => {

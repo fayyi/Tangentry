@@ -8,6 +8,7 @@ export function parsePaperIdentity(input: string): PaperIdentity | null {
   if (!value) return null
 
   let candidate = value.replace(/^arxiv:\s*/i, '')
+  if (!/^https?:\/\//i.test(candidate) && /^(?:www\.)?(?:arxiv\.org|huggingface\.co|alphaxiv\.org)\//i.test(candidate)) candidate = `https://${candidate}`
   if (/^https?:\/\//i.test(candidate)) {
     try {
       const url = new URL(candidate)
