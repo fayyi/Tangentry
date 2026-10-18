@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"tangentry/internal/content"
@@ -55,10 +56,18 @@ func (c *Client) Recommendations(ctx context.Context, page int) (discovery.Feed,
 			if title := strings.TrimSpace(captured.Title); title != "" && looksLikeLoginOrChallenge(title) {
 				diagnostics = append(diagnostics, "页面标题显示为“"+redactDiagnostic(title)+"”")
 			}
+			if feed := mapDOMCards(captured.DOMCards, page); len(feed.Items) > 0 {
+				feed.SourceTitle = "抖音精选"
+				return feed, nil
+			}
 			capturedFeeds := make([]discovery.Feed, 0, len(captured.Responses))
 			for _, response := range captured.Responses {
 				if response.Status != http.StatusOK || response.Body == "" {
 					diagnostics = append(diagnostics, "页面 feed 响应不可用："+describePageResponse(response.Status, response.Body, response.Restricted, response.ContentType, response.URL))
+					continue
+				}
+				if !isJSONContentType(response.ContentType) {
+					diagnostics = append(diagnostics, "页面 feed 响应不是 JSON（已跳过 protobuf/二进制）："+describePageResponse(response.Status, response.Body, response.Restricted, response.ContentType, response.URL))
 					continue
 				}
 				feed, err := decodeRecommendations([]byte(response.Body), page, nil)
@@ -73,12 +82,9 @@ func (c *Client) Recommendations(ctx context.Context, page int) (discovery.Feed,
 			if feed := mergeRecommendationFeeds(capturedFeeds, page, "抖音页面推荐"); len(feed.Items) > 0 {
 				return feed, nil
 			}
-			if feed := mapDOMCards(captured.DOMCards, page); len(feed.Items) > 0 {
-				feed.SourceTitle = "抖音精选"
-				return feed, nil
-			}
 			diagnostics = append(diagnostics, describeCapturePage(captured.PageURL, captured.Title, captured.Ready))
 			diagnostics = append(diagnostics, describeCaptureResources(captured.ResourcePaths, captured.InitiatorTypes, captured.FetchHookInstalled, captured.XHRHookInstalled))
+			diagnostics = append(diagnostics, describeCaptureDOM(captured.DOM))
 			if (captured.PageURL != "" && (!isDouyinPageURL(captured.PageURL) || looksLikeVerificationURL(captured.PageURL))) || looksLikeLoginOrChallenge(captured.Title) {
 				return discovery.Feed{}, &discovery.PlatformError{Restricted: true, Message: "抖音推荐需要在应用内完成抖音验证：" + joinDiagnostics(diagnostics, "页面停留在登录或验证页，请点击重新验证后重试。")}
 			}
@@ -100,12 +106,16 @@ func (c *Client) Recommendations(ctx context.Context, page int) (discovery.Feed,
 		})
 		if err == nil {
 			if response.Status == http.StatusOK && response.Body != "" && !response.Restricted && !looksLikeChallenge([]byte(response.Body)) {
-				feed, decodeErr := decodeRecommendations([]byte(response.Body), page, nil)
-				if decodeErr == nil && len(feed.Items) > 0 {
-					return feed, nil
-				}
-				if decodeErr != nil {
-					diagnostics = append(diagnostics, "页面 fetch JSON 解析失败："+decodeErr.Error()+"；"+describePageResponse(response.Status, response.Body, response.Restricted, response.ContentType, response.URL))
+				if !isJSONContentType(response.ContentType) {
+					diagnostics = append(diagnostics, "页面 fetch 响应不是 JSON（已跳过 protobuf/二进制）："+describePageResponse(response.Status, response.Body, response.Restricted, response.ContentType, response.URL))
+				} else {
+					feed, decodeErr := decodeRecommendations([]byte(response.Body), page, nil)
+					if decodeErr == nil && len(feed.Items) > 0 {
+						return feed, nil
+					}
+					if decodeErr != nil {
+						diagnostics = append(diagnostics, "页面 fetch JSON 解析失败："+decodeErr.Error()+"；"+describePageResponse(response.Status, response.Body, response.Restricted, response.ContentType, response.URL))
+					}
 				}
 			} else {
 				diagnostics = append(diagnostics, describePageResponse(response.Status, response.Body, response.Restricted, response.ContentType, response.URL))
@@ -361,10 +371,23 @@ func joinDiagnostics(diagnostics []string, fallback string) string {
 	if len(diagnostics) == 0 {
 		return fallback
 	}
-	if len(diagnostics) > 4 {
-		diagnostics = diagnostics[len(diagnostics)-4:]
+	// Keep the first response clues and the latest page/DOM state. Trimming
+	// from the front alone can hide the only useful HTTP context, while an
+	// unbounded list would make a repeated feed capture unwieldy in the UI.
+	selected := diagnostics
+	if len(diagnostics) > 8 {
+		selected = append(append([]string(nil), diagnostics[:3]...), diagnostics[len(diagnostics)-5:]...)
 	}
-	return strings.Join(append(diagnostics, fallback), "；")
+	parts := make([]string, 0, len(selected)+1)
+	for _, diagnostic := range selected {
+		if value := strings.TrimSpace(diagnostic); value != "" {
+			parts = append(parts, value)
+		}
+	}
+	if value := strings.TrimSpace(fallback); value != "" {
+		parts = append(parts, value)
+	}
+	return strings.Join(parts, "；")
 }
 
 func cookieValue(header, name string) string {
@@ -501,6 +524,20 @@ func describeCaptureResources(paths, initiators []string, fetchHook, xhrHook boo
 		parts = parts[:12]
 	}
 	return fmt.Sprintf("页面 aweme 资源：%s；fetch 钩子=%t，XHR 钩子=%t", strings.Join(parts, ", "), fetchHook, xhrHook)
+}
+
+func describeCaptureDOM(d platformfetch.DOMDiagnostics) string {
+	selectors := make([]string, 0, len(d.CandidateSelectorHits))
+	for selector, count := range d.CandidateSelectorHits {
+		selectors = append(selectors, fmt.Sprintf("%s=%d", selector, count))
+	}
+	sort.Strings(selectors)
+	return fmt.Sprintf("精选 DOM 诊断：URL=%s，视频链接=%d，候选选择器命中=%s，读取卡片=%d，等待=%dms", safeDiagnosticURL(d.URL), d.VideoLinkCount, strings.Join(selectors, ","), d.CardsRead, d.WaitMilliseconds)
+}
+
+func isJSONContentType(contentType string) bool {
+	value := strings.ToLower(strings.TrimSpace(strings.SplitN(contentType, ";", 2)[0]))
+	return value == "" || value == "application/json" || value == "text/json" || strings.HasSuffix(value, "+json")
 }
 
 func decodeRecommendations(body []byte, page int, denied error) (discovery.Feed, error) {

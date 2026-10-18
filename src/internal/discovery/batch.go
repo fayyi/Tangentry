@@ -63,14 +63,25 @@ type BatchCandidateProvider interface {
 }
 
 type BatchService struct {
-	provider      BatchCandidateProvider
-	subscriptions func(context.Context) (Feed, error)
-	sources       []string
-	snapshots     BatchSnapshotRepository
-	enabled       func(context.Context, string) (bool, error)
-	topics        func(context.Context) ([]TopicRule, error)
-	feedback      func(context.Context) ([]Feedback, error)
-	clock         func() time.Time
+	provider             BatchCandidateProvider
+	subscriptions        func(context.Context) (Feed, error)
+	sources              []string
+	snapshots            BatchSnapshotRepository
+	enabled              func(context.Context, string) (bool, error)
+	topics               func(context.Context) ([]TopicRule, error)
+	feedback             func(context.Context) ([]Feedback, error)
+	clock                func() time.Time
+	initialSourceTimeout time.Duration
+}
+
+const defaultInitialSourceTimeout = 4 * time.Second
+const backgroundSourceTimeout = 30 * time.Second
+
+type initialSourceResult struct {
+	source   string
+	feed     Feed
+	err      error
+	timedOut bool
 }
 
 type BatchSnapshotRepository interface {
@@ -106,7 +117,7 @@ func NewBatchService(provider BatchCandidateProvider, subscriptions func(context
 	if len(repositories) > 0 {
 		snapshots = repositories[0]
 	}
-	return &BatchService{provider: provider, subscriptions: subscriptions, sources: append([]string(nil), sources...), snapshots: snapshots, clock: time.Now}
+	return &BatchService{provider: provider, subscriptions: subscriptions, sources: append([]string(nil), sources...), snapshots: snapshots, clock: time.Now, initialSourceTimeout: defaultInitialSourceTimeout}
 }
 
 func (s *BatchService) SetSourceEnabled(enabled func(context.Context, string) (bool, error)) {
@@ -198,18 +209,16 @@ func (s *BatchService) Create(ctx context.Context, request BatchRequest) (BatchR
 
 	nextPages := make(map[string]int, len(s.sources))
 	exhausted := make(map[string]bool, len(s.sources)+1)
-	if s.subscriptions != nil && request.Source == "" {
-		feed, fetchErr := s.subscriptions(ctx)
-		if fetchErr != nil {
-			status["subscriptions"] = sourceError(fetchErr)
-			exhausted["subscriptions"] = true
-		} else {
-			status["subscriptions"] = BatchSourceStatus{Status: "ok"}
-			add("subscriptions", "订阅优先", feed, false)
-			// Subscription feeds are already complete snapshots, not page APIs.
-			exhausted["subscriptions"] = true
-		}
+	initialResults := make(map[string]initialSourceResult, len(s.sources)+1)
+	type initialSourceTask struct {
+		source string
+		fetch  func(context.Context) (Feed, error)
 	}
+	tasks := make([]initialSourceTask, 0, len(s.sources)+1)
+	if s.subscriptions != nil && request.Source == "" {
+		tasks = append(tasks, initialSourceTask{source: "subscriptions", fetch: s.subscriptions})
+	}
+	platformSources := make([]string, 0, len(s.sources))
 	for _, source := range s.sources {
 		if source == "subscriptions" {
 			continue
@@ -230,15 +239,50 @@ func (s *BatchService) Create(ctx context.Context, request BatchRequest) (BatchR
 				continue
 			}
 		}
-		feed, fetchErr := s.provider.Fetch(ctx, source, 1)
-		if fetchErr != nil {
-			status[source] = sourceError(fetchErr)
-			exhausted[source] = true
+		platformSources = append(platformSources, source)
+		sourceName := source
+		tasks = append(tasks, initialSourceTask{source: sourceName, fetch: func(fetchCtx context.Context) (Feed, error) {
+			return s.provider.Fetch(fetchCtx, sourceName, 1)
+		}})
+	}
+	// Fetch every enabled platform concurrently. A slow WebView is cancelled at
+	// the per-source deadline while fast sources can populate the first batch.
+	results := make(chan initialSourceResult, len(tasks))
+	for _, task := range tasks {
+		go func(task initialSourceTask) {
+			results <- s.fetchInitial(ctx, task.source, task.fetch)
+		}(task)
+	}
+	for range tasks {
+		result := <-results
+		initialResults[result.source] = result
+	}
+	for _, source := range append([]string{"subscriptions"}, platformSources...) {
+		result, ok := initialResults[source]
+		if !ok {
+			continue
+		}
+		if result.err != nil {
+			if result.timedOut {
+				status[source] = BatchSourceStatus{Status: "loading", Message: "正在加载，继续下滑后会补充此来源。"}
+				exhausted[source] = false
+				if source != "subscriptions" {
+					nextPages[source] = 1
+				}
+			} else {
+				status[source] = sourceError(result.err)
+				exhausted[source] = true
+			}
 			continue
 		}
 		status[source] = BatchSourceStatus{Status: "ok"}
-		add(source, "来源更新", feed, true)
-		if len(feed.Items) == 0 || !feed.HasMore {
+		reason := "来源更新"
+		if source == "subscriptions" {
+			reason = "订阅优先"
+		}
+		add(source, reason, result.feed, source != "subscriptions")
+		// Subscription feeds are already complete snapshots, not page APIs.
+		if source == "subscriptions" || len(result.feed.Items) == 0 || !result.feed.HasMore {
 			exhausted[source] = true
 		} else {
 			nextPages[source] = 2
@@ -274,7 +318,7 @@ func (s *BatchService) Create(ctx context.Context, request BatchRequest) (BatchR
 	snapshot = batchSnapshot{Candidates: all, Status: status, NextPages: nextPages, Exhausted: exhausted}
 	// If every source starts empty but advertises a continuation, fetch one
 	// continuation before exposing an empty stream.
-	if len(snapshot.Candidates) == 0 && !allSourcesExhausted(snapshot) {
+	if len(snapshot.Candidates) == 0 && !allSourcesExhausted(snapshot) && !hasLoadingSource(snapshot.Status) {
 		if err := s.extendSnapshot(ctx, request, &snapshot, 0); err != nil {
 			return BatchResponse{}, err
 		}
@@ -360,12 +404,23 @@ func (s *BatchService) extendSnapshot(ctx context.Context, request BatchRequest,
 			continue
 		}
 		page := snapshot.NextPages[source]
-		if page < 2 {
-			page = 2
+		if page < 1 {
+			page = 1
 		}
 		for attempts := 0; attempts < 100 && !snapshot.Exhausted[source]; attempts++ {
-			feed, err := s.provider.Fetch(ctx, source, page)
+			fetchCtx := ctx
+			cancel := func() {}
+			if timeout := s.sourceTimeout(); timeout > 0 {
+				fetchCtx, cancel = context.WithTimeout(ctx, timeout)
+			}
+			feed, err := s.provider.Fetch(fetchCtx, source, page)
+			cancel()
 			if err != nil {
+				if errors.Is(err, context.DeadlineExceeded) {
+					snapshot.Status[source] = BatchSourceStatus{Status: "loading", Message: "正在加载，继续下滑后会补充此来源。"}
+					snapshot.NextPages[source] = page
+					break
+				}
 				snapshot.Status[source] = sourceError(err)
 				snapshot.Exhausted[source] = true
 				break
@@ -393,6 +448,38 @@ func (s *BatchService) extendSnapshot(ctx context.Context, request BatchRequest,
 	tail := append(append([]batchCandidate(nil), snapshot.Candidates[offset:]...), newCandidates...)
 	snapshot.Candidates = append(prefix, interleaveBatchCandidates(tail)...)
 	return nil
+}
+
+func (s *BatchService) sourceTimeout() time.Duration {
+	if s.initialSourceTimeout <= 0 {
+		return defaultInitialSourceTimeout
+	}
+	return s.initialSourceTimeout
+}
+
+func (s *BatchService) fetchInitial(ctx context.Context, source string, fetch func(context.Context) (Feed, error)) initialSourceResult {
+	// The first batch has a short presentation deadline, but a WebView fetch
+	// that missed it should continue in the background. The recommendation
+	// cache shares that in-flight call with the next cursor page, avoiding a
+	// second page load. Bound detached work so a closed page cannot leak forever.
+	backgroundCtx, backgroundCancel := context.WithTimeout(context.WithoutCancel(ctx), backgroundSourceTimeout)
+	result := make(chan initialSourceResult, 1)
+	go func() {
+		defer backgroundCancel()
+		feed, err := fetch(backgroundCtx)
+		result <- initialSourceResult{source: source, feed: feed, err: err, timedOut: errors.Is(err, context.DeadlineExceeded)}
+	}()
+	deadline := time.NewTimer(s.sourceTimeout())
+	defer deadline.Stop()
+	select {
+	case value := <-result:
+		backgroundCancel()
+		return value
+	case <-deadline.C:
+		return initialSourceResult{source: source, err: context.DeadlineExceeded, timedOut: true}
+	case <-ctx.Done():
+		return initialSourceResult{source: source, err: ctx.Err()}
+	}
 }
 
 func (s *BatchService) saveSnapshot(ctx context.Context, batchID, requestKey string, snapshot batchSnapshot) error {
@@ -448,6 +535,15 @@ func allSourcesExhausted(snapshot batchSnapshot) bool {
 		}
 	}
 	return true
+}
+
+func hasLoadingSource(status map[string]BatchSourceStatus) bool {
+	for _, value := range status {
+		if value.Status == "loading" {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *BatchService) page(request BatchRequest, requestKey string, cursor batchCursor, snapshot batchSnapshot) BatchResponse {

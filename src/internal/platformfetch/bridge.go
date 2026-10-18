@@ -35,6 +35,18 @@ type FeedCaptureResponse struct {
 	InitiatorTypes     []string
 	FetchHookInstalled bool
 	XHRHookInstalled   bool
+	DOM                DOMDiagnostics
+}
+
+// DOMDiagnostics describes the short, synchronous DOM probes performed by
+// the native bridge. It is intentionally metadata-only: no raw HTML or
+// cookies cross the bridge.
+type DOMDiagnostics struct {
+	URL                  string         `json:"url,omitempty"`
+	VideoLinkCount       int            `json:"videoLinkCount,omitempty"`
+	CandidateSelectorHits map[string]int `json:"candidateSelectorHits,omitempty"`
+	CardsRead            int            `json:"cardsRead,omitempty"`
+	WaitMilliseconds     int            `json:"waitMilliseconds,omitempty"`
 }
 
 // DOMCard is the credential-free projection of a recommendation card read

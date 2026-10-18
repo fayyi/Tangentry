@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { discussionSummary, nextDiscussionPostIDs } from './DiscussionReader'
+import { discussionSummary, discussionTargetLoaded, mainPostDiscussion, nextDiscussionPostIDs, shouldLoadDiscussionTarget } from './DiscussionReader'
 
 const discussion = {
   topicId: '42', totalPosts: 4, loadedPosts: 2, postIds: [101, 102, 103, 104],
@@ -16,6 +16,19 @@ describe('DiscussionReader helpers', () => {
   })
   it('builds AI input with floor and author labels', () => {
     expect(discussionSummary(discussion)).toContain('#1 alice\n主帖')
-    expect(discussionSummary(discussion)).toContain('#2 bob\n回复')
+    expect(discussionSummary(discussion)).not.toContain('#2 bob\n回复')
+    expect(discussionSummary(discussion, true)).toContain('#2 bob\n回复')
+  })
+  it('keeps only the main post until replies are requested', () => {
+    const main = mainPostDiscussion(discussion)
+    expect(main.posts.map(post => post.number)).toEqual([1])
+    expect(main.loadedPosts).toBe(1)
+    expect(shouldLoadDiscussionTarget(main, { postNumber: 3 })).toBe(true)
+    expect(discussionTargetLoaded(main, { postNumber: 1 })).toBe(true)
+  })
+  it('loads a note target only when it is not already visible', () => {
+    expect(shouldLoadDiscussionTarget(discussion, { postId: 102 })).toBe(false)
+    expect(shouldLoadDiscussionTarget(discussion, { postNumber: 4 })).toBe(true)
+    expect(shouldLoadDiscussionTarget({ ...discussion, posts: [...discussion.posts, ...Array.from({ length: 2 }, (_, index) => ({ id: 103 + index, number: 3 + index, username: 'reply', createdAt: 0, blocks: [] }))] }, { postNumber: 4 })).toBe(false)
   })
 })

@@ -2,6 +2,9 @@ package app
 
 import (
 	"context"
+	"strconv"
+	"sync"
+	"time"
 
 	"tangentry/internal/discovery"
 )
@@ -11,8 +14,104 @@ type recommender struct {
 	platforms     *platforms
 	subscriptions func(context.Context) (discovery.Feed, error)
 	queue         *discovery.RecommendationQueue
+	cache         *recommendationCache
 	// override replaces every platform feed (not the local subscription gallery) in tests.
 	override func(context.Context, string) (discovery.Feed, error)
+}
+
+const platformRecommendationCacheTTL = 10 * time.Minute
+
+type recommendationCacheEntry struct {
+	feed      discovery.Feed
+	expiresAt time.Time
+}
+
+type recommendationCacheCall struct {
+	done chan struct{}
+	feed discovery.Feed
+	err  error
+}
+
+// recommendationCache keeps WebView-backed recommendation pages warm for a
+// short period. In-flight calls are shared so an entering discovery page and
+// a batch continuation do not open two browser sessions for the same scope.
+type recommendationCache struct {
+	mu       sync.Mutex
+	now      func() time.Time
+	ttl      time.Duration
+	entries  map[string]recommendationCacheEntry
+	inflight map[string]*recommendationCacheCall
+}
+
+func newRecommendationCache() *recommendationCache {
+	return &recommendationCache{
+		now:      time.Now,
+		ttl:      platformRecommendationCacheTTL,
+		entries:  make(map[string]recommendationCacheEntry),
+		inflight: make(map[string]*recommendationCacheCall),
+	}
+}
+
+func (c *recommendationCache) key(source string, page int, account, variant string) string {
+	return source + "\x00" + account + "\x00" + strconv.Itoa(page) + "\x00" + variant
+}
+
+func (c *recommendationCache) get(key string) (discovery.Feed, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.getLocked(key)
+}
+
+func (c *recommendationCache) getLocked(key string) (discovery.Feed, bool) {
+	entry, ok := c.entries[key]
+	if !ok {
+		return discovery.Feed{}, false
+	}
+	if !c.now().Before(entry.expiresAt) {
+		delete(c.entries, key)
+		return discovery.Feed{}, false
+	}
+	return entry.feed, true
+}
+
+func (c *recommendationCache) load(ctx context.Context, key string, fetch func(context.Context) (discovery.Feed, error)) (discovery.Feed, error) {
+	if feed, ok := c.get(key); ok {
+		return feed, nil
+	}
+	c.mu.Lock()
+	if feed, ok := c.getLocked(key); ok {
+		c.mu.Unlock()
+		return feed, nil
+	}
+	if call := c.inflight[key]; call != nil {
+		c.mu.Unlock()
+		select {
+		case <-call.done:
+			return call.feed, call.err
+		case <-ctx.Done():
+			return discovery.Feed{}, ctx.Err()
+		}
+	}
+	call := &recommendationCacheCall{done: make(chan struct{})}
+	c.inflight[key] = call
+	c.mu.Unlock()
+
+	feed, err := fetch(ctx)
+	c.mu.Lock()
+	call.feed, call.err = feed, err
+	if err == nil {
+		now := c.now()
+		for cachedKey, entry := range c.entries {
+			if !now.Before(entry.expiresAt) {
+				delete(c.entries, cachedKey)
+			}
+		}
+		c.entries[key] = recommendationCacheEntry{feed: feed, expiresAt: now.Add(c.ttl)}
+	}
+	delete(c.inflight, key)
+	close(call.done)
+	c.mu.Unlock()
+	return feed, err
 }
 
 // Fetch adapts the page-oriented recommendation sources to the finite batch
@@ -27,8 +126,20 @@ func (r *recommender) Page(ctx context.Context, source string, page int) (discov
 	if source == "subscriptions" {
 		return r.subscriptions(ctx)
 	}
-	return r.queue.Fetch(ctx, source, func(ctx context.Context) (discovery.Feed, error) {
-		return r.platformPage(ctx, source, page)
+	if r.cache == nil {
+		return r.queue.Fetch(ctx, source, func(ctx context.Context) (discovery.Feed, error) {
+			return r.platformPage(ctx, source, page)
+		})
+	}
+	account := discovery.PersonalAccount
+	if r.platforms != nil && r.platforms.network.cookies != nil {
+		account = r.platforms.network.cookies.Fingerprint(source, "")
+	}
+	key := r.cache.key(source, page, account, discovery.RecommendationFilter(ctx))
+	return r.cache.load(ctx, key, func(ctx context.Context) (discovery.Feed, error) {
+		return r.queue.Fetch(ctx, source, func(ctx context.Context) (discovery.Feed, error) {
+			return r.platformPage(ctx, source, page)
+		})
 	})
 }
 

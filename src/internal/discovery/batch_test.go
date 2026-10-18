@@ -16,6 +16,18 @@ type batchProvider struct {
 	failures map[string]error
 }
 
+type slowBatchProvider struct {
+	quick content.Item
+}
+
+func (p slowBatchProvider) Fetch(ctx context.Context, source string, _ int) (Feed, error) {
+	if source == "slow" {
+		<-ctx.Done()
+		return Feed{}, ctx.Err()
+	}
+	return Feed{Items: []content.Item{p.quick}}, nil
+}
+
 func (p batchProvider) Fetch(_ context.Context, source string, page int) (Feed, error) {
 	if err := p.failures[source]; err != nil {
 		return Feed{}, err
@@ -121,6 +133,28 @@ func TestBatchUsesDefaultsWhenOptionsAreOmitted(t *testing.T) {
 	}
 	if len(response.Items) != 1 || response.Reason == "" {
 		t.Fatalf("omitted options were not defaulted: %#v", response)
+	}
+}
+
+func TestBatchSlowSourceDoesNotBlockFirstBatch(t *testing.T) {
+	service := NewBatchService(slowBatchProvider{quick: batchItem("bilibili", "fast", "快速来源", "作者", 1)}, nil, []string{"bilibili", "slow"})
+	service.initialSourceTimeout = 20 * time.Millisecond
+	started := time.Now()
+	response, err := service.Create(context.Background(), BatchRequest{Size: 10, Seed: 13})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("slow source blocked first batch for %s", elapsed)
+	}
+	if len(response.Items) != 1 || response.Items[0].Source != "bilibili" {
+		t.Fatalf("fast source missing from first batch: %#v", response.Items)
+	}
+	if status := response.SourceStatus["slow"]; status.Status != "loading" {
+		t.Fatalf("slow source was not marked loading: %#v", response.SourceStatus)
+	}
+	if !response.HasNextBatch || response.NextCursor == "" {
+		t.Fatalf("loading source did not preserve continuation: %#v", response)
 	}
 }
 
