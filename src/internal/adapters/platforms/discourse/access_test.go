@@ -72,6 +72,41 @@ func TestNativeFeedFiltersUseDiscourseRoutes(t *testing.T) {
 	}
 }
 
+func TestTopPageZeroWithUsersJSONIsNotCloudflare(t *testing.T) {
+	c := &Client{Page: pageFetcherFunc(func(_ context.Context, platform, path string, request platformfetch.Request) (platformfetch.Response, error) {
+		if platform != "linuxdo" || path != "/top.json?page=0" || request.Method != http.MethodGet {
+			t.Fatalf("unexpected top request: %s %s", platform, path)
+		}
+		return platformfetch.Response{Status: http.StatusOK, URL: "https://linux.do/top.json", ContentType: "application/json; charset=utf-8", Body: `{"users":[{"id":1,"username":"reader"}],"topic_list":{"more_topics_url":"/top.json?page=1","topics":[{"id":3035608,"title":"热门话题","reply_count":2}]}}`}, nil
+	})}
+	feed, err := c.Feed(context.Background(), "top", 1)
+	if err != nil || len(feed.Items) != 1 || feed.Items[0].ID != "linuxdo:3035608" || !feed.HasMore {
+		t.Fatalf("top page JSON was not parsed: %+v, %v", feed, err)
+	}
+}
+
+func TestCloudflareRecognitionRequiresHTMLOrChallengeFeatures(t *testing.T) {
+	if !looksLikeCloudflareResponse(http.StatusOK, "", []byte(`<title>Just a moment...</title>`)) {
+		t.Fatal("HTML challenge with missing content type was not recognized")
+	}
+	if looksLikeCloudflareResponse(http.StatusOK, "application/json; charset=utf-8", []byte(`{"cloudflare":"field"}`)) {
+		t.Fatal("valid JSON was classified as Cloudflare")
+	}
+}
+
+func TestTopJSONForbiddenDoesNotClaimCloudflare(t *testing.T) {
+	c := &Client{HTTP: &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		res := response(r, http.StatusForbidden, `{"error":"forbidden"}`)
+		res.Header.Set("Content-Type", "application/json; charset=utf-8")
+		return res, nil
+	})}}
+	_, err := c.Feed(context.Background(), "top", 1)
+	var platformErr *discovery.PlatformError
+	if !errors.As(err, &platformErr) || platformErr.Restricted || strings.Contains(platformErr.Message, "疑似 Cloudflare") {
+		t.Fatalf("JSON error response was misclassified: %v", err)
+	}
+}
+
 func TestBrowserCookieWinsOverApiKeyForFeedRequests(t *testing.T) {
 	c := &Client{
 		Cookie:  func(string) string { return "_t=browser; cf_clearance=clearance" },

@@ -76,11 +76,11 @@ func TestPlatformPageOriginAndCloudflareRecognition(t *testing.T) {
 		t.Fatal("unsupported platform accepted")
 	}
 	for _, body := range []string{"<title>Just a moment...</title>", "cf-chl-abc", "challenge-platform", "Cloudflare"} {
-		if !isCloudflarePage(httpStatusOK, body) {
+		if !isCloudflarePage(httpStatusOK, body, "text/html; charset=utf-8") {
 			t.Fatalf("challenge body not recognized: %q", body)
 		}
 	}
-	if !isCloudflarePage(403, "json") || isCloudflarePage(200, `{"ok":true}`) {
+	if isCloudflarePage(403, "json") || isCloudflarePage(200, `{"ok":true}`) || isCloudflarePage(httpStatusOK, "<title>Just a moment...</title>") {
 		t.Fatal("status/body challenge recognition is incorrect")
 	}
 }

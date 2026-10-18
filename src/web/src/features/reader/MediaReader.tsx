@@ -1,7 +1,7 @@
 import { ArrowLeft, BookOpen, ExternalLink, PanelRightClose, PanelRightOpen, RotateCw, StickyNote, UserRound } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode, RefObject } from 'react'
-import type { ContentItem, DownloadJob, ReadingNote, TextAnchor, PDFAnchor } from '../../shared/api/types'
+import type { ContentItem, Discussion, DownloadJob, ReadingNote, TextAnchor, PDFAnchor } from '../../shared/api/types'
 import { PDFReader } from '../documents/PDFReader'
 import { FeedDocumentReader } from './FeedDocumentReader'
 import { ArticleReader } from './ArticleReader'
@@ -36,9 +36,16 @@ function ResizableReaderPlayer({ children }: { children: ReactNode }) {
   return <div className="reader-player-resizable" style={{ '--reader-player-width': `${notebook.playerWidth}%` } as CSSProperties}>{children}<ReaderPlayerSizeHandle value={notebook.playerWidth} onChange={notebook.setPlayerWidth} onReset={notebook.resetPlayerWidth}/></div>
 }
 
-export function MediaReader({ id, initialItem, jobs, jobsLoading = false, video, reading, notes, insights, mediaRef, playbackRef, onReady, onPosition, onSeek, onItem, onQuote, annotations = [], textFocus, onOpenNotes, onUnresolved, onPDFQuote, onCreator, onReturn }: { id: string; initialItem?: ContentItem; jobs: DownloadJob[]; jobsLoading?: boolean; video?: ReactNode; reading?: ReactNode; notes?: ReactNode; insights?: ReactNode; mediaRef?:RefObject<HTMLMediaElement|null>; playbackRef?:RefObject<PlaybackHandle|null>; onReady?:(ready:boolean)=>void; onPosition?:(seconds:number|null)=>void; onSeek?:(seconds:number)=>void; onItem?:(item:ContentItem)=>void; onQuote?:(text:string,anchor?:TextAnchor)=>void; annotations?:ReadingNote[]; textFocus?:{id:string;token:number;allowReturn?:boolean}|null; onOpenNotes?:(ids:string[])=>void; onUnresolved?:(ids:string[])=>void; onPDFQuote?:(text:string,anchor:PDFAnchor)=>void; onCreator?:(platform:string, authorID:string)=>void; onReturn: () => void }) {
+export function MediaReader({ id, initialItem, jobs, jobsLoading = false, video, reading, notes, insights, mediaRef, playbackRef, onReady, onPosition, onSeek, onItem, onDiscussionChange, onQuote, annotations = [], textFocus, onOpenNotes, onUnresolved, onPDFQuote, onCreator, onReturn }: { id: string; initialItem?: ContentItem; jobs: DownloadJob[]; jobsLoading?: boolean; video?: ReactNode; reading?: ReactNode; notes?: ReactNode; insights?: ReactNode; mediaRef?:RefObject<HTMLMediaElement|null>; playbackRef?:RefObject<PlaybackHandle|null>; onReady?:(ready:boolean)=>void; onPosition?:(seconds:number|null)=>void; onSeek?:(seconds:number)=>void; onItem?:(item:ContentItem)=>void; onDiscussionChange?:(discussion:Discussion)=>void; onQuote?:(text:string,anchor?:TextAnchor)=>void; annotations?:ReadingNote[]; textFocus?:{id:string;token:number;allowReturn?:boolean}|null; onOpenNotes?:(ids:string[])=>void; onUnresolved?:(ids:string[])=>void; onPDFQuote?:(text:string,anchor:PDFAnchor)=>void; onCreator?:(platform:string, authorID:string)=>void; onReturn: () => void }) {
   const [quote,setQuote]=useState('')
   const { item, error, errorRequiresVerification, localReadFailed, retryLocalRead, social, localSocial, refreshDetails, detailError, detailRequiresVerification, detailLoading, detailRead, sourceEditing, setSourceEditing, onSourceUpdated } = useReaderContent({ id, initialItem, jobs, jobsLoading, onItem })
+  const itemRef = useRef<ContentItem | null>(null)
+  itemRef.current = item
+  const updateDiscussion = useCallback((discussion: Discussion) => {
+    const current = itemRef.current
+    if (current) onItem?.({ ...current, discussion })
+    onDiscussionChange?.(discussion)
+  }, [onDiscussionChange, onItem])
   const capabilities = useCapabilities()
   const [focusReading, setFocusReading] = useState(false)
   useEffect(() => setFocusReading(false), [id])
@@ -177,7 +184,7 @@ export function MediaReader({ id, initialItem, jobs, jobsLoading = false, video,
   const sourceText = item && (item.kind === 'article' || item.kind === 'image') && !(item.kind === 'article' && item.platform === 'rss')
     ? <ArticleReader collapsible={textAboveNotes} contentId={item.description?.trim() || item.articleBlocks?.length ? item.id : undefined} summarySource="article:content" toolbarOwnsSummary={item.platform==='linuxdo'} sourceTitle={item.title} sourceURL={item.url} title={item.platform==='rss'?'订阅源正文':item.platform==='linuxdo'?'':'笔记正文'} text={item.description || (item.articleBlocks?.length ? item.articleBlocks.filter(block => block.kind !== 'image' && block.kind !== 'emoji').map(block => block.text).filter(Boolean).join('\n\n') : '') || (item.platform==='xiaohongshu'?(detailRead?'这篇笔记没有附加文字。':detailLoading?'正在获取正文…':'正文尚未读取。'):item.platform==='linuxdo'?'话题正文暂不可用，可打开原内容查看。':'来源没有提供正文，可打开原内容查看。')} blocks={item.articleBlocks?.length ? item.articleBlocks : undefined} feed={item.platform==='rss'} notes={annotations} focus={textFocus} onQuote={item.description || item.articleBlocks?.length ? quoteText : undefined} onOpenNotes={revealNotes} onUnresolved={onUnresolved} navigationTarget={notesNavigation} onReturnedToReading={returnedToReading}/>
     : null
-  const discussionText = item?.platform === 'linuxdo' ? <DiscussionFallback discussion={item.discussion?.posts?.length ? <DiscussionReader discussion={item.discussion} topicURL={item.url} sourceURL={item.url} viewCount={item.viewCount} likeCount={item.likeCount} notes={annotations} focus={textFocus} onQuote={quoteText} onOpenNotes={revealNotes} onUnresolved={onUnresolved}/> : undefined} loading={detailLoading} error={detailError} onRetry={refreshDetails} onVerify={detailRequiresVerification && capabilities.platformWebViewLogin ? () => { void verifyLinuxdo() } : undefined}>{sourceText || <article className="article-reader"><p>{item.description || '话题正文暂不可用，可打开原内容查看。'}</p></article>}</DiscussionFallback>
+  const discussionText = item?.platform === 'linuxdo' ? <DiscussionFallback discussion={item.discussion?.posts?.length ? <DiscussionReader discussion={item.discussion} sourceURL={item.url} viewCount={item.viewCount} likeCount={item.likeCount} notes={annotations} focus={textFocus} onQuote={quoteText} onOpenNotes={revealNotes} onUnresolved={onUnresolved} onDiscussionChange={updateDiscussion}/> : undefined} loading={detailLoading} error={detailError} onRetry={refreshDetails} onVerify={detailRequiresVerification && capabilities.platformWebViewLogin ? () => { void verifyLinuxdo() } : undefined}>{sourceText || <article className="article-reader"><p>{item.description || '话题正文暂不可用，可打开原内容查看。'}</p></article>}</DiscussionFallback>
     : null
   const videoLayout = Boolean(video || item?.kind === 'video')
   const audioLayout = item?.kind === 'audio'

@@ -75,6 +75,7 @@ func wireFeatures(dataDir string, configuration config.Config, option Options, r
 	recommendations := &recommender{
 		platforms:     p,
 		subscriptions: sources.Gallery,
+		cache:         newRecommendationCache(),
 		queue: discovery.NewRecommendationQueue(store, func(source string) discovery.QueueScope {
 			return discovery.QueueScope{Platform: source, Account: discovery.PersonalAccount}
 		}),

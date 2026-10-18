@@ -24,7 +24,8 @@ const (
 	platformFetchTimeout = 20 * time.Second
 	platformFetchIdle    = 5 * time.Minute
 	douyinCapturePoll    = 200 * time.Millisecond
-	douyinCaptureReads   = 6
+	douyinCaptureReads   = 75
+	douyinDOMWait        = 15 * time.Second
 )
 
 type platformPageBridge struct {
@@ -184,8 +185,11 @@ const douyinDomReadScript = `(function(){
   const findText = (node, names) => { for (const name of names) { const found = node.querySelector(name); if (text(found)) return text(found); } return ''; };
   const durationOf = value => { const match = String(value || '').match(/(?:^|\s)([0-9]{1,2}):([0-5][0-9])(?:\s|$)/); return match ? Number(match[1]) * 60 + Number(match[2]) : 0; };
   const countOf = value => { const match = String(value || '').replace(/,/g, '').match(/([0-9]+(?:\.[0-9]+)?)\s*([万千wkKmM])?/i); if (!match) return 0; const number = Number(match[1]); const unit = String(match[2] || '').toLowerCase(); const multiplier = unit === '万' || unit === 'w' ? 10000 : unit === '千' || unit === 'k' ? 1000 : unit === 'm' ? 1000000 : 1; return Math.round(number * multiplier); };
+  const selectors = ['a[href*="/video/"]','[data-e2e*="video"]','[class*="video-card"]','[class*="videoCard"]','[class*="feed-card"]'];
+  const candidateSelectorHits = {}; for (const selector of selectors) { try { candidateSelectorHits[selector] = document.querySelectorAll(selector).length; } catch (_) { candidateSelectorHits[selector] = 0; } }
+  const links = document.querySelectorAll('a[href*="/video/"]');
   const cards = []; const seen = new Set();
-  for (const link of document.querySelectorAll('a[href*="/video/"]')) {
+  for (const link of links) {
     const url = absolute(link.getAttribute('href') || link.href); const id = idFrom(url); if (!id || seen.has(id)) continue;
     let node = link; for (let i = 0; i < 6 && node.parentElement; i++) { node = node.parentElement; if (node.querySelectorAll('a[href*="/video/"]').length > 1 || node.querySelector('img, video, [data-e2e*="cover"], [class*="cover"], [style*="background-image"]')) break; }
     const rawText = text(node); const title = text(link) || findText(node, ['h1','h2','h3','[class*="title"]','[class*="desc"]']) || rawText.slice(0, 200);
@@ -195,7 +199,7 @@ const douyinDomReadScript = `(function(){
     cards.push({id:id, url:url.split('?')[0], thumbnailURL:imageFrom(node), title:title, author:author, likeCount:countOf(likeText), duration:duration}); seen.add(id);
   }
   const resources = performance.getEntriesByType('resource').filter(entry => /\/aweme\//i.test(entry.name)).map(entry => { try { return {path:new URL(entry.name).pathname, initiatorType:String(entry.initiatorType || '')}; } catch (_) { return null; } }).filter(Boolean);
-  return {pageUrl:location.href, title:document.title || '', ready:document.readyState, cards:cards, responses:(window.__tangentryDouyinFeed || []).splice(0, 32), resources:resources, fetchHookInstalled:window.fetch === window.__tangentryDouyinFetchWrapper, xhrHookInstalled:XMLHttpRequest.prototype.send === window.__tangentryDouyinXHRSend};
+  return {pageUrl:location.href, title:document.title || '', ready:document.readyState, cards:cards, responses:(window.__tangentryDouyinFeed || []).splice(0, 32), resources:resources, fetchHookInstalled:window.fetch === window.__tangentryDouyinFetchWrapper, xhrHookInstalled:XMLHttpRequest.prototype.send === window.__tangentryDouyinXHRSend, domDiagnostics:{url:location.href,videoLinkCount:links.length,candidateSelectorHits:candidateSelectorHits,cardsRead:cards.length}};
 })();`
 
 const searchDomReadScript = `(function(){
@@ -279,7 +283,7 @@ func (b *platformPageBridge) Fetch(ctx context.Context, platform, path string, r
 	if responseURL == "" {
 		responseURL = session.window.Page().URL()
 	}
-	return app.PlatformPageResponse{Status: result.Status, Body: result.Body, Restricted: isCloudflarePage(result.Status, result.Body), URL: responseURL, ContentType: result.ContentType}, nil
+	return app.PlatformPageResponse{Status: result.Status, Body: result.Body, Restricted: isCloudflarePage(result.Status, result.Body, result.ContentType), URL: responseURL, ContentType: result.ContentType}, nil
 }
 
 func (b *platformPageBridge) CaptureFeed(ctx context.Context, platform string, pages int) (platformfetch.FeedCaptureResponse, error) {
@@ -314,18 +318,19 @@ func (b *platformPageBridge) CaptureFeed(ctx context.Context, platform string, p
 		return platformfetch.FeedCaptureResponse{}, err
 	}
 	result := douyinCaptureResult{}
+	started := time.Now()
 	var lastErr error
+	deadline := time.NewTimer(douyinDOMWait)
+	defer deadline.Stop()
 	for i := 0; i < pages; i++ {
-		scrollScript := douyinDomScrollScript
-		if i == 0 {
-			scrollScript = douyinDomReadScript
+		if i > 0 {
+			if scroll, err := evalPageWithRetry(ctx, session.window.Page(), douyinDomScrollScript); err == nil {
+				_ = decodeDouyinCaptureResult(scroll, &result)
+			} else {
+				lastErr = err
+			}
 		}
-		if scroll, err := evalPageWithRetry(ctx, session.window.Page(), scrollScript); err == nil {
-			_ = decodeDouyinCaptureResult(scroll, &result)
-		} else {
-			lastErr = err
-		}
-		for read := 0; read < douyinCaptureReads; read++ {
+		for {
 			if err := waitCapturePoll(ctx); err != nil {
 				return platformfetch.FeedCaptureResponse{}, err
 			}
@@ -336,9 +341,22 @@ func (b *platformPageBridge) CaptureFeed(ctx context.Context, platform string, p
 			} else {
 				lastErr = err
 			}
-			if len(result.Responses) > beforeResponses || len(result.Cards) > beforeCards {
+			if len(result.Responses) > beforeResponses || len(result.Cards) > beforeCards || len(result.Cards) >= 20 {
 				break
 			}
+			select {
+			case <-ctx.Done():
+				return platformfetch.FeedCaptureResponse{}, ctx.Err()
+			case <-deadline.C:
+				break
+			default:
+			}
+			if time.Since(started) >= douyinDOMWait {
+				break
+			}
+		}
+		if time.Since(started) >= douyinDOMWait {
+			break
 		}
 	}
 	for attempts := 0; attempts < 2; attempts++ {
@@ -377,7 +395,7 @@ func (b *platformPageBridge) CaptureFeed(ctx context.Context, platform string, p
 		if len(response.Body) > platformFetchMaxBody {
 			continue
 		}
-		responses = append(responses, platformfetch.Response{Status: response.Status, Body: response.Body, URL: response.URL, ContentType: response.ContentType, Restricted: isCloudflarePage(response.Status, response.Body)})
+		responses = append(responses, platformfetch.Response{Status: response.Status, Body: response.Body, URL: response.URL, ContentType: response.ContentType, Restricted: isCloudflarePage(response.Status, response.Body, response.ContentType)})
 	}
 	if session.closeAt == nil {
 		session.closeAt = time.AfterFunc(platformFetchIdle, func() {
@@ -396,7 +414,8 @@ func (b *platformPageBridge) CaptureFeed(ctx context.Context, platform string, p
 	if blocked, ok := session.blockedNavigation.Load().(string); ok && blocked != "" {
 		pageURL = blocked
 	}
-	return platformfetch.FeedCaptureResponse{Responses: responses, DOMCards: result.Cards, PageURL: pageURL, Title: result.Title, Ready: result.Ready, ResourcePaths: result.ResourcePaths, InitiatorTypes: result.InitiatorTypes, FetchHookInstalled: result.FetchHookInstalled, XHRHookInstalled: result.XHRHookInstalled}, nil
+	result.DOM.WaitMilliseconds = int(time.Since(started) / time.Millisecond)
+	return platformfetch.FeedCaptureResponse{Responses: responses, DOMCards: result.Cards, PageURL: pageURL, Title: result.Title, Ready: result.Ready, ResourcePaths: result.ResourcePaths, InitiatorTypes: result.InitiatorTypes, FetchHookInstalled: result.FetchHookInstalled, XHRHookInstalled: result.XHRHookInstalled, DOM: result.DOM}, nil
 }
 
 func (b *platformPageBridge) CaptureSearch(ctx context.Context, platform, query, cursor string) (platformfetch.SearchCaptureResponse, error) {
@@ -488,8 +507,9 @@ type douyinCaptureResult struct {
 	} `json:"resources"`
 	ResourcePaths      []string
 	InitiatorTypes     []string
-	FetchHookInstalled bool `json:"fetchHookInstalled"`
-	XHRHookInstalled   bool `json:"xhrHookInstalled"`
+	FetchHookInstalled bool                         `json:"fetchHookInstalled"`
+	XHRHookInstalled   bool                         `json:"xhrHookInstalled"`
+	DOM                platformfetch.DOMDiagnostics `json:"domDiagnostics"`
 }
 
 func decodeDouyinCaptureResult(raw any, result *douyinCaptureResult) error {
@@ -520,6 +540,10 @@ func decodeDouyinCaptureResult(raw any, result *douyinCaptureResult) error {
 		result.Responses = result.Responses[len(result.Responses)-128:]
 	}
 	result.Cards = mergeDOMCards(result.Cards, current.Cards)
+	if current.DOM.URL != "" {
+		result.DOM = current.DOM
+		result.DOM.CardsRead = len(result.Cards)
+	}
 	for _, resource := range current.Resources {
 		if len(result.ResourcePaths) >= 256 {
 			break
@@ -855,10 +879,22 @@ func platformFetchScript(path string, request app.PlatformPageRequest) (string, 
 	return fmt.Sprintf(`const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), %d); try { return await fetch(location.origin + %s, {method:%s, headers:%s, credentials:"include"%s, signal:controller.signal}).then(async response => { const max=%d; const meta={status:response.status, url:response.url || "", contentType:response.headers.get("content-type") || ""}; if (!response.body) { const body=await response.text(); return {...meta, body:body.length>max?"":body, tooLarge:body.length>max}; } const reader=response.body.getReader(); const decoder=new TextDecoder(); let body="", bytes=0; try { for (;;) { const part=await reader.read(); if (part.done) break; bytes+=part.value.byteLength; if (bytes>max) { await reader.cancel(); return {...meta, body:"", tooLarge:true}; } body+=decoder.decode(part.value,{stream:true}); } body+=decoder.decode(); return {...meta, body:body, tooLarge:false}; } finally { reader.releaseLock(); } }); } finally { clearTimeout(timer); }`, platformFetchTimeout.Milliseconds(), pathJSON, method, headers, bodyOption, platformFetchMaxBody), nil
 }
 
-func isCloudflarePage(status int, body string) bool {
-	if status == 403 {
-		return true
+func isCloudflarePage(status int, body string, contentTypes ...string) bool {
+	contentType := ""
+	if len(contentTypes) > 0 {
+		contentType = strings.ToLower(strings.TrimSpace(contentTypes[0]))
+	}
+	// A valid JSON response is never a Cloudflare interstitial, even if a
+	// harmless field happens to contain the word "cloudflare".
+	if json.Valid([]byte(body)) || strings.Contains(contentType, "json") {
+		return false
+	}
+	if contentType != "" && !strings.Contains(contentType, "text/html") {
+		return false
 	}
 	value := strings.ToLower(body)
+	if !strings.Contains(contentType, "text/html") {
+		return false
+	}
 	return strings.Contains(value, "just a moment") || strings.Contains(value, "challenge-platform") || strings.Contains(value, "cf-chl-") || strings.Contains(value, "cloudflare")
 }

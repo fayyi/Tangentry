@@ -110,7 +110,7 @@ func pageResponseMessage(path string, response platformfetch.Response, reason st
 	if sample := sanitizeDiagnosticSample(response.Body); sample != "" {
 		parts = append(parts, "响应片段="+sample)
 	}
-	if response.Restricted || response.Status == http.StatusForbidden || looksLikeCloudflare([]byte(response.Body)) {
+	if response.Restricted || looksLikeCloudflareResponse(response.Status, response.ContentType, []byte(response.Body)) {
 		parts = append(parts, "疑似 Cloudflare 验证页")
 	}
 	return strings.Join(parts, "；") + "。"
@@ -169,7 +169,7 @@ func (c *Client) read(ctx context.Context, path string) ([]byte, int, error) {
 		}})
 		if err == nil {
 			raw := []byte(response.Body)
-			if response.Restricted || response.Status == http.StatusForbidden || response.Status == http.StatusUnauthorized || response.Status == http.StatusTooManyRequests || looksLikeCloudflare(raw) {
+			if response.Restricted || response.Status == http.StatusUnauthorized || response.Status == http.StatusTooManyRequests || response.Status == http.StatusForbidden && response.ContentType == "" || response.Status == http.StatusForbidden && !json.Valid(raw) && !strings.Contains(strings.ToLower(response.ContentType), "json") || looksLikeCloudflareResponse(response.Status, response.ContentType, raw) {
 				return nil, response.Status, &discovery.PlatformError{Message: pageResponseMessage(path, response, "需要在应用内完成 Linux.do 验证"), Restricted: true}
 			}
 			if response.Status != http.StatusOK {
@@ -255,7 +255,10 @@ func (c *Client) read(ctx context.Context, path string) ([]byte, int, error) {
 	case 401:
 		return nil, res.StatusCode, &discovery.PlatformError{Message: pageResponseMessage(path, response, "Linux.do 登录已失效，请在应用内完成验证后重试"), Restricted: true}
 	case 403:
-		return nil, res.StatusCode, &discovery.PlatformError{Message: pageResponseMessage(path, response, "需要在应用内完成 Linux.do 验证；若使用 Cookie，请确认包含 cf_clearance"), Restricted: true}
+		if response.ContentType == "" || !json.Valid(raw) && !strings.Contains(strings.ToLower(response.ContentType), "json") {
+			return nil, res.StatusCode, &discovery.PlatformError{Message: pageResponseMessage(path, response, "需要在应用内完成 Linux.do 验证；若使用 Cookie，请确认包含 cf_clearance"), Restricted: true}
+		}
+		return nil, res.StatusCode, &discovery.PlatformError{Message: pageResponseMessage(path, response, "HTTP 请求未成功")}
 	case 429:
 		return nil, res.StatusCode, &discovery.PlatformError{Message: pageResponseMessage(path, response, "Linux.do 暂时限制请求，请稍后在应用内重试"), Restricted: true}
 	}
@@ -266,7 +269,7 @@ func (c *Client) read(ctx context.Context, path string) ([]byte, int, error) {
 		return nil, res.StatusCode, &discovery.PlatformError{Message: pageResponseMessage(path, response, "HTTP 请求未成功")}
 	}
 	if !json.Valid(raw) {
-		if looksLikeCloudflare(raw) {
+		if looksLikeCloudflareResponse(response.Status, response.ContentType, raw) {
 			return nil, res.StatusCode, &discovery.PlatformError{Message: pageResponseMessage(path, response, "需要在应用内完成 Linux.do 验证"), Restricted: true}
 		}
 		return nil, res.StatusCode, invalidJSONFailure(path, response)
@@ -279,8 +282,18 @@ func (c *Client) read(ctx context.Context, path string) ([]byte, int, error) {
 	return raw, res.StatusCode, nil
 }
 
-func looksLikeCloudflare(raw []byte) bool {
+func looksLikeCloudflareResponse(status int, contentType string, raw []byte) bool {
+	if json.Valid(raw) || strings.Contains(strings.ToLower(contentType), "json") {
+		return false
+	}
+	contentType = strings.ToLower(strings.TrimSpace(contentType))
+	if contentType != "" && !strings.Contains(contentType, "text/html") {
+		return false
+	}
 	value := strings.ToLower(string(raw))
+	if contentType == "" && status != http.StatusForbidden && strings.TrimSpace(value) == "" {
+		return false
+	}
 	return strings.Contains(value, "cf-chl-") || strings.Contains(value, "challenge-platform") || strings.Contains(value, "just a moment") || strings.Contains(value, "cloudflare")
 }
 
