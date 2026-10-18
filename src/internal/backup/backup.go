@@ -9,6 +9,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -18,22 +19,30 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/argon2"
 )
 
 const (
-	FormatVersion = 1
-	Magic         = "TGB1"
-	ChunkSize     = 1024 * 1024
-	SaltSize      = 16
-	NonceSize     = 12
-	KDFTime       = 3
-	KDFMemory     = 64 * 1024
-	KDFThreads    = 2
-	KDFKeyLen     = 32
+	FormatVersion       = 1
+	Magic               = "TGB1"
+	ChunkSize           = 1024 * 1024
+	SaltSize            = 16
+	NonceSize           = 12
+	KDFTime             = 3
+	KDFMemory           = 64 * 1024
+	KDFThreads          = 2
+	KDFKeyLen           = 32
+	SchemaVersion       = 69
+	MaxArchiveSize      = 1 << 30
+	MaxEntries          = 10000
+	MaxFileSize         = 256 << 20
+	MaxCompressionRatio = 1000
+	headerSize          = 46
 )
 
 var (
@@ -125,6 +134,27 @@ type Snapshot struct {
 	Status    string    `json:"status"`
 }
 
+type Validation struct {
+	SnapshotID string   `json:"snapshotId"`
+	Manifest   Manifest `json:"manifest"`
+	Size       int64    `json:"size"`
+}
+
+type RestoreResult struct {
+	PlanID             string `json:"planId"`
+	SnapshotID         string `json:"snapshotId"`
+	Destination        string `json:"destination"`
+	PreRestoreSnapshot string `json:"preRestoreSnapshot"`
+	Status             string `json:"status"`
+}
+
+type restorePlan struct {
+	RestoreResult
+	TargetID    string
+	ArchivePath string
+	StagePath   string
+}
+
 type Repository interface {
 	ListTargets(context.Context) ([]Target, error)
 	GetTarget(context.Context, string) (Target, error)
@@ -141,15 +171,22 @@ type Repository interface {
 type StoreFactory func(Target) (ObjectStore, error)
 
 type Service struct {
-	repo    Repository
-	source  Source
-	stores  StoreFactory
-	workDir string
-	version string
+	repo          Repository
+	source        Source
+	stores        StoreFactory
+	workDir       string
+	version       string
+	mu            sync.Mutex
+	plans         map[string]restorePlan
+	switchRestore func(context.Context, string) error
+}
+
+func (s *Service) SetRestoreSwitcher(switcher func(context.Context, string) error) {
+	s.switchRestore = switcher
 }
 
 func NewService(repo Repository, source Source, stores StoreFactory, workDir, version string) *Service {
-	return &Service{repo: repo, source: source, stores: stores, workDir: workDir, version: version}
+	return &Service{repo: repo, source: source, stores: stores, workDir: workDir, version: version, plans: make(map[string]restorePlan)}
 }
 
 func (s *Service) Targets(ctx context.Context) ([]Target, error) { return s.repo.ListTargets(ctx) }
@@ -203,7 +240,7 @@ func (s *Service) create(ctx context.Context, task Task, password string) (Snaps
 	if _, err = rand.Read(salt); err != nil {
 		return Snapshot{}, err
 	}
-	manifest := Manifest{FormatVersion: FormatVersion, TangentryVersion: s.version, SnapshotID: id, CreatedAt: time.Now().UTC(), TaskID: task.ID, IncludeDownloads: task.IncludeDownloads, Files: files, KDF: KDFParams{Name: "Argon2id", Version: 1, Salt: hex.EncodeToString(salt), Time: KDFTime, Memory: KDFMemory, Threads: KDFThreads, KeyLen: KDFKeyLen}, AEAD: AEADParams{Name: "AES-256-GCM", Version: 1, ChunkSize: ChunkSize, NonceSize: NonceSize}}
+	manifest := Manifest{FormatVersion: FormatVersion, TangentryVersion: s.version, SchemaVersion: SchemaVersion, SnapshotID: id, CreatedAt: time.Now().UTC(), TaskID: task.ID, IncludeDownloads: task.IncludeDownloads, Files: files, KDF: KDFParams{Name: "Argon2id", Version: 1, Salt: hex.EncodeToString(salt), Time: KDFTime, Memory: KDFMemory, Threads: KDFThreads, KeyLen: KDFKeyLen}, AEAD: AEADParams{Name: "AES-256-GCM", Version: 1, ChunkSize: ChunkSize, NonceSize: NonceSize}}
 	archive, err := archiveFiles(stage, &manifest)
 	if err != nil {
 		return Snapshot{}, err
@@ -236,63 +273,146 @@ func (s *Service) create(ctx context.Context, task Task, password string) (Snaps
 	return snap, nil
 }
 
-func (s *Service) Validate(ctx context.Context, targetID, snapshotID, password string) error {
+func (s *Service) Validate(ctx context.Context, targetID, snapshotID, password string) (Validation, error) {
 	target, err := s.repo.GetTarget(ctx, targetID)
 	if err != nil {
-		return err
+		return Validation{}, err
 	}
 	store, err := s.stores(target)
 	if err != nil {
-		return err
+		return Validation{}, err
 	}
 	r, err := store.Read(ctx, "tangentry/v1/snapshots/"+snapshotID+".tgb")
 	if err != nil {
-		return err
+		return Validation{}, err
 	}
 	defer r.Close()
 	b, err := io.ReadAll(r)
 	if err != nil {
-		return err
-	}
-	_, err = Decrypt(b, password)
-	return err
-}
-
-func (s *Service) Restore(ctx context.Context, targetID, snapshotID, password, destination string) error {
-	target, err := s.repo.GetTarget(ctx, targetID)
-	if err != nil {
-		return err
-	}
-	store, err := s.stores(target)
-	if err != nil {
-		return err
-	}
-	r, err := store.Read(ctx, "tangentry/v1/snapshots/"+snapshotID+".tgb")
-	if err != nil {
-		return err
-	}
-	defer r.Close()
-	b, err := io.ReadAll(r)
-	if err != nil {
-		return err
+		return Validation{}, err
 	}
 	plain, err := Decrypt(b, password)
 	if err != nil {
-		return err
+		return Validation{}, err
 	}
-	// Preserve the current local state before writing restored files. The source
-	// adapter chooses the consistent snapshot mechanism (SQLite VACUUM INTO).
-	if s.source != nil {
-		preflight := filepath.Join(s.workDir, "restore", randomID())
-		if err := ensureDir(preflight); err != nil {
-			return err
-		}
-		defer removeAll(preflight)
-		if _, err := s.source.Snapshot(ctx, preflight, false); err != nil {
-			return fmt.Errorf("create pre-restore snapshot: %w", err)
-		}
+	manifest, err := validateArchive(plain, snapshotID)
+	if err != nil {
+		return Validation{}, err
 	}
-	return extractArchive(plain, destination)
+	return Validation{SnapshotID: snapshotID, Manifest: manifest, Size: int64(len(b))}, nil
+}
+
+func (s *Service) Restore(ctx context.Context, targetID, snapshotID, password, destination string) (RestoreResult, error) {
+	if !filepath.IsAbs(destination) {
+		return RestoreResult{}, errors.New("restore destination must be an absolute directory")
+	}
+	target, err := s.repo.GetTarget(ctx, targetID)
+	if err != nil {
+		return RestoreResult{}, err
+	}
+	store, err := s.stores(target)
+	if err != nil {
+		return RestoreResult{}, err
+	}
+	r, err := store.Read(ctx, "tangentry/v1/snapshots/"+snapshotID+".tgb")
+	if err != nil {
+		return RestoreResult{}, err
+	}
+	defer r.Close()
+	b, err := io.ReadAll(r)
+	if err != nil {
+		return RestoreResult{}, err
+	}
+	plain, err := Decrypt(b, password)
+	if err != nil {
+		return RestoreResult{}, err
+	}
+	if _, err := validateArchive(plain, snapshotID); err != nil {
+		return RestoreResult{}, err
+	}
+	if s.source == nil {
+		return RestoreResult{}, errors.New("restore source unavailable")
+	}
+	if _, statErr := os.Stat(destination); statErr == nil {
+		return RestoreResult{}, errors.New("restore destination must not already exist")
+	} else if !os.IsNotExist(statErr) {
+		return RestoreResult{}, statErr
+	}
+	preflight := filepath.Join(s.workDir, "restore", randomID())
+	if err := ensureDir(preflight); err != nil {
+		return RestoreResult{}, err
+	}
+	if _, err := s.source.Snapshot(ctx, preflight, false); err != nil {
+		return RestoreResult{}, fmt.Errorf("create pre-restore snapshot: %w", err)
+	}
+	archivePath := filepath.Join(s.workDir, "restore", "plan-"+randomID()+".zip")
+	if err := os.WriteFile(archivePath, plain, 0600); err != nil {
+		return RestoreResult{}, err
+	}
+	stagePath := filepath.Join(s.workDir, "restore", "stage-"+randomID())
+	if err := extractArchive(plain, stagePath); err != nil {
+		removeAll(archivePath)
+		removeAll(stagePath)
+		return RestoreResult{}, fmt.Errorf("stage restored data: %w", err)
+	}
+	result := RestoreResult{PlanID: randomID(), SnapshotID: snapshotID, Destination: destination, PreRestoreSnapshot: preflight, Status: "pending_confirmation"}
+	s.mu.Lock()
+	s.plans[result.PlanID] = restorePlan{RestoreResult: result, TargetID: targetID, ArchivePath: archivePath, StagePath: stagePath}
+	s.mu.Unlock()
+	return result, nil
+}
+
+func (s *Service) ConfirmRestore(ctx context.Context, planID string) (RestoreResult, error) {
+	if err := ctx.Err(); err != nil {
+		return RestoreResult{}, err
+	}
+	s.mu.Lock()
+	plan, ok := s.plans[planID]
+	s.mu.Unlock()
+	if !ok {
+		return RestoreResult{}, errors.New("restore plan not found")
+	}
+	data, err := os.ReadFile(plan.ArchivePath)
+	if err != nil {
+		return RestoreResult{}, err
+	}
+	if _, err = validateArchive(data, plan.SnapshotID); err != nil {
+		return RestoreResult{}, err
+	}
+	if info, statErr := os.Lstat(plan.Destination); statErr == nil {
+		if info.Mode()&os.ModeSymlink != 0 || info.IsDir() || info.Mode().IsRegular() {
+			return RestoreResult{}, errors.New("restore destination must not already exist")
+		}
+		return RestoreResult{}, ErrInvalidPackage
+	} else if !os.IsNotExist(statErr) {
+		return RestoreResult{}, statErr
+	}
+	// Rebuild the staged directory after the second validation, so any
+	// tampering with the preflight staging tree is discarded before activation.
+	removeAll(plan.StagePath)
+	if err = extractArchive(data, plan.StagePath); err != nil {
+		removeAll(plan.StagePath)
+		return RestoreResult{}, err
+	}
+	if err = os.Rename(plan.StagePath, plan.Destination); err != nil {
+		removeAll(plan.StagePath)
+		return RestoreResult{}, err
+	}
+	if s.switchRestore != nil {
+		if err := s.switchRestore(ctx, plan.Destination); err != nil {
+			return RestoreResult{}, err
+		}
+		plan.Status = "switched"
+	} else {
+		plan.Status = "restored_new_location"
+	}
+	// Keep the encrypted plan until switching succeeds so a transient runtime
+	// failure can be retried without asking for the password again.
+	removeAll(plan.ArchivePath)
+	s.mu.Lock()
+	s.plans[planID] = plan
+	s.mu.Unlock()
+	return plan.RestoreResult, nil
 }
 
 func Encrypt(archive []byte, password string, manifest *Manifest) ([]byte, error) {
@@ -317,13 +437,22 @@ func Encrypt(archive []byte, password string, manifest *Manifest) ([]byte, error
 	out.WriteString(Magic)
 	out.WriteByte(byte(FormatVersion))
 	out.Write(salt)
+	binary.Write(&out, binary.BigEndian, uint32(KDFTime))
+	binary.Write(&out, binary.BigEndian, uint32(KDFMemory))
+	out.WriteByte(byte(KDFThreads))
+	binary.Write(&out, binary.BigEndian, uint32(KDFKeyLen))
 	binary.Write(&out, binary.BigEndian, uint32(ChunkSize))
 	binary.Write(&out, binary.BigEndian, uint64(len(archive)))
-	for offset, index := 0, uint64(0); offset < len(archive); offset, index = offset+ChunkSize, index+1 {
+	header := append([]byte(nil), out.Bytes()...)
+	chunks := (len(archive) + ChunkSize - 1) / ChunkSize
+	if chunks == 0 {
+		chunks = 1
+	}
+	for offset, index := 0, uint64(0); index < uint64(chunks); offset, index = offset+ChunkSize, index+1 {
 		end := min(offset+ChunkSize, len(archive))
 		nonce := make([]byte, NonceSize)
 		binary.BigEndian.PutUint64(nonce[4:], index)
-		sealed := aead.Seal(nil, nonce, archive[offset:end], nil)
+		sealed := aead.Seal(nil, nonce, archive[offset:end], header)
 		binary.Write(&out, binary.BigEndian, uint32(len(sealed)))
 		out.Write(sealed)
 	}
@@ -331,12 +460,22 @@ func Encrypt(archive []byte, password string, manifest *Manifest) ([]byte, error
 }
 
 func Decrypt(data []byte, password string) ([]byte, error) {
-	if len(data) < 4+1+SaltSize+4+8 || string(data[:4]) != Magic || int(data[4]) != FormatVersion {
+	if len(data) < headerSize || string(data[:4]) != Magic || int(data[4]) != FormatVersion {
 		return nil, ErrInvalidPackage
 	}
 	salt := data[5 : 5+SaltSize]
-	chunk := binary.BigEndian.Uint32(data[21:25])
-	original := binary.BigEndian.Uint64(data[25:33])
+	timeParam := binary.BigEndian.Uint32(data[21:25])
+	memoryParam := binary.BigEndian.Uint32(data[25:29])
+	threadsParam := data[29]
+	keyLenParam := binary.BigEndian.Uint32(data[30:34])
+	chunk := binary.BigEndian.Uint32(data[34:38])
+	original := binary.BigEndian.Uint64(data[38:46])
+	if original > MaxArchiveSize {
+		return nil, ErrInvalidPackage
+	}
+	if timeParam != KDFTime || memoryParam != KDFMemory || threadsParam != KDFThreads || keyLenParam != KDFKeyLen {
+		return nil, ErrInvalidPackage
+	}
 	if chunk == 0 || chunk > 64*1024*1024 {
 		return nil, ErrInvalidPackage
 	}
@@ -350,9 +489,14 @@ func Decrypt(data []byte, password string) ([]byte, error) {
 		return nil, err
 	}
 	var out bytes.Buffer
-	pos := 33
+	header := append([]byte(nil), data[:headerSize]...)
+	pos := headerSize
 	var index uint64
-	for out.Len() < int(original) {
+	expectedChunks := (original + uint64(chunk) - 1) / uint64(chunk)
+	if expectedChunks == 0 {
+		expectedChunks = 1
+	}
+	for index < expectedChunks {
 		if pos+4 > len(data) {
 			return nil, ErrInvalidPackage
 		}
@@ -363,11 +507,14 @@ func Decrypt(data []byte, password string) ([]byte, error) {
 		}
 		nonce := make([]byte, NonceSize)
 		binary.BigEndian.PutUint64(nonce[4:], index)
-		plain, e := aead.Open(nil, nonce, data[pos:pos+size], nil)
+		plain, e := aead.Open(nil, nonce, data[pos:pos+size], header)
 		if e != nil {
 			return nil, ErrBadPassword
 		}
 		out.Write(plain)
+		if len(plain) > int(chunk) || out.Len() > int(original) {
+			return nil, ErrInvalidPackage
+		}
 		pos += size
 		index++
 	}
@@ -397,6 +544,10 @@ func archiveFiles(stage string, manifest *Manifest) ([]byte, error) {
 			return nil, err
 		}
 		src := filepath.Join(stage, filepath.FromSlash(clean))
+		info, err := os.Lstat(src)
+		if err != nil || !info.Mode().IsRegular() || hasMultipleLinks(info) {
+			return nil, ErrInvalidPackage
+		}
 		inFile, err := open(src)
 		if err != nil {
 			return nil, err
@@ -421,40 +572,310 @@ func archiveFiles(stage string, manifest *Manifest) ([]byte, error) {
 }
 
 func extractArchive(data []byte, destination string) error {
-	if err := ensureDir(destination); err != nil {
-		return err
+	if len(data) > MaxArchiveSize {
+		return fmt.Errorf("archive exceeds limit: %w", ErrInvalidPackage)
+	}
+	if err := safeDestinationDir(destination); err != nil {
+		return fmt.Errorf("restore destination: %w", err)
 	}
 	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		return err
 	}
+	if len(zr.File) > MaxEntries {
+		return fmt.Errorf("too many entries: %w", ErrInvalidPackage)
+	}
+	var total uint64
 	for _, f := range zr.File {
+		if f.FileInfo().Mode()&os.ModeSymlink != 0 || f.FileInfo().Mode()&os.ModeNamedPipe != 0 || f.FileInfo().Mode()&os.ModeDevice != 0 {
+			return fmt.Errorf("unsafe entry %q: %w", f.Name, ErrInvalidPackage)
+		}
+		if f.UncompressedSize64 > MaxFileSize || f.UncompressedSize64 > uint64(MaxCompressionRatio)*max64(f.CompressedSize64, 1) {
+			return fmt.Errorf("entry limits %q: %w", f.Name, ErrInvalidPackage)
+		}
+		total += f.UncompressedSize64
+		if total > MaxArchiveSize {
+			return fmt.Errorf("total size: %w", ErrInvalidPackage)
+		}
 		clean, e := cleanRelative(f.Name)
 		if e != nil {
-			return e
+			return fmt.Errorf("restore path %q: %w", f.Name, e)
 		}
 		if clean == "manifest.json" {
 			continue
 		}
 		target := filepath.Join(destination, filepath.FromSlash(clean))
 		if !within(destination, target) {
-			return ErrInvalidPackage
+			return fmt.Errorf("target outside destination: %w", ErrInvalidPackage)
 		}
-		if err = ensureDir(filepath.Dir(target)); err != nil {
-			return err
+		if err = safeRestoreParents(destination, filepath.Dir(target)); err != nil {
+			return fmt.Errorf("restore parent %q: %w", filepath.Dir(target), err)
 		}
 		r, e := f.Open()
 		if e != nil {
 			return e
 		}
+		if existing, statErr := os.Lstat(target); statErr == nil && existing.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("target symlink: %w", ErrInvalidPackage)
+		}
 		out, e := create(target)
 		if e == nil {
-			_, e = io.Copy(out, io.LimitReader(r, 256<<20))
+			written, copyErr := io.Copy(out, io.LimitReader(r, MaxFileSize+1))
+			if copyErr != nil {
+				e = copyErr
+			} else if written > MaxFileSize || written != int64(f.UncompressedSize64) {
+				e = ErrInvalidPackage
+			}
 			out.Close()
 		}
 		r.Close()
 		if e != nil {
-			return e
+			if errors.Is(e, os.ErrExist) {
+				return fmt.Errorf("restore target already exists: %w", e)
+			}
+			return fmt.Errorf("write restore target %q: %w", target, e)
+		}
+	}
+	return nil
+}
+
+func validateArchive(data []byte, snapshotID string) (Manifest, error) {
+	if len(data) > MaxArchiveSize {
+		return Manifest{}, ErrInvalidPackage
+	}
+	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return Manifest{}, err
+	}
+	if len(zr.File) > MaxEntries {
+		return Manifest{}, ErrInvalidPackage
+	}
+	var manifest Manifest
+	found := false
+	files := map[string]bool{}
+	var total uint64
+	for _, f := range zr.File {
+		if f.FileInfo().Mode()&os.ModeSymlink != 0 || f.FileInfo().Mode()&os.ModeNamedPipe != 0 || f.FileInfo().Mode()&os.ModeDevice != 0 {
+			return Manifest{}, ErrInvalidPackage
+		}
+		if f.UncompressedSize64 > MaxFileSize || f.UncompressedSize64 > uint64(MaxCompressionRatio)*max64(f.CompressedSize64, 1) {
+			return Manifest{}, ErrInvalidPackage
+		}
+		total += f.UncompressedSize64
+		if total > MaxArchiveSize {
+			return Manifest{}, ErrInvalidPackage
+		}
+		if f.Name != "manifest.json" {
+			continue
+		}
+		if found || f.UncompressedSize64 > 1<<20 {
+			return Manifest{}, ErrInvalidPackage
+		}
+		r, e := f.Open()
+		if e != nil {
+			return Manifest{}, e
+		}
+		e = json.NewDecoder(io.LimitReader(r, 1<<20)).Decode(&manifest)
+		r.Close()
+		if e != nil {
+			return Manifest{}, ErrInvalidPackage
+		}
+		found = true
+	}
+	if !found || manifest.FormatVersion != FormatVersion || manifest.SnapshotID != snapshotID || manifest.SchemaVersion <= 0 || manifest.SchemaVersion > SchemaVersion {
+		return Manifest{}, ErrUnknownVersion
+	}
+	if manifest.KDF.Name != "Argon2id" || manifest.KDF.Version != 1 || manifest.KDF.Time != KDFTime || manifest.KDF.Memory != KDFMemory || manifest.KDF.Threads != KDFThreads || manifest.KDF.KeyLen != KDFKeyLen || manifest.AEAD.Name != "AES-256-GCM" || manifest.AEAD.Version != 1 || manifest.AEAD.ChunkSize != ChunkSize || manifest.AEAD.NonceSize != NonceSize {
+		return Manifest{}, ErrUnknownVersion
+	}
+	if salt, saltErr := hex.DecodeString(manifest.KDF.Salt); saltErr != nil || len(salt) != SaltSize {
+		return Manifest{}, ErrInvalidPackage
+	}
+	if len(manifest.Files) == 0 || len(manifest.Files)+1 != len(zr.File) {
+		return Manifest{}, ErrInvalidPackage
+	}
+	expected := map[string]bool{"manifest.json": true}
+	for _, f := range manifest.Files {
+		clean, e := cleanRelative(f.Path)
+		if e != nil || clean != f.Path || files[clean] || expected[clean] || f.Size < 0 || f.Size > MaxFileSize || len(f.SHA256) != sha256.Size*2 {
+			return Manifest{}, ErrInvalidPackage
+		}
+		if _, e := hex.DecodeString(f.SHA256); e != nil {
+			return Manifest{}, ErrInvalidPackage
+		}
+		files[clean] = true
+		expected[clean] = true
+		foundFile := false
+		for _, entry := range zr.File {
+			if entry.Name != clean {
+				continue
+			}
+			foundFile = true
+			if entry.FileInfo().Mode()&os.ModeSymlink != 0 || entry.UncompressedSize64 != uint64(f.Size) {
+				return Manifest{}, ErrInvalidPackage
+			}
+			reader, re := entry.Open()
+			if re != nil {
+				return Manifest{}, re
+			}
+			h := sha256.New()
+			n, re := io.Copy(h, io.LimitReader(reader, MaxFileSize+1))
+			reader.Close()
+			if re != nil || n != f.Size || fmt.Sprintf("%x", h.Sum(nil)) != strings.ToLower(f.SHA256) {
+				return Manifest{}, ErrInvalidPackage
+			}
+			break
+		}
+		if !foundFile {
+			return Manifest{}, ErrInvalidPackage
+		}
+	}
+	for _, entry := range zr.File {
+		if !expected[entry.Name] {
+			return Manifest{}, ErrInvalidPackage
+		}
+	}
+	return manifest, nil
+}
+
+func max64(a, b uint64) uint64 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func hasMultipleLinks(info os.FileInfo) bool {
+	sys := info.Sys()
+	if sys == nil {
+		return false
+	}
+	v := reflect.ValueOf(sys)
+	if v.Kind() == reflect.Pointer {
+		if v.IsNil() {
+			return false
+		}
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return false
+	}
+	links := v.FieldByName("Nlink")
+	if !links.IsValid() || !links.CanUint() {
+		return false
+	}
+	return links.Uint() > 1
+}
+
+func safeMkdirParents(dir string) error {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return err
+	}
+	parts := strings.Split(abs, string(filepath.Separator))
+	current := string(filepath.Separator)
+	if len(parts) > 0 && parts[0] == "" {
+		parts = parts[1:]
+	}
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		current = filepath.Join(current, part)
+		info, e := os.Lstat(current)
+		if os.IsNotExist(e) {
+			if e = os.Mkdir(current, 0700); e != nil {
+				return e
+			}
+			continue
+		}
+		if e != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return ErrInvalidPackage
+		}
+	}
+	return nil
+}
+
+// safeDestinationDir permits already-existing OS-level ancestors (for
+// example /var -> /private/var on macOS), but never follows a symlink inside
+// the restore destination itself.
+func safeDestinationDir(destination string) error {
+	abs, err := filepath.Abs(destination)
+	if err != nil {
+		return err
+	}
+	parent := filepath.Dir(abs)
+	if err := safeMkdirParentsAllowSymlink(parent); err != nil {
+		return err
+	}
+	if info, statErr := os.Lstat(abs); statErr == nil {
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return ErrInvalidPackage
+		}
+		return nil
+	} else if !os.IsNotExist(statErr) {
+		return statErr
+	}
+	return os.Mkdir(abs, 0700)
+}
+
+func safeMkdirParentsAllowSymlink(dir string) error {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return err
+	}
+	parts := strings.Split(abs, string(filepath.Separator))
+	current := string(filepath.Separator)
+	if len(parts) > 0 && parts[0] == "" {
+		parts = parts[1:]
+	}
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		current = filepath.Join(current, part)
+		info, e := os.Lstat(current)
+		if os.IsNotExist(e) {
+			if e = os.Mkdir(current, 0700); e != nil {
+				return e
+			}
+			continue
+		}
+		if e != nil || (!info.IsDir() && info.Mode()&os.ModeSymlink == 0) {
+			return ErrInvalidPackage
+		}
+	}
+	return nil
+}
+
+func safeRestoreParents(root, dir string) error {
+	root, _ = filepath.Abs(root)
+	dir, _ = filepath.Abs(dir)
+	if !within(root, dir) {
+		return ErrInvalidPackage
+	}
+	if info, err := os.Lstat(root); err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return ErrInvalidPackage
+	}
+	rel, err := filepath.Rel(root, dir)
+	if err != nil {
+		return err
+	}
+	current := root
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		if part == "" || part == "." {
+			continue
+		}
+		current = filepath.Join(current, part)
+		info, e := os.Lstat(current)
+		if os.IsNotExist(e) {
+			if e = os.Mkdir(current, 0700); e != nil {
+				return e
+			}
+			continue
+		}
+		if e != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return ErrInvalidPackage
 		}
 	}
 	return nil
@@ -483,10 +904,12 @@ var open = func(name string) (io.ReadCloser, error) { return osOpen(name) }
 var create = func(name string) (io.WriteCloser, error) { return osCreate(name) }
 
 // Implementations are kept here to avoid exposing OS helpers in the domain API.
-func osMkdirAll(name string, perm uint32) error    { return os.MkdirAll(name, os.FileMode(perm)) }
-func osRemoveAll(name string) error                { return os.RemoveAll(name) }
-func osOpen(name string) (io.ReadCloser, error)    { return os.Open(name) }
-func osCreate(name string) (io.WriteCloser, error) { return os.Create(name) }
+func osMkdirAll(name string, perm uint32) error { return os.MkdirAll(name, os.FileMode(perm)) }
+func osRemoveAll(name string) error             { return os.RemoveAll(name) }
+func osOpen(name string) (io.ReadCloser, error) { return os.Open(name) }
+func osCreate(name string) (io.WriteCloser, error) {
+	return os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+}
 
 func min(a, b int) int {
 	if a < b {

@@ -87,11 +87,36 @@ func (h *backupHandler) restore(w http.ResponseWriter, r *http.Request) {
 		h.error(w, errors.New("恢复目录不能为空"))
 		return
 	}
-	if err := h.service.Restore(r.Context(), v.TargetID, v.SnapshotID, v.Password, v.Destination); err != nil {
+	result, err := h.service.Restore(r.Context(), v.TargetID, v.SnapshotID, v.Password, v.Destination)
+	if err != nil {
 		h.error(w, err)
 		return
 	}
-	write(w, http.StatusNoContent, nil)
+	write(w, http.StatusOK, result)
+}
+func (h *backupHandler) validate(w http.ResponseWriter, r *http.Request) {
+	var v struct {
+		TargetID   string `json:"targetId"`
+		SnapshotID string `json:"snapshotId"`
+		Password   string `json:"password"`
+	}
+	if !decodeJSON(w, r, &v) {
+		return
+	}
+	result, err := h.service.Validate(r.Context(), v.TargetID, v.SnapshotID, v.Password)
+	if err != nil {
+		h.error(w, err)
+		return
+	}
+	write(w, http.StatusOK, result)
+}
+func (h *backupHandler) confirmRestore(w http.ResponseWriter, r *http.Request) {
+	result, err := h.service.ConfirmRestore(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.error(w, err)
+		return
+	}
+	write(w, http.StatusOK, result)
 }
 func (h *backupHandler) respond(w http.ResponseWriter, v any, err error) {
 	if err != nil {

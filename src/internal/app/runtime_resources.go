@@ -51,6 +51,7 @@ func openRuntimeResources(dataDir string, configuration config.Config, option Op
 		return nil, err
 	}
 	started.add(processing.Close)
+	store.SetBackupDownloadDirectory(processing.Directory())
 	p, err := newPlatforms(dataDir, configuration, toolkit, cookies, option)
 	if err != nil {
 		return nil, err
@@ -60,11 +61,15 @@ func openRuntimeResources(dataDir string, configuration config.Config, option Op
 		return nil, err
 	}
 	records := repositories{xiaohongshu: store, subscription: store}
+	// Keep restore plans and the pre-restore snapshot outside dataDir. The
+	// application may atomically rename dataDir during confirmation; sibling
+	// staging keeps the returned protection path valid for rollback afterwards.
+	backupWorkDir := filepath.Join(filepath.Dir(dataDir), ".tangentry-backup-work")
 	backupService := backup.NewService(store, store, func(target backup.Target) (backup.ObjectStore, error) {
 		if target.Type != "local" {
 			return nil, fmt.Errorf("unsupported backup target type")
 		}
 		return localstorage.New(target.Path)
-	}, filepath.Join(dataDir, "staging"), "dev")
+	}, backupWorkDir, "dev")
 	return &runtimeResources{store: store, cookies: cookies, toolkit: toolkit, platforms: p, documents: documents, downloads: processing, backup: backupService, repositories: records}, nil
 }

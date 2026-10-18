@@ -2,7 +2,7 @@ import { Check, CircleHelp, Download, Folder, FolderOpen, RefreshCw } from 'luci
 import { useEffect, useState } from 'react'
 import { request } from '../../shared/api/client'
 import { useCapabilities } from '../../shared/api/desktop'
-import type { ToolStatus, BackupTarget, BackupTask, BackupSnapshot } from '../../shared/api/types'
+import type { ToolStatus, BackupTarget, BackupTask, BackupSnapshot, BackupRestoreResult, BackupValidation } from '../../shared/api/types'
 import type { useDownloads } from '../downloads/useDownloads'
 
 function toolProgress(tool: ToolStatus) {
@@ -26,6 +26,10 @@ export function StorageSettings({ downloads, onModelDirectoryChanged }: {
   const [backupPath, setBackupPath] = useState('')
   const [backupError, setBackupError] = useState('')
   const [backupPassword, setBackupPassword] = useState('')
+  const [restoreDestination, setRestoreDestination] = useState('')
+  const [restorePlan, setRestorePlan] = useState<BackupRestoreResult | null>(null)
+  const [restoreValidation, setRestoreValidation] = useState<BackupValidation | null>(null)
+  const [restoreStatus, setRestoreStatus] = useState('')
   const { reload } = downloads
   useEffect(() => {
     if (!toolDownloading) return
@@ -79,6 +83,21 @@ export function StorageSettings({ downloads, onModelDirectoryChanged }: {
       setBackupSnapshots(current => [snapshot, ...current]); setBackupPassword('')
     } catch (cause) { setBackupError(cause instanceof Error ? cause.message : '备份失败，请检查设置。') }
   }
+  async function validateRestore(snapshotId: string) {
+    setBackupError(''); setRestoreStatus('')
+    try {
+      const target = backupTargets[0]
+      if (!target || !restoreDestination.trim()) throw new Error('请先设置备份目录和新的恢复位置。')
+      const validation = await request<BackupValidation>('/backup/validate', { method: 'POST', body: JSON.stringify({ targetId: target.id, snapshotId, password: backupPassword }) })
+      setRestoreValidation(validation)
+      const plan = await request<BackupRestoreResult>('/backup/restore', { method: 'POST', body: JSON.stringify({ targetId: target.id, snapshotId, password: backupPassword, destination: restoreDestination.trim() }) })
+      setRestorePlan(plan); setRestoreStatus(`预检通过，本地保护快照已保存到 ${plan.preRestoreSnapshot}。请确认切换。`)
+    } catch (cause) { setBackupError(cause instanceof Error ? cause.message : '恢复预检失败。') }
+  }
+  async function confirmRestore() {
+    if (!restorePlan) return
+    try { await request<BackupRestoreResult>(`/backup/restore/${restorePlan.planId}/confirm`, { method: 'POST' }); setRestoreStatus('已恢复到新位置；原数据目录仍保留。'); setRestorePlan(null); setRestoreValidation(null) } catch (cause) { setBackupError(cause instanceof Error ? cause.message : '恢复切换失败。') }
+  }
   async function chooseDirectory(models: boolean) {
     setPending(true)
     setError('')
@@ -123,6 +142,11 @@ export function StorageSettings({ downloads, onModelDirectoryChanged }: {
       {backupTargets.map(target => <div className="setting-row" key={target.id}><div><strong>{target.name}</strong><p className="settings-location-path">{target.path}</p></div><span className="settings-state" data-ready="true">已启用</span></div>)}
       <div className="setting-row"><label htmlFor="backup-password"><strong>备份密码</strong><span className="field-hint">不会写入数据库或快照</span></label><input id="backup-password" type="password" value={backupPassword} onChange={event => setBackupPassword(event.target.value)} autoComplete="new-password"/><button type="button" className="button button-primary" disabled={!backupPassword || !backupTargets.length} onClick={() => void createBackup()}>立即备份</button></div>
       {backupSnapshots.length > 0 && <div className="backup-history" aria-label="备份历史">{backupSnapshots.slice(0, 5).map(snapshot => <div className="setting-row" key={snapshot.id}><span>{new Date(snapshot.createdAt).toLocaleString('zh-CN')}</span><span>{Math.ceil(snapshot.size / 1024)} KB</span><span className="settings-state" data-ready={snapshot.status === 'succeeded'}>{snapshot.status === 'succeeded' ? '成功' : snapshot.status}</span></div>)}</div>}
+      <div className="setting-row"><label htmlFor="restore-destination"><strong>恢复到新位置</strong><span className="field-hint">不会覆盖当前数据目录</span></label><input id="restore-destination" value={restoreDestination} onChange={event => setRestoreDestination(event.target.value)} placeholder="例如 /tmp/tangentry-restore"/></div>
+      {backupSnapshots[0] && <div className="setting-row"><div><strong>最近快照</strong><p className="settings-location-path">{backupSnapshots[0].id}</p></div><button type="button" className="button button-secondary" disabled={!backupPassword || !restoreDestination} onClick={() => void validateRestore(backupSnapshots[0].id)}>校验并准备恢复</button></div>}
+      {restoreValidation && <div className="setting-row"><div><strong>校验结果</strong><span className="field-hint">格式 v{restoreValidation.manifest.formatVersion}，数据库架构 v{restoreValidation.manifest.schemaVersion}，{restoreValidation.manifest.files.length} 个文件，{Math.ceil(restoreValidation.size / 1024)} KB</span></div></div>}
+      {restorePlan && <div className="setting-row"><span className="field-hint">{restoreStatus}</span><button type="button" className="button button-primary" onClick={() => void confirmRestore()}>确认恢复</button></div>}
+      {restoreStatus && !restorePlan && <p className="field-hint" role="status">{restoreStatus}</p>}
       {backupError && <p className="subtitle-error" role="alert">{backupError}</p>}
     </section>
   </>

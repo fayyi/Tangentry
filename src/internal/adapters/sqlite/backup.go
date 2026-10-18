@@ -4,8 +4,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
 	"tangentry/internal/backup"
@@ -25,7 +28,111 @@ func (s *Store) Snapshot(ctx context.Context, staging string, includeDownloads b
 	if err != nil {
 		return nil, err
 	}
+	root := filepath.Dir(s.path)
+	// Business results are in SQLite (including subtitles, transcripts, AI
+	// results and note-frame metadata/blobs). Only imported PDF sidecars live in
+	// the filesystem; credential/config, models, tools and caches stay excluded.
+	allowed := []string{"documents"}
+	for _, name := range allowed {
+		extra, e := collectTree(root, name, staging, backup.FileData)
+		if e != nil {
+			return nil, e
+		}
+		files = append(files, extra...)
+	}
+	if includeDownloads {
+		downloads := s.downloadDir
+		if downloads == "" {
+			downloads = filepath.Join(root, "downloads")
+		}
+		extra, e := collectTree(filepath.Dir(downloads), filepath.Base(downloads), staging, backup.FileData)
+		if e != nil {
+			return nil, e
+		}
+		files = append(files, extra...)
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
 	return files, nil
+}
+
+func collectTree(root, name, staging string, kind backup.FileType) ([]backup.File, error) {
+	if excludedBackupComponent(name) {
+		return nil, nil
+	}
+	source := filepath.Join(root, name)
+	info, err := os.Lstat(source)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return nil, nil
+	}
+	var out []backup.File
+	err = filepath.Walk(source, func(p string, i os.FileInfo, e error) error {
+		if e != nil {
+			return e
+		}
+		rel, relErr := filepath.Rel(source, p)
+		if relErr != nil {
+			return relErr
+		}
+		if excludedBackupPath(rel) {
+			if i.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if i.IsDir() {
+			return nil
+		}
+		if i.Mode()&os.ModeSymlink != 0 || !i.Mode().IsRegular() {
+			return filepath.SkipDir
+		}
+		relRoot, _ := filepath.Rel(root, p)
+		target := filepath.Join(staging, relRoot)
+		if err := os.MkdirAll(filepath.Dir(target), 0700); err != nil {
+			return err
+		}
+		in, e := os.Open(p)
+		if e != nil {
+			return e
+		}
+		outFile, e := os.Create(target)
+		if e == nil {
+			_, e = io.Copy(outFile, in)
+			outFile.Close()
+		}
+		in.Close()
+		if e != nil {
+			return e
+		}
+		data, e := os.ReadFile(p)
+		if e != nil {
+			return e
+		}
+		sum := sha256.Sum256(data)
+		out = append(out, backup.File{Path: filepath.ToSlash(relRoot), Type: kind, Size: int64(len(data)), SHA256: fmt.Sprintf("%x", sum)})
+		return nil
+	})
+	return out, err
+}
+
+func excludedBackupComponent(name string) bool {
+	switch strings.ToLower(filepath.Base(filepath.Clean(name))) {
+	case "credentials", "credential", "cookies", "cookie", "models", "model", "tools", "tool", "cache", "caches", "runtime", "keychain", "keychains":
+		return true
+	default:
+		return false
+	}
+}
+
+func excludedBackupPath(rel string) bool {
+	for _, part := range strings.FieldsFunc(filepath.ToSlash(rel), func(r rune) bool { return r == '/' }) {
+		if excludedBackupComponent(part) {
+			return true
+		}
+	}
+	return false
 }
 
 func describeFiles(root, dbPath string) ([]backup.File, error) {

@@ -3,6 +3,9 @@ package local
 import (
 	"context"
 	"io"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -33,6 +36,43 @@ func TestStoreUploadReadListDelete(t *testing.T) {
 	}
 	if _, err := s.Read(ctx, items[0]); err == nil {
 		t.Fatal("deleted object still readable")
+	}
+}
+
+func TestStoreRejectsSymlinkObjects(t *testing.T) {
+	root := t.TempDir()
+	s, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "outside")
+	if err := os.WriteFile(outside, []byte("secret"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "tangentry", "v1", "snapshots"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "tangentry", "v1", "snapshots", "link.tgb")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skip("symlink unavailable")
+	}
+	if _, err := s.Read(context.Background(), "tangentry/v1/snapshots/link.tgb"); err == nil {
+		t.Fatal("symlink object accepted")
+	}
+}
+
+func TestStoreRejectsSymlinkParents(t *testing.T) {
+	root := t.TempDir()
+	s, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(root, "escape")); err != nil {
+		t.Skip("symlink unavailable")
+	}
+	if err := s.Upload(context.Background(), "escape/object.tgb", strings.NewReader("fixture")); err == nil {
+		t.Fatal("symlink parent accepted")
 	}
 }
 

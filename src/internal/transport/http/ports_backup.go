@@ -14,6 +14,7 @@ type BackupService interface {
 	SaveTask(context.Context, backup.Task) error
 	DeleteTask(context.Context, string) error
 	Create(context.Context, string, string) (backup.Snapshot, error)
-	Validate(context.Context, string, string, string) error
-	Restore(context.Context, string, string, string, string) error
+	Validate(context.Context, string, string, string) (backup.Validation, error)
+	Restore(context.Context, string, string, string, string) (backup.RestoreResult, error)
+	ConfirmRestore(context.Context, string) (backup.RestoreResult, error)
 }
