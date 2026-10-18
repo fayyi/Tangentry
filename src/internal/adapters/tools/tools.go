@@ -9,9 +9,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -207,13 +209,19 @@ func classify(raw string) error {
 
 func classifyDouyin(raw string, cookieProvided bool) error {
 	text := strings.ToLower(raw)
+	if strings.Contains(text, "timed out") || strings.Contains(text, "timeout") || strings.Contains(text, "connection reset") || strings.Contains(text, "network is unreachable") || strings.Contains(text, "temporary failure in name resolution") || strings.Contains(text, "name or service not known") {
+		return errors.New("抖音视频解析网络或超时，请稍后重试。")
+	}
 	if strings.Contains(text, "fresh cookies") || strings.Contains(text, "not necessarily logged in") || strings.Contains(text, "http error 403") || strings.Contains(text, "403 forbidden") {
 		if !cookieProvided {
 			return errors.New("未配置抖音 Cookie，且 yt-dlp 的抖音解析器被接口拒绝；请在应用内打开抖音完成登录或验证后重试。")
 		}
 		return errors.New("已配置 Cookie，但 yt-dlp 的抖音解析器被抖音接口拒绝（HTTP 403 / 需要新 Cookie）。这通常是 yt-dlp 暂不支持当前抖音接口，不一定是你的 Cookie 有问题；请在应用内抖音页面重试。")
 	}
-	return classify(raw)
+	if !cookieProvided && (strings.Contains(text, "no cookies") || strings.Contains(text, "cookies are required") || strings.Contains(text, "login required") || strings.Contains(text, "authentication required")) {
+		return errors.New("未配置抖音 Cookie，请在应用内打开抖音完成登录或验证后重试。")
+	}
+	return errors.New("抖音视频解析失败，请在应用内抖音页面重试。")
 }
 
 func (t *Toolkit) downloadDouyinFallback(ctx context.Context, rawURL, directory string, height int, options downloads.Options) (downloads.Result, error) {
@@ -234,14 +242,17 @@ func (t *Toolkit) downloadDouyinFallback(ctx context.Context, rawURL, directory 
 		return downloads.Result{}, errors.New("抖音链接无效")
 	}
 	source, err := t.douyinPlayback(ctx, ref.ID)
+	if err != nil {
+		return downloads.Result{}, err
+	}
 	candidates := append([]string{source.URL}, source.Backups...)
 	valid := make([]string, 0, 3)
 	for _, candidate := range candidates {
-		if douyin.PlaybackURL(candidate) {
+		if douyin.PlaybackURL(candidate) && douyinPlaybackURLLive(candidate, time.Now()) {
 			valid = append(valid, candidate)
 		}
 	}
-	if err != nil || len(valid) == 0 {
+	if len(valid) == 0 {
 		return downloads.Result{}, errors.New("应用内抖音页面未提供可下载地址")
 	}
 	baseClient := t.douyinHTTP
@@ -310,6 +321,19 @@ func (t *Toolkit) downloadDouyinFallback(ctx context.Context, rawURL, directory 
 		return downloads.Result{}, errors.New("抖音视频下载未产生完整文件。")
 	}
 	return downloads.Result{FileName: filepath.Base(name), FileSize: info.Size(), OriginalSize: info.Size(), Message: "已通过应用内抖音页面下载。"}, nil
+}
+
+func douyinPlaybackURLLive(raw string, now time.Time) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	deadline := u.Query().Get("deadline")
+	if deadline == "" {
+		return true
+	}
+	value, err := strconv.ParseInt(deadline, 10, 64)
+	return err == nil && value > now.Unix()
 }
 
 // Subprocess output can be large and sensitive. Retain only a bounded tail in memory.

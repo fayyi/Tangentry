@@ -17,7 +17,7 @@ import { useNativePlaybackClock } from '../player/useNativePlaybackClock'
 import { NativeReadingProgress } from '../progress/NativeReadingProgress'
 import { useCompatibilityPlayback } from '../player/useCompatibilityPlayback'
 import { ReaderDescription } from './ReaderDescription'
-import { hasPlayableOnlineSource } from './onlinePlayback'
+import { hasPlayableOnlineSource, shouldStartCompatibilityPlayback } from './onlinePlayback'
 import { AudioControls } from './AudioControls'
 import { ReaderPlayerSizeHandle, ReadingNotebook, useReadingNotebook } from '../../shared/reader/ReadingNotebook'
 import { XiaohongshuSourceForm } from './XiaohongshuSourceForm'
@@ -138,7 +138,7 @@ export function MediaReader({ id, initialItem, jobs, jobsLoading = false, video,
       // a failed or unavailable native verification window.
     }
   }
-  useNativePlaybackClock(native, `${id}:${item?.mediaUrl}:${localSocial?.id}:${compatibility.source}:${compatibilityBlocked}`, seconds => {
+  useNativePlaybackClock(native, `${id}:${item?.mediaUrl}:${localSocial?.id}:${compatibility.source}:${douyinPlayback.source}:${compatibilityBlocked}`, seconds => {
     if (seconds !== null && item?.kind === 'video') lastVideoPosition.current = seconds
     onPosition?.(seconds)
   })
@@ -174,11 +174,11 @@ export function MediaReader({ id, initialItem, jobs, jobsLoading = false, video,
     // Douyin uses its own server-side playback session and must never fall
     // through to the legacy compatibility renderer.
     const node = native.current
-    if (item?.platform === 'xiaohongshu' && !local && !compatibility.active && node instanceof HTMLVideoElement && node.readyState >= 1 && node.videoWidth === 0) startCompatibility()
+    if (shouldStartCompatibilityPlayback(item?.platform) && !local && !compatibility.active && node instanceof HTMLVideoElement && node.readyState >= 1 && node.videoWidth === 0) startCompatibility()
   })
   function videoLoaded() {
     const node = native.current
-    if (item?.platform === 'xiaohongshu' && !local && node instanceof HTMLVideoElement && node.videoWidth === 0) {
+    if (shouldStartCompatibilityPlayback(item?.platform) && !local && node instanceof HTMLVideoElement && node.videoWidth === 0) {
       if (compatibility.active) compatibility.fail()
       else startCompatibility()
       return
@@ -190,6 +190,10 @@ export function MediaReader({ id, initialItem, jobs, jobsLoading = false, video,
     }
     onReady?.(true)
     report()
+  }
+  function onlineVideoFailed() {
+    if (item?.platform === 'douyin') douyinPlayback.fail()
+    else if (shouldStartCompatibilityPlayback(item?.platform)) startCompatibility()
   }
   function audioLoaded() {
     setAudioError(false)
@@ -255,7 +259,7 @@ export function MediaReader({ id, initialItem, jobs, jobsLoading = false, video,
         {item.kind==='audio'&&item.mediaUrl&&<NativeReadingProgress contentId={id} media={native} identity={`${id}:${item.mediaUrl}`}/>}
         {audioLayout && description}
         {item.kind==='audio'&&reading}
-        {item.kind === 'video' && !video && (onlineVideoRequired ? (item.platform === 'douyin' ? (!douyinPlayback.source ? <div className={douyinPlayback.error ? 'error-panel' : 'field-hint'} role={douyinPlayback.error ? 'alert' : 'status'}><p>{compatibilityMessage}</p><div className="reader-source-error-actions"><button className="button button-secondary" onClick={douyinPlayback.start}><RotateCw size={14}/>重试</button>{douyinPlayback.error && <a className="button button-secondary" href={item.url} target="_blank" rel="noopener noreferrer">打开原内容<ExternalLink size={15}/></a>}</div></div> : <video ref={bindMedia} onLoadedMetadata={videoLoaded} onError={() => douyinPlayback.fail()} className="local-video" aria-label="抖音在线视频播放器" controls playsInline preload="metadata" poster={item.thumbnailUrl} src={onlineSource}/>) : (compatibilityBlocked || !hasPlayableOnlineSource(item.mediaUrl, compatibility.source) ? <div className={compatibility.error ? 'error-panel' : 'field-hint'} role={compatibility.error ? 'alert' : 'status'}><p>{compatibilityMessage}</p><div className="reader-source-error-actions">{compatibility.error && <button className="button button-secondary" onClick={compatibility.start}><RotateCw size={14}/>重试</button>}{compatibility.error && <a className="button button-secondary" href={'/downloads?url=' + encodeURIComponent(item.url)}><Download size={14}/>下载视频</a>}{!compatibility.error && <button className="button button-secondary" onClick={compatibility.cancel}>取消兼容处理</button>}</div></div> : <video ref={bindMedia} onLoadedMetadata={videoLoaded} className="local-video" controls playsInline preload="metadata" poster={item.thumbnailUrl} src={onlineSource}/>)) : local ? <video ref={bindMedia} onLoadedMetadata={() => { onReady?.(true); report() }} className="local-video" controls playsInline preload="metadata" src={'/api/downloads/' + encodeURIComponent(local.id) + '/media'}/> : (item.platform === 'bilibili' || item.platform === 'youtube') ? <IframePlayer ref={playbackRef} item={item} onReady={onReady} onPosition={onPosition} initialTime={0}/> : !detailLoading && <p className="field-hint">来源未提供可播放的视频地址，可打开原内容查看。</p>)}
+        {item.kind === 'video' && !video && (onlineVideoRequired ? (item.platform === 'douyin' ? (!douyinPlayback.source ? <div className={douyinPlayback.error ? 'error-panel' : 'field-hint'} role={douyinPlayback.error ? 'alert' : 'status'}><p>{compatibilityMessage}</p><div className="reader-source-error-actions"><button className="button button-secondary" onClick={douyinPlayback.start}><RotateCw size={14}/>重试</button>{douyinPlayback.error && <a className="button button-secondary" href={item.url} target="_blank" rel="noopener noreferrer">打开原内容<ExternalLink size={15}/></a>}</div></div> : <video ref={bindMedia} onLoadedMetadata={videoLoaded} onTimeUpdate={report} onSeeking={report} onSeeked={report} onPause={report} onError={onlineVideoFailed} className="local-video" aria-label="抖音在线视频播放器" controls playsInline preload="metadata" poster={item.thumbnailUrl} src={onlineSource}/>) : (compatibilityBlocked || !hasPlayableOnlineSource(item.mediaUrl, compatibility.source) ? <div className={compatibility.error ? 'error-panel' : 'field-hint'} role={compatibility.error ? 'alert' : 'status'}><p>{compatibilityMessage}</p><div className="reader-source-error-actions">{compatibility.error && <button className="button button-secondary" onClick={compatibility.start}><RotateCw size={14}/>重试</button>}{compatibility.error && <a className="button button-secondary" href={'/downloads?url=' + encodeURIComponent(item.url)}><Download size={14}/>下载视频</a>}{!compatibility.error && <button className="button button-secondary" onClick={compatibility.cancel}>取消兼容处理</button>}</div></div> : <video ref={bindMedia} onLoadedMetadata={videoLoaded} onTimeUpdate={report} onSeeking={report} onSeeked={report} onPause={report} onError={onlineVideoFailed} className="local-video" controls playsInline preload="metadata" poster={item.thumbnailUrl} src={onlineSource}/>)) : local ? <video ref={bindMedia} onLoadedMetadata={() => { onReady?.(true); report() }} className="local-video" controls playsInline preload="metadata" src={'/api/downloads/' + encodeURIComponent(local.id) + '/media'}/> : (item.platform === 'bilibili' || item.platform === 'youtube') ? <IframePlayer ref={playbackRef} item={item} onReady={onReady} onPosition={onPosition} initialTime={0}/> : !detailLoading && <p className="field-hint">来源未提供可播放的视频地址，可打开原内容查看。</p>)}
         {item.kind==='video'&&!video&&!compatibilityBlocked&&(local || ((item.platform==='rss'||item.platform==='xiaohongshu')&&item.mediaUrl) || compatibility.source || douyinPlayback.source)&&<NativeReadingProgress contentId={id} media={native} identity={`${id}:${local?.id ?? (douyinPlayback.source || compatibility.source || item.mediaUrl)}`}/>}
         {item.kind==='video'&&!video&&reading}
         {item.kind==='image'&&<ImageAlbum key={item.id} item={item} onRefresh={item.platform==='xiaohongshu'?refreshDetails:undefined} onUpdateSource={item.platform==='xiaohongshu'?()=>setSourceEditing(true):undefined} refreshing={detailLoading}/>}

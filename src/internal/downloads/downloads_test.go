@@ -18,6 +18,34 @@ type gatedRunner struct {
 	release chan struct{}
 }
 
+type unavailableRunner struct{}
+
+func (unavailableRunner) Ready() bool { return false }
+func (unavailableRunner) Download(context.Context, string, string, int) (string, error) {
+	return "", downloads.ErrTools
+}
+
+func TestDouyinDownloadCanEnterQueueWhenToolsAreUnavailable(t *testing.T) {
+	root := t.TempDir()
+	store, err := sqlite.Open(filepath.Join(root, "douyin-queue.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	service, err := downloads.NewService(store, unavailableRunner{}, filepath.Join(root, "media"), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Close()
+	job, err := service.Start(context.Background(), downloads.Request{URL: "https://www.douyin.com/video/6961737553342991651"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.State != "queued" {
+		t.Fatalf("job state = %q", job.State)
+	}
+}
+
 func (r gatedRunner) Ready() bool { return true }
 func (r gatedRunner) Download(ctx context.Context, url, directory string, height int) (string, error) {
 	r.started <- struct{}{}

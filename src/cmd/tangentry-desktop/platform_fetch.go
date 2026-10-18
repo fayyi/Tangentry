@@ -190,24 +190,28 @@ const douyinRecommendNextScript = `(function(){ const target=document.activeElem
 const douyinFeedReadScript = `(function(){ return {pageUrl: location.href, title: document.title || "", ready: document.readyState, responses: (window.__tangentryDouyinFeed || []).splice(0, 32), fetchHookInstalled:window.fetch === window.__tangentryDouyinFetchWrapper, xhrHookInstalled:XMLHttpRequest.prototype.send === window.__tangentryDouyinXHRSend}; })();`
 
 const douyinVideoMediaMaxBody = 4 * 1024 * 1024
+const douyinVideoMediaTimeout = 15 * time.Second
 
 func douyinVideoMediaScript(id string) string {
 	encoded, _ := json.Marshal(id)
 	limit := strconv.Itoa(douyinVideoMediaMaxBody)
+	timeout := strconv.Itoa(int(douyinVideoMediaTimeout / time.Millisecond))
 	return `(async function(){
   const id=` + string(encoded) + `;
   const absolute = raw => { try { return new URL(String(raw || ''), location.href).href; } catch (_) { return ''; } };
   const urls = [];
   const add = value => { if (Array.isArray(value)) value.forEach(add); else if (typeof value === 'string') urls.push(absolute(value)); };
   const walk = value => { if (!value || typeof value !== 'object') return; if (value.play_addr) add(value.play_addr.url_list || value.play_addr.urlList); if (value.url_list) add(value.url_list); Object.keys(value).slice(0, 200).forEach(key => { if (key !== 'url_list') walk(value[key]); }); };
-  let status=0, restricted=false, networkError=false;
-  try { const response = await fetch('/aweme/v1/web/aweme/detail/?aweme_id=' + encodeURIComponent(id), {credentials:'include', headers:{accept:'application/json'}}); status=response.status; if (!response.ok) restricted = response.status === 401 || response.status === 403 || response.status === 429; const type=(response.headers.get('content-type')||'').toLowerCase(); if (type.includes('json')) { const length=Number(response.headers.get('content-length')||0); if (length > ` + limit + `) restricted=true; else { const body=await response.text(); if (body.length > ` + limit + `) restricted=true; else walk(JSON.parse(body)); } } } catch (_) { networkError=true; }
+	let status=0, restricted=false, networkError=false, timedOut=false, tooLarge=false;
+  const controller=new AbortController(), timer=setTimeout(()=>controller.abort(),` + timeout + `);
+  try { const response = await fetch('/aweme/v1/web/aweme/detail/?aweme_id=' + encodeURIComponent(id), {credentials:'include', headers:{accept:'application/json'}, signal:controller.signal}); status=response.status; const responseURL=new URL(response.url || location.href, location.href); if (responseURL.hostname !== 'www.douyin.com' || !responseURL.pathname.startsWith('/aweme/v1/web/aweme/detail')) restricted=true; if (!response.ok) restricted = restricted || response.status === 401 || response.status === 403 || response.status === 429; const type=(response.headers.get('content-type')||'').toLowerCase(); if (!type.includes('json')) { if (type.includes('html') || response.status >= 400) restricted=true; } else { const length=Number(response.headers.get('content-length')||0); if (length > ` + limit + ` || !response.body) { tooLarge=length > ` + limit + `; restricted=!tooLarge; if (tooLarge) controller.abort(); } else { const reader=response.body.getReader(); const decoder=new TextDecoder(); let body='', bytes=0; try { for (;;) { const part=await reader.read(); if (part.done) break; bytes += part.value.byteLength; if (bytes > ` + limit + `) { tooLarge=true; controller.abort(); await reader.cancel(); break; } body += decoder.decode(part.value, {stream:true}); } body += decoder.decode(); } finally { reader.releaseLock(); } if (!restricted && !tooLarge) { try { walk(JSON.parse(body)); } catch (_) { restricted=true; } } } } } catch (error) { timedOut=error && error.name === 'AbortError'; networkError=!timedOut; } finally { clearTimeout(timer); }
   document.querySelectorAll('video').forEach(node => add(node.currentSrc || node.src));
   const pageUrl=location.href, title=document.title||'';
   if (!/^https:\/\/(?:www\.)?douyin\.com\/video\/` + id + `(?:[/?#]|$)/i.test(pageUrl)) restricted=true;
-  if (/login|登录|captcha|验证|verify/i.test(pageUrl+' '+title)) restricted=true;
-  if (restricted) urls.length = 0;
-  return {status:status, restricted:restricted, networkError:networkError, pageUrl:pageUrl, title:title, urls:urls.slice(0,32)};
+  const pageText=(document.body && (document.body.innerText || document.body.textContent) || '').slice(0,4096);
+  if (/login|登录|captcha|验证码|验证|verify|challenge|passport|risk[ -]?control|风控|滑块|人机/i.test(pageUrl+' '+title+' '+pageText)) restricted=true;
+  if (restricted || tooLarge) urls.length = 0;
+  return {status:status, restricted:restricted, networkError:networkError, timedOut:timedOut, tooLarge:tooLarge, pageUrl:pageUrl, title:title, urls:urls.slice(0,32)};
 })();`
 }
 
@@ -360,6 +364,8 @@ func (b *platformPageBridge) ResolveVideoMedia(ctx context.Context, id string) (
 		Status       int      `json:"status"`
 		Restricted   bool     `json:"restricted"`
 		NetworkError bool     `json:"networkError"`
+		TimedOut     bool     `json:"timedOut"`
+		TooLarge     bool     `json:"tooLarge"`
 		PageURL      string   `json:"pageUrl"`
 		URLs         []string `json:"urls"`
 	}
@@ -368,6 +374,12 @@ func (b *platformPageBridge) ResolveVideoMedia(ctx context.Context, id string) (
 	}
 	if result.NetworkError {
 		return platformfetch.VideoMediaResponse{}, errors.New("应用内抖音页面媒体请求失败")
+	}
+	if result.TimedOut {
+		return platformfetch.VideoMediaResponse{}, context.DeadlineExceeded
+	}
+	if result.TooLarge {
+		return platformfetch.VideoMediaResponse{}, errors.New("应用内抖音页面响应超过 4 MiB 限制")
 	}
 	media := safeDouyinMedia(result.URLs)
 	primary := ""

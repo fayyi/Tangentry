@@ -114,7 +114,7 @@ func (t *Toolkit) DouyinPlayback(ctx context.Context, raw string) (playback.Sour
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	if err := cmd.Run(); err != nil || stdout.exceeded {
 		if ctx.Err() != nil {
-			return playback.Source{}, &discovery.PlatformError{Message: "抖音视频解析超时，请检查网络和抖音 Cookie 后重试。"}
+			return playback.Source{}, &discovery.PlatformError{Message: "抖音视频解析超时，请检查网络或稍后重试。"}
 		}
 		cookieArgs, _, _ := t.cookieArguments(ref.URL)
 		return playback.Source{}, &discovery.PlatformError{Message: classifyDouyin(stderr.String(), len(cookieArgs) > 0).Error()}

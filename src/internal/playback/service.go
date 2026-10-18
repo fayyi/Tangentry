@@ -101,7 +101,14 @@ func New(resolve func(context.Context, string) (Source, error), client *http.Cli
 	clone.Timeout = 0 // Media bodies can outlive the metadata client's timeout.
 	check := client.CheckRedirect
 	clone.CheckRedirect = func(req *http.Request, via []*http.Request) error {
-		if len(via) >= 5 || (!allowed(req.URL.String()) && !allowedFor("douyin", req.URL.String())) {
+		if len(via) >= 5 {
+			return ErrUnavailable
+		}
+		platform := ""
+		if len(via) > 0 {
+			platform = mediaPlatform(via[0].URL.String())
+		}
+		if platform == "" || !allowedFor(platform, req.URL.String()) {
 			return ErrUnavailable
 		}
 		req.Header.Del("Cookie")
@@ -115,6 +122,16 @@ func New(resolve func(context.Context, string) (Source, error), client *http.Cli
 		return nil
 	}
 	return &Service{resolve: resolve, http: &clone, sessions: make(map[string]entry), opening: make(chan struct{}, 2), streaming: make(chan struct{}, 4)}
+}
+
+func mediaPlatform(raw string) string {
+	if allowedFor("douyin", raw) {
+		return "douyin"
+	}
+	if allowedFor("bilibili", raw) {
+		return "bilibili"
+	}
+	return ""
 }
 
 var videoID = regexp.MustCompile(`^BV[0-9A-Za-z]{10}$`)

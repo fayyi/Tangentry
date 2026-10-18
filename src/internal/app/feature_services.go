@@ -96,23 +96,14 @@ func wireFeatures(dataDir string, configuration config.Config, option Options, r
 			if strings.HasPrefix(id, "BV") {
 				return p.media.bilibili.Playback(ctx, id)
 			}
-			media, err := p.media.douyin.ResolveVideoMedia(ctx, id)
-			if err == nil && media.URL != "" {
-				return playback.Source{URL: media.URL, Backups: media.Backups, Platform: "douyin", Referer: "https://www.douyin.com/video/" + id}, nil
-			}
-			var restricted *discovery.PlatformError
-			if err != nil && errors.As(err, &restricted) && restricted.Restricted {
-				return playback.Source{}, err
-			}
-			if err != nil && (errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil) {
-				return playback.Source{}, err
-			}
-			source, err := p.network.toolkit.DouyinPlayback(ctx, "https://www.douyin.com/video/"+id)
-			if err != nil {
-				return playback.Source{}, err
-			}
-			source.Platform, source.Referer = "douyin", "https://www.douyin.com/video/"+id
-			return source, nil
+			return resolveDouyinPlayback(ctx, id,
+				func(ctx context.Context, id string) (playback.Source, error) {
+					media, err := p.media.douyin.ResolveVideoMedia(ctx, id)
+					if err != nil {
+						return playback.Source{}, err
+					}
+					return playback.Source{URL: media.URL, Backups: media.Backups, Platform: "douyin", Referer: "https://www.douyin.com/video/" + id}, nil
+				}, p.network.toolkit.DouyinPlayback)
 		}
 	}
 	if option.Playback != nil {
@@ -179,6 +170,27 @@ func wireFeatures(dataDir string, configuration config.Config, option Options, r
 			preferences: discovery.NewPreferences(store), savedSubtitles: savedCaptions, subtitles: captions,
 		},
 	}, nil
+}
+
+func resolveDouyinPlayback(ctx context.Context, id string, pageResolve, ytdlpResolve func(context.Context, string) (playback.Source, error)) (playback.Source, error) {
+	source, err := pageResolve(ctx, id)
+	if err == nil && source.URL != "" {
+		source.Platform, source.Referer = "douyin", "https://www.douyin.com/video/"+id
+		return source, nil
+	}
+	var restricted *discovery.PlatformError
+	if err != nil && errors.As(err, &restricted) && restricted.Restricted {
+		return playback.Source{}, err
+	}
+	if err != nil && (errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil) {
+		return playback.Source{}, err
+	}
+	source, err = ytdlpResolve(ctx, "https://www.douyin.com/video/"+id)
+	if err != nil {
+		return playback.Source{}, err
+	}
+	source.Platform, source.Referer = "douyin", "https://www.douyin.com/video/"+id
+	return source, nil
 }
 
 func summaryNoteID(contentID string) string {

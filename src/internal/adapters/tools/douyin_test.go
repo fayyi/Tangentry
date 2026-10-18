@@ -31,6 +31,13 @@ func TestClassifyDouyinFreshCookieFailureDistinguishesConfiguration(t *testing.T
 	}
 }
 
+func TestClassifyDouyinTimeoutIsNetworkError(t *testing.T) {
+	err := classifyDouyin("ERROR: [Douyin] Unable to download detail JSON: Operation timed out", true)
+	if err == nil || !strings.Contains(err.Error(), "网络或超时") || strings.Contains(err.Error(), "Cookie") {
+		t.Fatalf("timeout classification: %v", err)
+	}
+}
+
 func TestDouyinDownloadUsesWebViewFallbackWithoutYTDLPAndBackup(t *testing.T) {
 	if os.PathSeparator != '/' {
 		t.Skip("POSIX fixture")

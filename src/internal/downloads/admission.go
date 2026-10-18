@@ -22,7 +22,11 @@ func (s *Service) Start(ctx context.Context, request Request) (Job, error) {
 	if request.MaxHeight < 0 || request.MaxHeight > 16384 || request.Options.normalize() != nil {
 		return Job{}, ErrInvalid
 	}
-	if !s.runner.Ready() {
+	// Douyin can be downloaded directly from the authenticated in-app page,
+	// so yt-dlp/FFmpeg readiness must not prevent the job from entering the
+	// queue. The media runner tries this path before yt-dlp.
+	_, douyinErr := discovery.ParseDouyin(canonical)
+	if !s.runner.Ready() && douyinErr != nil {
 		return Job{}, ErrTools
 	}
 	s.mu.Lock()

@@ -130,6 +130,18 @@ func TestDouyinFeedCaptureScriptHooksPageRequests(t *testing.T) {
 	}
 }
 
+func TestDouyinVideoMediaScriptUsesBoundedPageContextReads(t *testing.T) {
+	code := douyinVideoMediaScript("6961737553342991651")
+	for _, part := range []string{"credentials:'include'", "getReader()", "reader.cancel()", "tooLarge", "AbortController", "captcha", "风控", "video"} {
+		if !strings.Contains(code, part) {
+			t.Fatalf("video media script does not contain %q", part)
+		}
+	}
+	if strings.Contains(code, "response.text()") {
+		t.Fatal("video media script reads the whole response before enforcing the limit")
+	}
+}
+
 func TestSearchDOMReadScriptMapsAuthorLinks(t *testing.T) {
 	for _, part := range []string{"authorIDFrom", "/user\\/profile", "authorID", "cards"} {
 		if !strings.Contains(searchDomReadScript, part) {
