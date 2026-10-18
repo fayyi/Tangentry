@@ -267,8 +267,16 @@ func (s *Service) updateFeed(ctx context.Context, detail Detail) (Detail, error)
 		record.State.Status = StatusUpstreamErr
 		record.State.SuggestedAction = suggestedAction(StatusUpstreamErr)
 		record.State.Message = "订阅源更新失败，保留上次内容；请检查地址与网络。"
+		youtubeDiagnostic := ""
 		if strings.HasPrefix(id, "youtube:") {
 			record.State.Message = "YouTube 频道更新失败，保留上次内容；请检查频道与网络。"
+			// The YouTube adapter combines the RSS status/content type and the
+			// yt-dlp stderr tail when both paths fail. Preserve that concrete,
+			// already-redacted diagnostic for subscription refresh callers.
+			if strings.HasPrefix(err.Error(), "YouTube 频道获取失败：") {
+				youtubeDiagnostic = err.Error()
+				record.State.Message = youtubeDiagnostic
+			}
 		}
 		var timeout interface{ Timeout() bool }
 		if errors.As(err, &timeout) && timeout.Timeout() {
@@ -301,6 +309,9 @@ func (s *Service) updateFeed(ctx context.Context, detail Detail) (Detail, error)
 			record.State.Status = StatusRateLimited
 			record.State.SuggestedAction = suggestedAction(StatusRateLimited)
 			record.State.Message = "订阅源暂时限制请求，已延后检查。"
+		}
+		if youtubeDiagnostic != "" {
+			record.State.Message = youtubeDiagnostic
 		}
 		delay := backoff(record)
 		var retry RetryDelay

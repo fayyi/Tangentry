@@ -27,6 +27,7 @@ type Result struct {
 type FetchError struct {
 	Message           string
 	StatusCode        int
+	ContentType       string
 	RetryAfterSeconds int64
 	Restricted        bool
 	TimedOut          bool
@@ -35,6 +36,7 @@ type FetchError struct {
 func (e *FetchError) Timeout() bool { return e.TimedOut }
 
 func (e *FetchError) HTTPStatusCode() int      { return e.StatusCode }
+func (e *FetchError) HTTPContentType() string  { return e.ContentType }
 func (e *FetchError) RetryDelaySeconds() int64 { return e.RetryAfterSeconds }
 func (e *FetchError) Error() string            { return e.Message }
 func (e *FetchError) Unwrap() error {
@@ -185,13 +187,17 @@ func (c *Client) fetchConditional(ctx context.Context, raw, identity string, cac
 		if limited || response.StatusCode == 503 {
 			wait = retryAfter(response.Header.Get("Retry-After"), time.Now())
 		}
-		return Result{}, &FetchError{Message: message, StatusCode: response.StatusCode, RetryAfterSeconds: wait, Restricted: limited}
+		return Result{}, &FetchError{Message: message, StatusCode: response.StatusCode, ContentType: response.Header.Get("Content-Type"), RetryAfterSeconds: wait, Restricted: limited}
 	}
 	if identity == "" {
 		identity = canonical
 	}
 	feed, err := c.parseResponse(ctx, response, identity)
 	if err != nil {
+		var fetchErr *FetchError
+		if errors.As(err, &fetchErr) && fetchErr.ContentType == "" {
+			fetchErr.ContentType = response.Header.Get("Content-Type")
+		}
 		return Result{}, err
 	}
 	feed.Query = canonical

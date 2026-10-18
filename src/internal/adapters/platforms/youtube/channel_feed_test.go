@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"tangentry/internal/adapters/feeds"
+	"tangentry/internal/content"
 	"tangentry/internal/discovery"
 	"tangentry/internal/netpolicy"
 	"testing"
@@ -99,6 +100,40 @@ func TestChannelConditionalClientUsesSharedBoundedFetcher(t *testing.T) {
 	}
 	if _, err = c.FetchConditional(context.Background(), "invalid", feeds.Validators{}); err == nil || calls != 2 {
 		t.Fatal("invalid channel fetched")
+	}
+}
+
+func TestChannelConditionalUsesFallbackAfterRSSFailure(t *testing.T) {
+	channelID := fixtureChannel
+	server := func(status int, body string, contentType string) *Client {
+		client := New(&http.Client{Transport: trip(func(r *http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": {contentType}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+		})})
+		return client
+	}
+	fallbackFeed := discovery.Feed{Items: []content.Item{{ID: "youtube:abcdefghijk", Platform: "youtube", PlatformID: "abcdefghijk", Kind: "video", Title: "回退视频", Author: "测试作者", AuthorID: channelID, URL: "https://www.youtube.com/watch?v=abcdefghijk", PublishedAt: 1}}, SourceTitle: "测试频道", Query: channelID}
+	calls := 0
+	c := server(http.StatusNotFound, "<html>404</html>", "text/html")
+	c.SetChannelFallback(func(context.Context, string) (discovery.Feed, error) { calls++; return fallbackFeed, nil })
+	result, err := c.FetchConditional(context.Background(), channelID, feeds.Validators{})
+	if err != nil || calls != 1 || len(result.Feed.Items) != 1 || result.Validators != (feeds.Validators{}) {
+		t.Fatalf("fallback not used: %+v calls=%d err=%v", result, calls, err)
+	}
+
+	calls = 0
+	ok := server(http.StatusOK, fixture(fixtureEntry), "application/atom+xml")
+	ok.SetChannelFallback(func(context.Context, string) (discovery.Feed, error) { calls++; return fallbackFeed, nil })
+	if _, err := ok.FetchConditional(context.Background(), channelID, feeds.Validators{}); err != nil || calls != 0 {
+		t.Fatalf("RSS success unexpectedly used fallback: calls=%d err=%v", calls, err)
+	}
+
+	fail := server(http.StatusNotFound, "<html>404</html>", "text/html")
+	fail.SetChannelFallback(func(context.Context, string) (discovery.Feed, error) {
+		return discovery.Feed{}, &discovery.PlatformError{Message: "退出码 1，stderr: 网络不可用"}
+	})
+	_, err = fail.FetchConditional(context.Background(), channelID, feeds.Validators{})
+	if err == nil || !strings.Contains(err.Error(), "YouTube") || !strings.Contains(err.Error(), "HTTP 404") || !strings.Contains(err.Error(), "text/html") || !strings.Contains(err.Error(), "网络不可用") || strings.Contains(err.Error(), "RSSHub") {
+		t.Fatalf("combined failure missing safe causes: %v", err)
 	}
 }
 
