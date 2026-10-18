@@ -18,7 +18,7 @@ func (h *aiHandler) aiSettingsPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input ai.ConfigureInput
-	if !decodeAIRequest(w, r, &input, 8192) {
+	if !decodeAIRequest(w, r, &input, 128<<10) {
 		return
 	}
 	result, err := h.ai.AI.Configure(input)

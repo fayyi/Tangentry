@@ -106,6 +106,23 @@ func promptTemplates(c Config) PromptTemplates {
 // keeping fallback and legacy-setting behavior in the domain package.
 func PromptTemplatesFor(c Config) PromptTemplates { return promptTemplates(c) }
 
+// SummaryCacheUserPrompt keeps cache identities stable for pre-template
+// installations while still separating results when a user customizes the
+// new user template.
+func SummaryCacheUserPrompt(c Config) string {
+	if strings.TrimSpace(c.SummaryTemplate.User) == "" {
+		return ""
+	}
+	return promptTemplates(c).Summary.User
+}
+
+func SummaryCacheSystemPrompt(c Config) string {
+	if strings.TrimSpace(c.SummaryTemplate.System) == "" && strings.TrimSpace(c.SummaryPrompt) == "" {
+		return defaultSummaryPrompt
+	}
+	return promptTemplates(c).Summary.System
+}
+
 func validPromptTemplate(template PromptTemplate) bool {
 	return (strings.TrimSpace(template.System) == "" || validPrompt(template.System) && templateVariablesValid(template.System)) && (strings.TrimSpace(template.User) == "" || validPrompt(template.User) && templateVariablesValid(template.User))
 }

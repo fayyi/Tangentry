@@ -48,7 +48,7 @@ func (s *Service) SummaryGenerate(parent context.Context, in SummaryInput) (Summ
 		return SummaryResult{}, ErrBusy
 	}
 	c = summaryConfig(c)
-	key := summaryKey(in, segments, c.SummaryPrompt, summaryBudgetKey(c.SummaryContextBudget))
+	key := summaryKey(in, segments, SummaryCacheSystemPrompt(c), summaryBudgetKey(c.SummaryContextBudget), SummaryCacheUserPrompt(c))
 	groups, totalCalls := summaryPlan(segments, summaryContextBudget(c.SummaryContextBudget))
 	ctx, cancel := context.WithTimeout(parent, 45*time.Minute)
 	s.active = "summary:" + key

@@ -37,7 +37,7 @@ func (s *Service) SummaryInspect(ctx context.Context, in SummaryInput) (SummaryI
 	status := s.publicStatus(c)
 	c = summaryConfig(c)
 	s.mu.Unlock()
-	key := summaryKey(in, segments, c.SummaryPrompt, summaryBudgetKey(c.SummaryContextBudget))
+	key := summaryKey(in, segments, SummaryCacheSystemPrompt(c), summaryBudgetKey(c.SummaryContextBudget), SummaryCacheUserPrompt(c))
 	_, calls := summaryPlan(segments, summaryContextBudget(c.SummaryContextBudget))
 	cache, err := s.summaryLoad(ctx, key, in, segments, c)
 	if errors.Is(err, ErrNotFound) {
