@@ -27,9 +27,17 @@ func TestDefaultPromptTemplatesAreRenderable(t *testing.T) {
 	}
 }
 
-func TestChatModelSkipsLikelyTranslationModel(t *testing.T) {
+func TestChatModelRequiresExplicitConfiguration(t *testing.T) {
 	value := Config{Model: "bilibili/Index-Translate-35B-A3B", EnabledModels: []string{"bilibili/Index-Translate-35B-A3B", "general-chat"}}
+	if got := chatModel(value); got != "" {
+		t.Fatalf("implicit chat model=%q", got)
+	}
+	value.ChatModel = "general-chat"
 	if got := chatModel(value); got != "general-chat" {
-		t.Fatalf("chat model=%q", got)
+		t.Fatalf("explicit chat model=%q", got)
+	}
+	value.EnabledModels = []string{"bilibili/Index-Translate-35B-A3B"}
+	if got := chatModel(value); got != "" {
+		t.Fatalf("disabled chat model=%q", got)
 	}
 }

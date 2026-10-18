@@ -201,18 +201,11 @@ func public(c Config) Status {
 }
 
 func chatModel(c Config) string {
-	if c.ChatModel != "" {
-		return c.ChatModel
-	}
-	for _, model := range c.EnabledModels {
-		if !likelyTranslationModel(model) {
-			return model
-		}
-	}
-	if likelyTranslationModel(c.Model) {
+	model := strings.TrimSpace(c.ChatModel)
+	if model == "" || len(c.EnabledModels) > 0 && !containsModel(c.EnabledModels, model) {
 		return ""
 	}
-	return c.Model
+	return model
 }
 
 func likelyTranslationModel(model string) bool {
@@ -293,11 +286,11 @@ func (s *Service) Configure(in ConfigureInput) (Status, error) {
 	if in.ChatModel != nil {
 		c.ChatModel = strings.TrimSpace(*in.ChatModel)
 	}
-	if in.ChatModel == nil && likelyTranslationModel(c.ChatModel) {
+	if c.ChatModel != "" && len(c.EnabledModels) > 0 && !containsModel(c.EnabledModels, c.ChatModel) {
 		c.ChatModel = ""
 	}
-	if c.ChatModel == "" {
-		c.ChatModel = chatModel(c)
+	if in.ChatModel == nil && likelyTranslationModel(c.ChatModel) {
+		c.ChatModel = ""
 	}
 	if in.SummaryModel != nil {
 		c.SummaryModel = strings.TrimSpace(*in.SummaryModel)
