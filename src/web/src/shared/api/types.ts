@@ -334,3 +334,31 @@ export interface SubscriptionInboxEntry {
   sources: { id: string; name: string; removed: boolean }[]
 }
 export interface SubscriptionInboxPage { entries: SubscriptionInboxEntry[]; sources: SubscriptionInboxEntry['sources']; nextCursor: string }
+export interface SavedViewFilters {
+  query: string
+  sourceId: string
+  groupId: string
+  platform: string
+  kind: string
+  topic: string
+  tag: string
+  read: string
+  favorite: boolean
+  sinceOffset: string
+  since: number
+  until: number
+}
+export interface SavedViewDefinition { version: number; filters: SavedViewFilters }
+export interface SavedView {
+  id: string
+  name: string
+  definitionVersion: number
+  definition: SavedViewDefinition
+  icon: string
+  color: string
+  sortOrder: number
+  default: boolean
+  builtin: boolean
+  count: number
+}
+export interface SavedViewInboxPage { page: SubscriptionInboxPage; count: number }

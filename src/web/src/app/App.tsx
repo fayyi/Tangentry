@@ -27,6 +27,7 @@ import { CardProgress, ProgressOverviewControls } from '../features/progress/Pro
 import { useDownloads } from '../features/downloads/useDownloads'
 import { useReadState, supportsReadState } from '../features/readstate/useReadState'
 import { useSubscriptionInbox } from '../features/subscriptions/useSubscriptionInbox'
+import { useSavedViews } from '../features/subscriptions/useSavedViews'
 import { useSubscriptions } from '../features/subscriptions/useSubscriptions'
 import type { ContentItem, DownloadJob, ReadingNote } from '../shared/api/types'
 import { ContentCard } from '../shared/ui/ContentCard'
@@ -43,7 +44,7 @@ import { useFontSettings } from '../features/settings/useFontSettings'
 import { PageLoadBoundary } from './PageLoadBoundary'
 import { BrandMark } from '../shared/ui/BrandMark'
 import { AppReaderActions } from './AppReaderActions'
-import { RestoreViewport, useAppNavigation } from './useAppNavigation'
+import { RestoreViewport, selectedSavedViewFromURL, useAppNavigation } from './useAppNavigation'
 import { useCollectionView } from './useCollectionView'
 import type { ContentView } from './useCollectionView'
 
@@ -73,8 +74,26 @@ export function App() {
   const { view, navigate, returnHome, readerQuery, readerNoteId, readingItem, setReadingItem, readerReturn, readerSourceID, scrollPositions, viewportTarget } = navigation
   const bilibili = useBilibiliBrowse(view === 'bilibili')
   const subscriptions = useSubscriptions(view === 'subscriptions')
-  const [subscriptionMode,setSubscriptionMode] = useState<'latest'|'history'|'health'>(() => window.location.hash === '#health' ? 'health' : 'latest')
-  const inbox = useSubscriptionInbox(view==='subscriptions' && subscriptionMode==='history')
+  const [subscriptionView, setSubscriptionView] = useState(() => selectedSavedViewFromURL())
+  const [subscriptionMode,setSubscriptionMode] = useState<'latest'|'history'|'health'>(() => selectedSavedViewFromURL() || new URLSearchParams(location.search).get('mode') === 'history' ? 'history' : window.location.hash === '#health' ? 'health' : 'latest')
+  const inbox = useSubscriptionInbox(view==='subscriptions' && subscriptionMode==='history', subscriptionView)
+  const savedViews = useSavedViews(view==='subscriptions')
+  useEffect(() => {
+    const syncSubscriptionURL = () => {
+      if (view !== 'subscriptions') return
+      const selected = selectedSavedViewFromURL()
+      const params = new URLSearchParams(location.search)
+      setSubscriptionView(selected)
+      setSubscriptionMode(selected || params.get('mode') === 'history' ? 'history' : location.hash === '#health' ? 'health' : 'latest')
+    }
+    window.addEventListener('popstate', syncSubscriptionURL)
+    return () => window.removeEventListener('popstate', syncSubscriptionURL)
+  }, [view])
+  useEffect(()=>{
+    if(view!=='subscriptions'||subscriptionMode!=='history'||subscriptionView||!savedViews.views.length)return
+    const defaultView=savedViews.views.find(item=>item.default)
+    if(defaultView){setSubscriptionView(defaultView.id);navigate('subscriptions',true,`/subscriptions?view=${encodeURIComponent(defaultView.id)}`)}
+  },[view,subscriptionMode,subscriptionView,savedViews.views])
   const [subscriptionFilter, setSubscriptionFilter] = useState('')
   const [subscriptionReadFilter, setSubscriptionReadFilter] = useState<'all' | 'unread' | 'read'>('all')
   const [galleryKind, setGalleryKind] = useState(() => readDiscoveryFilterState().kind)
@@ -202,6 +221,9 @@ export function App() {
   return <ExperienceShell
       view={view}
       onNavigate={navigate}
+      savedViews={savedViews.views}
+      onNavigateSavedView={id=>{setSubscriptionView(id);setSubscriptionMode('history');navigate('subscriptions',true,`/subscriptions?view=${encodeURIComponent(id)}`)}}
+      onReorderSavedViews={ids=>void savedViews.reorder(ids)}
       onHome={returnHome}
       activeDownloads={downloads.jobs.filter(job => job.state === 'queued' || job.state === 'running').length}
       savedCount={library.items.length}
@@ -223,7 +245,7 @@ export function App() {
         readerQuery.startsWith('youtube:') ? <YouTubeReadingWorkspace key={readerQuery} id={readerQuery} linkedNoteId={readerNoteId} initialItem={cachedReadingItem} jobs={downloads.jobs} loading={downloads.loading} error={downloads.error} onReturn={() => navigate(readerReturn.current)} onDownloads={() => navigate('downloads')} onRefresh={() => void downloads.reload()} />
         : readerQuery.includes(':') ? (library.loading && !cachedReadingItem ? <p className="field-hint" role="status">正在读取本机内容…</p> : <ContentReadingWorkspace key={readerQuery} id={readerQuery} linkedNoteId={readerNoteId} initialItem={cachedReadingItem} jobs={downloads.jobs} jobsLoading={downloads.loading} onItem={setReadingItem} onReturn={() => navigate(readerReturn.current)} />)
         : <ReadingWorkspace key={readerQuery} query={readerQuery} linkedNoteId={readerNoteId} initialItem={cachedReadingItem} onReturn={() => navigate(readerReturn.current)} sources={localVideos} loading={downloads.loading} error={downloads.error} onDownloads={() => navigate('downloads')} onRefresh={() => void downloads.reload()} />
-      ) : view === 'subscriptions' ? <SubscriptionsPage inbox={inbox} mode={subscriptionMode} onMode={mode=>{setSubscriptionMode(mode);if(mode==='history'&&inbox.confirmed)void inbox.reload()}} readStates={readStates} readFilter={subscriptionReadFilter} onReadFilter={setSubscriptionReadFilter} subscriptions={subscriptions} savedIDs={savedIDs} savingUnavailable={savingUnavailable} savingIDs={library.pending} onSave={item => void library.toggle(item)} onRead={openReader} filter={subscriptionFilter} onFilter={setSubscriptionFilter} saveNotice={library.notice} saveError={library.noticeError} /> : view === 'downloads' ? <DownloadsPage downloads={downloads} onRead={openDownloadReader} intent={downloadIntent} /> : view === 'tools' ? <ToolsPage downloads={downloads} columns={galleryLayout.columns} onColumns={galleryLayout.setColumns} onCookieChanged={platform => { gallery.invalidate(platform); if (platform === 'bilibili') bilibili.invalidate() }} onYouTubeFeed={feed => gallery.accept('youtube', feed)} onDiscover={() => navigate('discovery')} /> : <>
+      ) : view === 'subscriptions' ? <SubscriptionsPage inbox={inbox} selectedViewID={subscriptionView} mode={subscriptionMode} onMode={mode=>{setSubscriptionView('');setSubscriptionMode(mode);navigate('subscriptions',true,mode==='history'?'/subscriptions?mode=history':mode==='health'?'/subscriptions#health':'/subscriptions');if(mode==='history'&&inbox.confirmed)void inbox.reload()}} views={savedViews.views} onSaveView={async (name,filters)=>{const definition={version:1,filters};const existing=savedViews.views.find(item=>item.id===subscriptionView);if(existing){await savedViews.update(existing.id,{name,definition});await inbox.reload()}else{const saved=await savedViews.create(name,definition);setSubscriptionView(saved.id);navigate('subscriptions',true,`/subscriptions?view=${encodeURIComponent(saved.id)}`)}}} onUpdateView={(id,edit)=>void savedViews.update(id,edit)} onDeleteView={id=>{void savedViews.remove(id);if(id===subscriptionView){setSubscriptionView('');navigate('subscriptions',true,'/subscriptions?mode=history')}}} readStates={readStates} readFilter={subscriptionReadFilter} onReadFilter={setSubscriptionReadFilter} subscriptions={subscriptions} savedIDs={savedIDs} savingUnavailable={savingUnavailable} savingIDs={library.pending} onSave={item => void library.toggle(item)} onRead={openReader} filter={subscriptionFilter} onFilter={setSubscriptionFilter} saveNotice={library.notice} saveError={library.noticeError} /> : view === 'downloads' ? <DownloadsPage downloads={downloads} onRead={openDownloadReader} intent={downloadIntent} /> : view === 'tools' ? <ToolsPage downloads={downloads} columns={galleryLayout.columns} onColumns={galleryLayout.setColumns} onCookieChanged={platform => { gallery.invalidate(platform); if (platform === 'bilibili') bilibili.invalidate() }} onYouTubeFeed={feed => gallery.accept('youtube', feed)} onDiscover={() => navigate('discovery')} /> : <>
         {view === 'library' ? <PageHeader title="收藏" summary={library.loading ? '正在读取本机收藏…' : library.items.length ? `${library.items.length} 条收藏${(() => { const kinds = Object.entries(kindNames).map(([kind, name]) => [name, library.items.filter(item => item.kind === kind).length] as const).filter(([, count]) => count > 0); return kinds.length > 1 ? ' · ' + kinds.map(([name, count]) => `${name} ${count}`).join(' · ') : '' })()}` : '把想继续看、听、读的内容留在本机。'} actions={<button className="button button-primary collection-add" onClick={() => navigate('search')}><Plus size={16}/><span>添加内容</span></button>}/>
         : <PageHeader title="添加内容" summary="粘贴视频、播客、文章或 RSS 链接，也可以导入本机 PDF。识别后可直接阅读或收藏。"/>}
         {view === 'search' && <div className="add-content-layout">

@@ -39,9 +39,12 @@ func TestSubscriptionInboxHTTPReadOnlyContractAndBoundaries(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
 	}
-	var page subscriptions.InboxPage
-	if err = json.Unmarshal(w.Body.Bytes(), &page); err != nil || len(page.Entries) != 1 || len(page.Sources) != 1 {
-		t.Fatal(page, err)
+	var response struct {
+		Page  subscriptions.InboxPage `json:"page"`
+		Count int                     `json:"count"`
+	}
+	if err = json.Unmarshal(w.Body.Bytes(), &response); err != nil || len(response.Page.Entries) != 1 || len(response.Page.Sources) != 1 || response.Count != 1 {
+		t.Fatal(response, err)
 	}
 	if w = send("/api/subscription-inbox/"+item.ID, ""); w.Code != 200 || !strings.Contains(w.Body.String(), "audio.mp3") {
 		t.Fatal(w.Code, w.Body.String())

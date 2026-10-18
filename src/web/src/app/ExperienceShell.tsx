@@ -1,5 +1,6 @@
-import { ArrowLeft, ArrowRight, BookOpen, Bookmark, Clock3, Compass, Download, Headphones, Menu, Moon, PanelLeftClose, PanelLeftOpen, Plus, Rss, Search, Settings, StickyNote, Sun, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, BookOpen, Bookmark, Clock3, Compass, Download, Headphones, Menu, Moon, PanelLeftClose, PanelLeftOpen, Plus, Rss, Search, Settings, StickyNote, Sun, X, ChevronUp, ChevronDown, FileText, Play, Image, Filter, Newspaper, Circle } from 'lucide-react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
+import type { SavedView } from '../shared/api/types'
 import type { View } from './navigation'
 import { viewNames } from './navigation'
 import { useThemeSwitch } from './useThemeSwitch'
@@ -22,12 +23,16 @@ const groups = [
   ] },
 ] as const
 const destinations: readonly { view: View; label: string; Icon: typeof Compass }[] = groups.flatMap(group => [...group.items])
+const savedViewIcons = { 'file-text': FileText, play: Play, headphones: Headphones, image: Image, bookmark: Bookmark, filter: Filter, newspaper: Newspaper, circle: Circle } as const
 const quick = ['discovery', 'podcasts', 'subscriptions', 'library', 'downloads'] as const
 const groupOf = (view: View) => view === 'tools' ? '应用' : view === 'reader' || view === 'search' ? '' : groups.find(group => group.items.some(item => item.view === view))?.label ?? (view === 'bilibili' ? '浏览' : '')
 
-export function ExperienceShell({ view, onNavigate, onHome, activeDownloads, savedCount, onAdd, discoveryQuery, onDiscoveryQuery, resume, onResume, onDismissResume, children }: {
+export function ExperienceShell({ view, onNavigate, onNavigateSavedView, savedViews, onReorderSavedViews, onHome, activeDownloads, savedCount, onAdd, discoveryQuery, onDiscoveryQuery, resume, onResume, onDismissResume, children }: {
   view: View
   onNavigate: (view: View) => void
+  onNavigateSavedView: (id: string) => void
+  savedViews: SavedView[]
+  onReorderSavedViews: (ids: string[]) => void
   onHome: (animate: boolean) => void
   activeDownloads: number
   savedCount: number
@@ -84,6 +89,10 @@ export function ExperienceShell({ view, onNavigate, onHome, activeDownloads, sav
       {group.items.map(({ view: next, label, Icon }) => <button key={next} type="button" className={view === next ? 'active' : ''} aria-label={label} title={label} aria-current={view === next ? 'page' : undefined} onClick={() => go(next)}>
         <Icon size={18} strokeWidth={1.8} aria-hidden="true"/><span>{label}</span>{badge(next) > 0 && <small className={next === 'downloads' ? 'is-live' : undefined} aria-hidden="true">{badge(next)}</small>}
       </button>)}
+      {group.label === '资料库' && <div className="saved-view-nav-list" aria-label="保存视图">{savedViews.map((savedView,index)=><div className="saved-view-nav-row" key={savedView.id}>
+        {(() => { const ViewIcon = savedViewIcons[savedView.icon as keyof typeof savedViewIcons] ?? Filter; return <button type="button" className={view === 'subscriptions' && new URLSearchParams(location.search).get('view') === savedView.id ? 'active' : ''} aria-label={`${savedView.name}，${savedView.count} 条`} title={savedView.name} onClick={()=>{setMenuOpen(false);onNavigateSavedView(savedView.id)}}><span className={`saved-view-mark ${savedView.color}`}><ViewIcon size={13}/></span><span>{savedView.name}</span><small>{savedView.count}</small></button> })()}
+        {!collapsed && <span className="saved-view-order"><button type="button" aria-label={`上移 ${savedView.name}`} title="上移" disabled={index===0} onClick={()=>{const ids=savedViews.map(item=>item.id);[ids[index-1],ids[index]]=[ids[index],ids[index-1]];onReorderSavedViews(ids)}}><ChevronUp size={12}/></button><button type="button" aria-label={`下移 ${savedView.name}`} title="下移" disabled={index===savedViews.length-1} onClick={()=>{const ids=savedViews.map(item=>item.id);[ids[index],ids[index+1]]=[ids[index+1],ids[index]];onReorderSavedViews(ids)}}><ChevronDown size={12}/></button></span>}
+      </div>)}</div>}
     </div>)}
     <div className="experience-nav-group experience-nav-utility">
       <button type="button" className={`experience-settings-link ${view === 'tools' ? 'active' : ''}`} aria-label="工具设置" title="设置" aria-current={view === 'tools' ? 'page' : undefined} onClick={() => go('tools')}><Settings size={18} strokeWidth={1.8} aria-hidden="true"/><span>设置</span></button>

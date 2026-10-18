@@ -3,6 +3,13 @@ package httptransport
 import "net/http"
 
 func (h *Handler) registerSubscriptionRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/saved-views", h.feeds.savedViewList)
+	mux.HandleFunc("POST /api/saved-views", h.feeds.savedViewCreate)
+	mux.HandleFunc("PUT /api/saved-views/order", h.feeds.savedViewOrder)
+	mux.HandleFunc("GET /api/saved-views/{id}", h.feeds.savedViewGet)
+	mux.HandleFunc("GET /api/saved-views/{id}/inbox", h.feeds.savedViewInbox)
+	mux.HandleFunc("PATCH /api/saved-views/{id}", h.feeds.savedViewUpdate)
+	mux.HandleFunc("DELETE /api/saved-views/{id}", h.feeds.savedViewDelete)
 	mux.HandleFunc("GET /api/subscription-inbox", h.feeds.inboxList)
 	mux.HandleFunc("GET /api/subscription-inbox/{id}", h.feeds.inboxItem)
 	mux.HandleFunc("GET /api/subscriptions", h.feeds.subscriptionList)

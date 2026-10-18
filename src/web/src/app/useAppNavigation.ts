@@ -4,6 +4,10 @@ import { readerNoteFromURL, readerQueryFromURL, viewFromURL, viewPaths, type Vie
 
 export type ReaderReturnView = Exclude<View, 'reader' | 'tools' | 'search'> | 'search' | 'tools'
 
+export function selectedSavedViewFromURL() {
+  return viewFromURL() === 'subscriptions' ? new URLSearchParams(location.search).get('view') ?? '' : ''
+}
+
 type ViewportTarget = { top: number; sourceID: string }
 
 const initialScrollPositions = (): Record<View, number> => ({

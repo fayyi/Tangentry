@@ -80,5 +80,6 @@ func httpSubscriptionDependencies(s *services) httptransport.SubscriptionDepende
 	return httptransport.SubscriptionDependencies{
 		Subscriptions: s.features.sources, SubscriptionGroups: s.features.api.groupService,
 		SubscriptionInbox: s.features.api.inbox, Favorites: s.features.api.favorites,
+		SavedViews: s.features.api.savedViews,
 	}
 }
