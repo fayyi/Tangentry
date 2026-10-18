@@ -55,6 +55,7 @@ type Backend struct {
 	runtime    Runtime
 	state      ShellState
 	handler    http.Handler
+	fallback   http.Handler
 	ctx        context.Context
 	cancel     context.CancelFunc
 	mu         sync.Mutex
@@ -74,6 +75,9 @@ type Backend struct {
 // directory-specific routes then return a clear unavailable response.
 func New(runtime Runtime, state ShellState, shell ShellOptions) *Backend {
 	ctx, cancel := context.WithCancel(context.Background())
+	// Keep a fallback handler for a nil runtime. Requests resolve the runtime
+	// handler at dispatch time so a shell that rebuilds its runtime on restart
+	// cannot leave the backend pointing at a closed handler.
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, ErrRuntimeUnavailable.Error(), http.StatusServiceUnavailable)
 	}))
@@ -82,7 +86,24 @@ func New(runtime Runtime, state ShellState, shell ShellOptions) *Backend {
 			handler = applicationHandler
 		}
 	}
-	return &Backend{runtime: runtime, state: state, handler: handler, ctx: ctx, cancel: cancel, shell: shell, closeDone: make(chan struct{})}
+	return &Backend{runtime: runtime, state: state, ctx: ctx, cancel: cancel, shell: shell, closeDone: make(chan struct{}), fallback: handler}
+}
+
+func (b *Backend) applicationHandler() http.Handler {
+	b.mu.Lock()
+	if b.handler != nil {
+		handler := b.handler
+		b.mu.Unlock()
+		return handler
+	}
+	runtime, fallback := b.runtime, b.fallback
+	b.mu.Unlock()
+	if runtime != nil {
+		if handler := runtime.HTTPHandler(); handler != nil {
+			return handler
+		}
+	}
+	return fallback
 }
 
 func (b *Backend) Capabilities() Capabilities {

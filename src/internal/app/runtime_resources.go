@@ -1,11 +1,14 @@
 package app
 
 import (
+	"fmt"
 	"path/filepath"
 
 	"tangentry/internal/adapters/filesystem"
 	"tangentry/internal/adapters/sqlite"
+	localstorage "tangentry/internal/adapters/storage/local"
 	"tangentry/internal/adapters/tools"
+	"tangentry/internal/backup"
 	"tangentry/internal/config"
 	"tangentry/internal/credentials"
 	"tangentry/internal/downloads"
@@ -19,6 +22,7 @@ type runtimeResources struct {
 	platforms    *platforms
 	documents    *filesystem.Documents
 	downloads    *downloads.Service
+	backup       *backup.Service
 	repositories repositories
 }
 
@@ -49,6 +53,7 @@ func openRuntimeResources(dataDir string, configuration config.Config, option Op
 		return nil, err
 	}
 	started.add(processing.Close)
+	store.SetBackupDownloadDirectory(processing.Directory())
 	p, err := newPlatforms(dataDir, configuration, toolkit, cookies, option)
 	if err != nil {
 		return nil, err
@@ -59,5 +64,12 @@ func openRuntimeResources(dataDir string, configuration config.Config, option Op
 		return nil, err
 	}
 	records := repositories{xiaohongshu: store, subscription: store}
-	return &runtimeResources{store: store, preferences: preferencesStore, cookies: cookies, toolkit: toolkit, platforms: p, documents: documents, downloads: processing, repositories: records}, nil
+	backupWorkDir := filepath.Join(dataDir, ".tangentry-restore")
+	backupService := backup.NewService(store, store, func(target backup.Target) (backup.ObjectStore, error) {
+		if target.Type != "local" {
+			return nil, fmt.Errorf("unsupported backup target type")
+		}
+		return localstorage.New(target.Path)
+	}, backupWorkDir, "dev")
+	return &runtimeResources{store: store, preferences: preferencesStore, cookies: cookies, toolkit: toolkit, platforms: p, documents: documents, downloads: processing, backup: backupService, repositories: records}, nil
 }

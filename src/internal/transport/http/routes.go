@@ -15,4 +15,5 @@ func (h *Handler) registerRoutes(mux *http.ServeMux) {
 	h.registerPodcastRoutes(mux)
 	h.registerNotesRoutes(mux)
 	h.registerSubscriptionRoutes(mux)
+	h.registerBackupRoutes(mux)
 }

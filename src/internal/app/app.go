@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"tangentry/internal/ai"
+	"tangentry/internal/backup"
 	"tangentry/internal/config"
 	"tangentry/internal/credentials"
 	"tangentry/internal/discovery"
@@ -24,6 +25,10 @@ type Application struct {
 	runtime       *runtimeState
 	shell         *shellState
 	subscriptions subscriptionManager
+	dataDir       string
+	assets        fs.FS
+	option        Options
+	mu            sync.Mutex
 }
 
 // PlatformPageFetcher is the native-shell port for same-origin requests in a
@@ -82,6 +87,9 @@ func New(dataDir string, assets fs.FS, options ...Options) (application *Applica
 	if err := os.MkdirAll(dataDir, 0700); err != nil {
 		return nil, err
 	}
+	if err := backup.ApplyPendingRestore(dataDir); err != nil {
+		return nil, err
+	}
 	services, started, err := newServices(dataDir, configuration, option)
 	if err != nil {
 		return nil, err
@@ -101,11 +109,13 @@ func New(dataDir string, assets fs.FS, options ...Options) (application *Applica
 			modelDir:       services.features.modelDir,
 		},
 	}
-	return &Application{
+	application = &Application{
 		runtime:       runtime,
 		shell:         shell,
 		subscriptions: services.features.sources,
-	}, nil
+		dataDir:       dataDir, assets: assets, option: option,
+	}
+	return application, nil
 }
 
 type runtimeState struct {
@@ -125,6 +135,11 @@ func (r *runtimeState) Close() error {
 	return r.closeErr
 }
 
-func (a *Application) HTTPHandler() http.Handler { return a.runtime.HTTPHandler() }
+func (a *Application) HTTPHandler() http.Handler {
+	a.mu.Lock()
+	runtime := a.runtime
+	a.mu.Unlock()
+	return runtime.HTTPHandler()
+}
 
 func (a *Application) Close() error { return a.runtime.Close() }
