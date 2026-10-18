@@ -17,6 +17,8 @@ type Capabilities struct {
 	WindowCapture        bool `json:"windowCapture"`
 	Notifications        bool `json:"notifications"`
 	KeepAwake            bool `json:"keepAwake"`
+	Updater              bool `json:"updater"`
+	Server               bool `json:"server"`
 	PlatformWebViewLogin bool `json:"platformWebViewLogin"`
 }
 

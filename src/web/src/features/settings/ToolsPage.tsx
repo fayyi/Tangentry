@@ -1,4 +1,4 @@
-import { ChevronRight, Eye, Languages, Mic, HardDrive, UserRound } from 'lucide-react'
+import { ChevronRight, Eye, Languages, Mic, HardDrive, RotateCcw, UserRound } from 'lucide-react'
 import { replacePath } from '../../shared/browser/historyStack'
 import { PageHeader } from '../../shared/ui/PageHeader'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
@@ -13,11 +13,12 @@ import type { GalleryColumns } from './useGalleryLayout'
 import type { Feed } from '../../shared/api/types'
 import { StorageSettings } from './StorageSettings'
 import { DiscoveryFeedback } from './DiscoveryFeedback'
+import { UpdaterSettings } from './UpdaterSettings'
 
-type SettingsSection = 'display' | 'accounts' | 'discovery' | 'translation' | 'transcription' | 'storage'
+type SettingsSection = 'display' | 'accounts' | 'discovery' | 'translation' | 'transcription' | 'storage' | 'about'
 function sectionFromURL(): SettingsSection {
   const hash = window.location.hash.slice(1)
-  return ['display', 'accounts', 'discovery', 'translation', 'transcription', 'storage'].includes(hash) ? hash as SettingsSection : 'display'
+  return ['display', 'accounts', 'discovery', 'translation', 'transcription', 'storage', 'about'].includes(hash) ? hash as SettingsSection : 'display'
 }
 
 export function ToolsPage({ downloads, onCookieChanged, onYouTubeFeed, onDiscover }: {
@@ -71,6 +72,7 @@ export function ToolsPage({ downloads, onCookieChanged, onYouTubeFeed, onDiscove
     { id: 'translation' as const, label: '翻译与摘要', hint: 'AI 翻译与文章摘要', Icon: Languages },
     { id: 'transcription' as const, label: '字幕转录', hint: '本机或云端识别', Icon: Mic },
     { id: 'storage' as const, label: '下载与存储', hint: '工具与文件位置', Icon: HardDrive },
+    { id: 'about' as const, label: '关于与更新', hint: '版本与自动更新', Icon: RotateCcw },
   ]
   return <>
     <PageHeader className="settings-page-heading" title="设置" summary="账号与推荐来源、翻译和转录服务、下载与文件位置。更改只保存在这台设备。"/>
@@ -84,6 +86,7 @@ export function ToolsPage({ downloads, onCookieChanged, onYouTubeFeed, onDiscove
       <div id="settings-discovery" className="settings-block settings-block-wide" hidden={section !== 'discovery'}>{visited.has('discovery') && <DiscoveryFeedback/>}</div>
       <div id="settings-translation" className="settings-block settings-block-wide" hidden={section !== 'translation'}>{visited.has('translation') && <AISettings/>}</div>
       <div id="settings-transcription" className="settings-block settings-block-wide" hidden={section !== 'transcription'}>{visited.has('transcription') && <TranscriptionSettings key={modelRevision}/>}</div>
+      <div id="settings-about" className="settings-block settings-block-wide" hidden={section !== 'about'}>{visited.has('about') && <UpdaterSettings/>}</div>
       </div>
     </div>
   </>

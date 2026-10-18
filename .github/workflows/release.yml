@@ -74,7 +74,22 @@ jobs:
       - name: Set desktop app version from tag
         run: echo "TANGENTRY_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
 
+      - name: Check updater signing secret
+        env:
+          MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
+        run: |
+          if [ -z "$MYGO_UPDATER_PRIVATE_KEY" ]; then
+            echo "::warning::MYGO_UPDATER_PRIVATE_KEY is not configured; desktop artifacts will be published without signed auto-update manifests."
+          else
+            echo "MyGo updater signing key is available."
+            if [ ! -s src/updater/mygo-update.pub ]; then
+              echo "::warning::src/updater/mygo-update.pub is missing; MyGo auto-update signing is not enabled and no update manifests will be generated."
+            fi
+          fi
+
       - name: Build all desktop targets
+        env:
+          MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
         run: make desktop-build-all
 
       - name: Pack desktop release assets
@@ -99,6 +114,13 @@ jobs:
             cp "build/${target}"/*.deb release-assets/
             cp "build/${target}"/*.tar.gz release-assets/
           done
+
+          # MyGo's signed archives, deltas, and manifests must be top-level
+          # release assets. They are not discoverable inside platform ZIPs.
+          find build -type f \( \
+            -name 'update-*.json' -o -name '*.delta' -o \
+            -name '*-darwin-*.tar.gz' -o -name '*-windows-*.tar.gz' \
+          \) -exec cp {} release-assets/ \;
 
       - name: Upload desktop packages
         uses: actions/upload-artifact@v4

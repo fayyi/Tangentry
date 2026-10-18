@@ -45,6 +45,7 @@ import { AppReaderActions } from './AppReaderActions'
 import { RestoreViewport, selectedSavedViewFromURL, useAppNavigation } from './useAppNavigation'
 import { useCollectionView } from './useCollectionView'
 import type { ContentView } from './useCollectionView'
+import { UpdaterNotice } from '../features/settings/UpdaterNotice'
 
 const podcastSources: readonly GallerySource[] = ['xiaoyuzhou']
 const kindNames: Record<string, string> = { video: '视频', article: '图文', image: '短图文', audio: '音频', pdf: 'PDF' }
@@ -272,6 +273,7 @@ export function App() {
       </PageLoadBoundary></div>
     </main></ReaderActionsProvider>
     <BackToTop />
+    <UpdaterNotice />
     {toast.toasts.map(message => <Toast key={message.id} message={message.message} type={message.type} visible duration={0} onClose={() => toast.hide(message.id)} />)}
   </ExperienceShell>
 }
