@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -147,12 +148,12 @@ const douyinFeedCaptureScript = `(function(){
   const projectBody = body => {
     try { const value = typeof body === 'string' ? JSON.parse(body) : body; const root = value && value.data && typeof value.data === 'object' ? value.data : value; const status = root && root.status_code != null ? root.status_code : value && value.status_code; const code = status == null ? 0 : Number(status)||0; const list = root && (root.aweme_list || root.awemeList); const parsed = Array.isArray(list) && (code === 0 || code === 2154); return {status:code,parsed:parsed,hasMore:code === 0 && Number(root && root.has_more)>0,cards:code === 0 && Array.isArray(list) ? list.map(project).filter(Boolean).slice(0, 500) : []}; } catch (_) { return null; }
   };
-  const push = (url, status, contentType, body) => {
+  const push = (url, status, contentType, body, tooLarge) => {
     const resolvedURL = absolute(url);
     if (!isFeed(resolvedURL)) return;
     const type = String(contentType || '');
     const payload = jsonType(type) ? projectBody(body) : null;
-    window.__tangentryDouyinFeed.push({url:resolvedURL, status:Number(status)||0, contentType:type, apiStatus:payload && payload.status || 0, parsed:payload ? payload.parsed : false, hasMore:payload ? payload.hasMore : false, cards:payload ? payload.cards : []});
+    window.__tangentryDouyinFeed.push({url:resolvedURL, status:Number(status)||0, contentType:type, apiStatus:payload && payload.status || 0, parsed:payload ? payload.parsed : false, hasMore:payload ? payload.hasMore : false, tooLarge:Boolean(tooLarge), cards:payload ? payload.cards : []});
     if (window.__tangentryDouyinFeed.length > 32) window.__tangentryDouyinFeed.splice(0, window.__tangentryDouyinFeed.length - 32);
   };
   const originalFetch = window.fetch;
@@ -161,7 +162,7 @@ const douyinFeedCaptureScript = `(function(){
     const url = typeof request === 'string' ? request : request && request.url;
     return originalFetch.apply(this, arguments).then(response => {
       if (!isFeed(url || response.url)) return response;
-      try { const contentType = response.headers && response.headers.get ? response.headers.get('content-type') : ''; if (jsonType(contentType)) response.clone().text().then(body => push(url || response.url, response.status, contentType, body.length <= max ? body : null)).catch(() => {}); else push(url || response.url, response.status, contentType, null); } catch (_) {}
+      try { const contentType = response.headers && response.headers.get ? response.headers.get('content-type') : ''; if (jsonType(contentType)) { const length=Number(response.headers && response.headers.get ? response.headers.get('content-length') || 0 : 0); if (length > max || !response.body && !length) push(url || response.url, response.status, contentType, null, true); else if (response.body) { const clone=response.clone(); if (!clone.body) { if (!length) push(url || response.url, response.status, contentType, null, true); else clone.text().then(body => push(url || response.url, response.status, contentType, body, body.length > max)).catch(()=>{}); } else { const reader=clone.body.getReader(), decoder=new TextDecoder(); let body='', bytes=0; (async()=>{ for(;;){ const part=await reader.read(); if(part.done) break; bytes+=part.value.byteLength; if(bytes>max){ await reader.cancel(); push(url || response.url, response.status, contentType, null, true); return; } body+=decoder.decode(part.value,{stream:true}); } body+=decoder.decode(); push(url || response.url, response.status, contentType, body, false); })().catch(()=>{}); } } else if (length) response.clone().text().then(body => { const tooLarge=body.length > max; push(url || response.url, response.status, contentType, tooLarge ? null : body, tooLarge); }).catch(()=>{}); else push(url || response.url, response.status, contentType, null, true); } else push(url || response.url, response.status, contentType, null, false); } catch (_) {}
       return response;
     });
   };
@@ -171,7 +172,7 @@ const douyinFeedCaptureScript = `(function(){
   const send = XMLHttpRequest.prototype.send;
   XMLHttpRequest.prototype.open = function(method, url){ this.__tangentryURL = url; return open.apply(this, arguments); };
   const xhrSendWrapper = function(){
-    this.addEventListener('load', function(){ try { const contentType = this.getResponseHeader('content-type') || ''; const body = jsonType(contentType) && (this.responseType === 'json' ? this.response : this.responseText); push(this.__tangentryURL || this.responseURL, this.status, contentType, typeof body === 'string' && body.length > max ? null : body); } catch (_) {} });
+    this.addEventListener('load', function(){ try { const contentType = this.getResponseHeader('content-type') || ''; const length=Number(this.getResponseHeader('content-length') || 0); if (!jsonType(contentType)) { push(this.__tangentryURL || this.responseURL, this.status, contentType, null, false); return; } if (length > max || !length) { push(this.__tangentryURL || this.responseURL, this.status, contentType, null, true); return; } const body=this.responseType === 'json' ? this.response : this.responseText; push(this.__tangentryURL || this.responseURL, this.status, contentType, body, false); } catch (_) {} });
     return send.apply(this, arguments);
   };
   window.__tangentryDouyinXHRSend = xhrSendWrapper;
@@ -187,6 +188,33 @@ const douyinDomScrollScript = `(function(){ window.scrollBy(0, Math.max(480, Mat
 const douyinRecommendNextScript = `(function(){ const target=document.activeElement || document.body || document.documentElement; target.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowDown',code:'ArrowDown',keyCode:40,which:40,bubbles:true})); target.dispatchEvent(new WheelEvent('wheel',{deltaY:Math.max(480,Math.floor(window.innerHeight*0.85)),bubbles:true})); return {pageUrl:location.href,title:document.title||'',ready:document.readyState}; })();`
 
 const douyinFeedReadScript = `(function(){ return {pageUrl: location.href, title: document.title || "", ready: document.readyState, responses: (window.__tangentryDouyinFeed || []).splice(0, 32), fetchHookInstalled:window.fetch === window.__tangentryDouyinFetchWrapper, xhrHookInstalled:XMLHttpRequest.prototype.send === window.__tangentryDouyinXHRSend}; })();`
+
+const douyinVideoMediaMaxBody = 4 * 1024 * 1024
+const douyinVideoMediaTimeout = 15 * time.Second
+
+func douyinVideoMediaScript(id string) string {
+	encoded, _ := json.Marshal(id)
+	limit := strconv.Itoa(douyinVideoMediaMaxBody)
+	timeout := strconv.Itoa(int(douyinVideoMediaTimeout / time.Millisecond))
+	return `(async function(){
+  const id=` + string(encoded) + `;
+  const absolute = raw => { try { return new URL(String(raw || ''), location.href).href; } catch (_) { return ''; } };
+  const urls = [];
+  const add = value => { if (Array.isArray(value)) value.forEach(add); else if (typeof value === 'string') urls.push(absolute(value)); };
+  const businessRestricted = value => { let blocked=false; const scan = node => { if (!node || typeof node !== 'object' || blocked) return; const message=String(node.status_msg || node.statusMsg || node.status_message || node.message || ''); const code=Number(node.status_code ?? node.statusCode ?? 0) || 0; if (code !== 0 && (code === 401 || code === 403 || code === 429 || /login|登录|captcha|验证码|verify|验证|challenge|passport|risk[ -]?control|风控|滑块|人机/i.test(message))) { blocked=true; return; } Object.keys(node).slice(0, 200).forEach(key => scan(node[key])); }; scan(value); return blocked; };
+  const walk = value => { if (!value || typeof value !== 'object') return; if (value.play_addr) add(value.play_addr.url_list || value.play_addr.urlList); if (value.url_list) add(value.url_list); Object.keys(value).slice(0, 200).forEach(key => { if (key !== 'url_list') walk(value[key]); }); };
+	let status=0, restricted=false, networkError=false, timedOut=false, tooLarge=false;
+  const controller=new AbortController(), timer=setTimeout(()=>controller.abort(),` + timeout + `);
+  try { const response = await fetch('/aweme/v1/web/aweme/detail/?aweme_id=' + encodeURIComponent(id), {credentials:'include', headers:{accept:'application/json'}, signal:controller.signal}); status=response.status; const responseURL=new URL(response.url || location.href, location.href); if (responseURL.hostname !== 'www.douyin.com' || !responseURL.pathname.startsWith('/aweme/v1/web/aweme/detail')) restricted=true; if (!response.ok) restricted = restricted || response.status === 401 || response.status === 403 || response.status === 429; const type=(response.headers.get('content-type')||'').toLowerCase(); if (!type.includes('json')) { if (type.includes('html') || response.status >= 400) restricted=true; } else { const length=Number(response.headers.get('content-length')||0); if (length > ` + limit + ` || (!response.body && !length)) { tooLarge=length > ` + limit + ` || !response.body; restricted=!tooLarge; if (tooLarge) controller.abort(); } else if (!response.body) { const body=await response.text(); try { const parsed=JSON.parse(body); if (businessRestricted(parsed)) restricted=true; else walk(parsed); } catch (_) { restricted=true; } } else { const reader=response.body.getReader(); const decoder=new TextDecoder(); let body='', bytes=0; try { for (;;) { const part=await reader.read(); if (part.done) break; bytes += part.value.byteLength; if (bytes > ` + limit + `) { tooLarge=true; controller.abort(); await reader.cancel(); break; } body += decoder.decode(part.value, {stream:true}); } body += decoder.decode(); } finally { reader.releaseLock(); } if (!restricted && !tooLarge) { try { const parsed=JSON.parse(body); if (businessRestricted(parsed)) restricted=true; else walk(parsed); } catch (_) { restricted=true; } } } } } catch (error) { timedOut=error && error.name === 'AbortError'; networkError=!timedOut; } finally { clearTimeout(timer); }
+  document.querySelectorAll('video').forEach(node => add(node.currentSrc || node.src));
+  const pageUrl=location.href, title=document.title||'';
+  if (!/^https:\/\/(?:www\.)?douyin\.com\/video\/` + id + `(?:[/?#]|$)/i.test(pageUrl)) restricted=true;
+  const pageText=(document.body && (document.body.innerText || document.body.textContent) || '').slice(0,4096);
+  if (/login|登录|captcha|验证码|验证|verify|challenge|passport|risk[ -]?control|风控|滑块|人机/i.test(pageUrl+' '+title+' '+pageText)) restricted=true;
+  if (restricted || tooLarge) urls.length = 0;
+  return {status:status, restricted:restricted, networkError:networkError, timedOut:timedOut, tooLarge:tooLarge, pageUrl:pageUrl, title:title, urls:urls.slice(0,32)};
+})();`
+}
 
 const douyinDomReadScript = `(function(){
   const text = node => (node && (node.innerText || node.textContent) || '').trim();
@@ -303,6 +331,96 @@ func (b *platformPageBridge) Fetch(ctx context.Context, platform, path string, r
 		responseURL = session.window.Page().URL()
 	}
 	return app.PlatformPageResponse{Status: result.Status, Body: result.Body, Restricted: isCloudflarePage(result.Status, result.Body, result.ContentType), URL: responseURL, ContentType: result.ContentType}, nil
+}
+
+func (b *platformPageBridge) ResolveVideoMedia(ctx context.Context, id string) (platformfetch.VideoMediaResponse, error) {
+	if !regexp.MustCompile(`^[1-9][0-9]{15,19}$`).MatchString(id) {
+		return platformfetch.VideoMediaResponse{}, errors.New("抖音视频 ID 无效")
+	}
+	session, err := b.session("douyin", "https://www.douyin.com/")
+	if err != nil {
+		return platformfetch.VideoMediaResponse{}, err
+	}
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if err := waitPlatformPage(ctx, session.ready); err != nil {
+		return platformfetch.VideoMediaResponse{}, err
+	}
+	session.lastUsed = time.Now()
+	if err := session.window.Page().LoadURL("https://www.douyin.com/video/" + id); err != nil {
+		return platformfetch.VideoMediaResponse{}, err
+	}
+	if err := waitForPageReady(ctx, session.window.Page(), "video"); err != nil {
+		return platformfetch.VideoMediaResponse{}, err
+	}
+	raw, err := evalPageWithRetry(ctx, session.window.Page(), douyinVideoMediaScript(id))
+	if err != nil {
+		return platformfetch.VideoMediaResponse{}, err
+	}
+	encoded, err := json.Marshal(raw)
+	if err != nil {
+		return platformfetch.VideoMediaResponse{}, err
+	}
+	var result struct {
+		Status       int      `json:"status"`
+		Restricted   bool     `json:"restricted"`
+		NetworkError bool     `json:"networkError"`
+		TimedOut     bool     `json:"timedOut"`
+		TooLarge     bool     `json:"tooLarge"`
+		PageURL      string   `json:"pageUrl"`
+		URLs         []string `json:"urls"`
+	}
+	if err := json.Unmarshal(encoded, &result); err != nil {
+		return platformfetch.VideoMediaResponse{}, err
+	}
+	if result.NetworkError {
+		return platformfetch.VideoMediaResponse{}, errors.New("应用内抖音页面媒体请求失败")
+	}
+	if result.TimedOut {
+		return platformfetch.VideoMediaResponse{}, context.DeadlineExceeded
+	}
+	if result.TooLarge {
+		return platformfetch.VideoMediaResponse{}, errors.New("应用内抖音页面响应超过 4 MiB 限制")
+	}
+	media := safeDouyinMedia(result.URLs)
+	primary := ""
+	backups := []string{}
+	if len(media) > 0 {
+		primary, backups = media[0], media[1:]
+	}
+	return platformfetch.VideoMediaResponse{Status: result.Status, Restricted: result.Restricted, PageURL: safeCaptureURL(result.PageURL), URL: primary, Backups: backups}, nil
+}
+
+func firstSafeDouyinMedia(values []string) string {
+	values = safeDouyinMedia(values)
+	if len(values) == 0 {
+		return ""
+	}
+	return values[0]
+}
+func safeDouyinMedia(values []string) []string {
+	result := make([]string, 0, 3)
+	seen := map[string]bool{}
+	for _, raw := range values {
+		u, err := url.Parse(strings.TrimSpace(raw))
+		if err != nil || u.Scheme != "https" || u.User != nil || u.Opaque != "" || len(raw) > 8192 || (u.Port() != "" && u.Port() != "443") {
+			continue
+		}
+		host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+		if host != "douyinvod.com" && !strings.HasSuffix(host, ".douyinvod.com") {
+			continue
+		}
+		u.RawQuery = u.RawQuery
+		value := u.String()
+		if !seen[value] {
+			seen[value] = true
+			result = append(result, value)
+		}
+		if len(result) == 3 {
+			break
+		}
+	}
+	return result
 }
 
 func (b *platformPageBridge) CaptureFeed(ctx context.Context, platform string, pages int) (platformfetch.FeedCaptureResponse, error) {
@@ -570,6 +688,7 @@ type douyinCaptureResponse struct {
 	APIStatus   int                     `json:"apiStatus"`
 	Parsed      bool                    `json:"parsed"`
 	HasMore     bool                    `json:"hasMore"`
+	TooLarge    bool                    `json:"tooLarge"`
 	ContentType string                  `json:"contentType"`
 	Cards       []platformfetch.DOMCard `json:"cards"`
 }
@@ -577,7 +696,7 @@ type douyinCaptureResponse struct {
 func sanitizeDouyinCaptureResponse(response douyinCaptureResponse) platformfetch.FeedResponse {
 	return platformfetch.FeedResponse{
 		Status: response.Status, APIStatus: response.APIStatus, Parsed: response.Parsed,
-		HasMore: response.HasMore, URL: safeCaptureURL(response.URL), ContentType: truncateCaptureContentType(response.ContentType),
+		HasMore: response.HasMore, TooLarge: response.TooLarge, URL: safeCaptureURL(response.URL), ContentType: truncateCaptureContentType(response.ContentType),
 	}
 }
 
@@ -993,7 +1112,7 @@ func platformPageURLAllowed(raw, platform string) bool {
 
 func validatePlatformFetchResponse(result platformFetchResult) error {
 	if result.TooLarge || len(result.Body) > platformFetchMaxBody {
-		return errors.New("平台页面响应超过大小限制")
+		return errors.New("平台页面响应过大或无法限制大小")
 	}
 	return nil
 }
@@ -1024,7 +1143,7 @@ func platformFetchScript(path string, request app.PlatformPageRequest) (string, 
 	if request.Method != "GET" && request.Method != "HEAD" {
 		bodyOption = ", body:" + string(body)
 	}
-	return fmt.Sprintf(`const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), %d); try { return await fetch(location.origin + %s, {method:%s, headers:%s, credentials:"include"%s, signal:controller.signal}).then(async response => { const max=%d; const meta={status:response.status, url:response.url || "", contentType:response.headers.get("content-type") || ""}; const type=String(meta.contentType).toLowerCase().split(";",1)[0].trim(); const jsonType=!type || type === "application/json" || type === "text/json" || type.endsWith("+json"); if (!jsonType) return {...meta, body:"", tooLarge:false}; if (!response.body) { const body=await response.text(); return {...meta, body:body.length>max?"":body, tooLarge:body.length>max}; } const reader=response.body.getReader(); const decoder=new TextDecoder(); let body="", bytes=0; try { for (;;) { const part=await reader.read(); if (part.done) break; bytes+=part.value.byteLength; if (bytes>max) { await reader.cancel(); return {...meta, body:"", tooLarge:true}; } body+=decoder.decode(part.value,{stream:true}); } body+=decoder.decode(); return {...meta, body:body, tooLarge:false}; } finally { reader.releaseLock(); } }); } finally { clearTimeout(timer); }`, platformFetchTimeout.Milliseconds(), pathJSON, method, headers, bodyOption, platformFetchMaxBody), nil
+	return fmt.Sprintf(`const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), %d); try { return await fetch(location.origin + %s, {method:%s, headers:%s, credentials:"include"%s, signal:controller.signal}).then(async response => { const max=%d; const meta={status:response.status, url:response.url || "", contentType:response.headers.get("content-type") || ""}; const type=String(meta.contentType).toLowerCase().split(";",1)[0].trim(); const length=Number(response.headers.get("content-length") || 0); const jsonType=!type || type === "application/json" || type === "text/json" || type.endsWith("+json"); if (!jsonType) return {...meta, body:"", tooLarge:false}; if (!response.body) { if (!length || length>max) return {...meta, body:"", tooLarge:true}; const body=await response.text(); return {...meta, body:body, tooLarge:false}; } const reader=response.body.getReader(); const decoder=new TextDecoder(); let body="", bytes=0; try { for (;;) { const part=await reader.read(); if (part.done) break; bytes+=part.value.byteLength; if (bytes>max) { await reader.cancel(); return {...meta, body:"", tooLarge:true}; } body+=decoder.decode(part.value,{stream:true}); } body+=decoder.decode(); return {...meta, body:body, tooLarge:false}; } finally { reader.releaseLock(); } }); } finally { clearTimeout(timer); }`, platformFetchTimeout.Milliseconds(), pathJSON, method, headers, bodyOption, platformFetchMaxBody), nil
 }
 
 func isCloudflarePage(status int, body string, contentTypes ...string) bool {

@@ -18,6 +18,7 @@ func (h *Handler) registerMediaRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/saved-subtitles/{contentId}/{language}", h.media.savedSubtitleSave)
 	mux.HandleFunc("DELETE /api/saved-subtitles/{contentId}/{language}", h.media.savedSubtitleDelete)
 	mux.HandleFunc("POST /api/playback/bilibili/{id}", h.media.playbackOpen)
+	mux.HandleFunc("POST /api/playback/douyin/{id}", h.media.douyinPlaybackOpen)
 	mux.HandleFunc("GET /api/playback/sessions/{id}/media", h.media.playbackMedia)
 	mux.HandleFunc("DELETE /api/playback/sessions/{id}", h.media.playbackRelease)
 	mux.HandleFunc("POST /api/playback/compatibility", h.media.compatibilityOpen)

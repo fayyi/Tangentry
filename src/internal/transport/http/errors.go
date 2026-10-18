@@ -122,6 +122,7 @@ var errorResponses = []errorResponse{
 	{err: downloads.ErrActive, status: http.StatusConflict, code: "download_active", message: "进行中的下载不能删除，请先取消任务。"},
 	{err: downloads.ErrBusy, status: http.StatusConflict, code: "queue_busy", message: "下载队列已满，请等待已有任务完成。"},
 	{err: downloads.ErrToolBusy, status: http.StatusConflict, code: "tool_downloading", message: "正在下载所需工具，请稍候重试；工具设置中可查看进度。"},
+	{err: downloads.ErrDouyinShortLink, status: http.StatusBadGateway, code: "douyin_link_unresolved", message: "抖音短链接无法解析为视频地址，且 yt-dlp 尚未就绪，请打开原视频链接后重试。"},
 	{err: downloads.ErrTools, status: http.StatusServiceUnavailable, code: "tools_unavailable", message: "下载工具尚未准备好，请在工具设置中检查。"},
 	{err: content.ErrInvalid, status: http.StatusBadRequest, code: "invalid_input", message: "请输入正确的 UP 主 UID、B站主页地址或视频 BV 号 / 地址。"},
 	{err: discovery.ErrInvalidQuery, status: http.StatusBadRequest, code: "invalid_input", message: "请输入正确的 UP 主 UID、B站主页地址或视频 BV 号 / 地址。"},
@@ -131,6 +132,11 @@ var errorResponses = []errorResponse{
 }
 
 func fail(w http.ResponseWriter, err error) {
+	var platform *discovery.PlatformError
+	if errors.As(err, &platform) {
+		platformUnavailable(w, err)
+		return
+	}
 	for _, response := range errorResponses {
 		if !errors.Is(err, response.err) {
 			continue

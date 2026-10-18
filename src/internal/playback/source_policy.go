@@ -9,13 +9,21 @@ import (
 // Only API-supplied, allowlisted addresses for this one representation are
 // considered. Never invent CDN hosts or mix bytes from different responses.
 func normalizeSource(source Source) (Source, error) {
-	if !allowed(source.URL) {
+	if source.Platform == "" {
+		source.Platform = "bilibili"
+	}
+	if !allowedFor(source.Platform, source.URL) {
+		return Source{}, ErrUnavailable
+	}
+	now := time.Now()
+	if deadline := sourceDeadline(source.URL); !deadline.IsZero() && !deadline.After(now) {
 		return Source{}, ErrUnavailable
 	}
 	seen := map[string]bool{source.URL: true}
 	backups := make([]string, 0, 3)
 	for _, raw := range source.Backups {
-		if allowed(raw) && !seen[raw] {
+		deadline := sourceDeadline(raw)
+		if allowedFor(source.Platform, raw) && (deadline.IsZero() || deadline.After(now)) && !seen[raw] {
 			seen[raw] = true
 			backups = append(backups, raw)
 			if len(backups) == 3 {

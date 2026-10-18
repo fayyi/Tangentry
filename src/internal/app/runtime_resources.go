@@ -53,6 +53,7 @@ func openRuntimeResources(dataDir string, configuration config.Config, option Op
 	if err != nil {
 		return nil, err
 	}
+	processing.SetDouyinResolver(p.discovery.douyin.Resolve)
 	documents, err := filesystem.OpenDocuments(filepath.Join(dataDir, "documents"), p.network.public)
 	if err != nil {
 		return nil, err

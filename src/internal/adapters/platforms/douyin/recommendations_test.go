@@ -259,6 +259,50 @@ func TestRecommendationNestedPayloadAndAuthorAvatar(t *testing.T) {
 	}
 }
 
+func TestResolveVideoMediaFiltersRestrictedAndExpiredCandidates(t *testing.T) {
+	for name, response := range map[string]platformfetch.VideoMediaResponse{
+		"restricted": {Restricted: true, URL: "https://fixture.douyinvod.com/video.mp4"},
+		"expired":    {URL: "https://fixture.douyinvod.com/video.mp4?deadline=1"},
+		"unsafe":     {URL: "https://evil.example/video.mp4"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			client := &Client{Page: videoMediaPage{resolve: func(context.Context, string) (platformfetch.VideoMediaResponse, error) {
+				return response, nil
+			}}}
+			_, err := client.ResolveVideoMedia(context.Background(), "6961737553342991651")
+			if err == nil {
+				t.Fatal("unsafe media response accepted")
+			}
+			var restricted *discovery.PlatformError
+			if name == "restricted" && (!errors.As(err, &restricted) || !restricted.Restricted) {
+				t.Fatalf("restricted response lost classification: %v", err)
+			}
+		})
+	}
+}
+
+func TestCaptureBusinessStatusRejectsVerificationResponse(t *testing.T) {
+	page := captureFetcherFunc(func(context.Context, string, int) (platformfetch.FeedCaptureResponse, error) {
+		return platformfetch.FeedCaptureResponse{FeedParsed: true, Responses: []platformfetch.FeedResponse{{Status: http.StatusOK, APIStatus: 401, Parsed: true, ContentType: "application/json", URL: "https://www.douyin.com/aweme/v2/web/module/feed/"}}}, nil
+	})
+	client := &Client{Page: page}
+	_, err := client.Recommendations(context.Background(), 1)
+	if err == nil || !strings.Contains(err.Error(), "验证") {
+		t.Fatalf("business verification response error = %v", err)
+	}
+}
+
+type videoMediaPage struct {
+	resolve func(context.Context, string) (platformfetch.VideoMediaResponse, error)
+}
+
+func (f videoMediaPage) ResolveVideoMedia(ctx context.Context, id string) (platformfetch.VideoMediaResponse, error) {
+	return f.resolve(ctx, id)
+}
+func (videoMediaPage) Fetch(context.Context, string, string, platformfetch.Request) (platformfetch.Response, error) {
+	return platformfetch.Response{}, errors.New("unused")
+}
+
 func TestRecommendationUsesPageBridgeBeforeCookieFallback(t *testing.T) {
 	calls := 0
 	c := &Client{

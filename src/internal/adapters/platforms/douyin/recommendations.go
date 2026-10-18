@@ -14,6 +14,7 @@ import (
 	"tangentry/internal/content"
 	"tangentry/internal/discovery"
 	"tangentry/internal/platformfetch"
+	"time"
 )
 
 // The desktop bridge executes this request in douyin.com's page context, so
@@ -74,6 +75,9 @@ func (c *Client) Recommendations(ctx context.Context, page int) (discovery.Feed,
 			}
 			captureRestricted := false
 			for _, response := range captured.Responses {
+				if response.TooLarge {
+					return discovery.Feed{}, &discovery.PlatformError{Message: "应用内抖音页面响应过大或无法限制大小，请稍后重试。"}
+				}
 				if response.Status != http.StatusOK {
 					diagnostics = append(diagnostics, "页面 feed 响应不可用："+describeNonJSONPageResponse(response.Status, false, response.ContentType, response.URL))
 					captureRestricted = captureRestricted || response.Status == http.StatusForbidden || response.Status == http.StatusTooManyRequests
@@ -261,6 +265,40 @@ func (c *Client) Recommendations(ctx context.Context, page int) (discovery.Feed,
 		return discovery.Feed{}, &discovery.PlatformError{Message: "抖音当前暂无推荐，请稍后重试。"}
 	}
 	return feed, nil
+}
+
+// ResolveVideoMedia asks the authenticated WebView to resolve the video in
+// page context. It is intentionally called only with a canonical video ID.
+func (c *Client) ResolveVideoMedia(ctx context.Context, id string) (platformfetch.VideoMediaResponse, error) {
+	ref, err := discovery.ParseDouyin("https://www.douyin.com/video/" + strings.TrimSpace(id))
+	if err != nil || ref.ID != id {
+		return platformfetch.VideoMediaResponse{}, discovery.ErrInvalidQuery
+	}
+	bridge, ok := c.Page.(platformfetch.VideoMediaFetcher)
+	if !ok {
+		return platformfetch.VideoMediaResponse{}, discovery.ErrUnavailable
+	}
+	result, err := bridge.ResolveVideoMedia(ctx, id)
+	if err != nil {
+		return platformfetch.VideoMediaResponse{}, err
+	}
+	if result.Restricted {
+		return platformfetch.VideoMediaResponse{}, &discovery.PlatformError{Restricted: true, Message: "应用内抖音页面需要验证，请在应用内完成登录或验证码验证后重试。"}
+	}
+	candidates := make([]string, 0, 3)
+	for _, candidate := range append([]string{result.URL}, result.Backups...) {
+		if PlaybackURL(candidate) && playbackURLLive(candidate, time.Now()) {
+			candidates = append(candidates, candidate)
+			if len(candidates) == 3 {
+				break
+			}
+		}
+	}
+	if len(candidates) == 0 {
+		return platformfetch.VideoMediaResponse{}, discovery.ErrUnavailable
+	}
+	result.URL, result.Backups = candidates[0], candidates[1:]
+	return result, nil
 }
 
 func captureAPIStatus(responses []platformfetch.FeedResponse) int {

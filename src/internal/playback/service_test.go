@@ -65,6 +65,81 @@ func TestPrivateSourcesRangesAndCancellation(t *testing.T) {
 		t.Fatal("expired stream remained accessible")
 	}
 }
+
+func TestPlatformSpecificOpenMethodsRejectForeignIdentifiers(t *testing.T) {
+	s := New(func(context.Context, string) (Source, error) {
+		return Source{URL: "https://media.bilivideo.com/test.mp4"}, nil
+	}, &http.Client{Transport: roundTrip(func(*http.Request) (*http.Response, error) {
+		return rangeResponse(200, "", "", "video/mp4"), nil
+	})})
+	if _, err := s.OpenBilibili(context.Background(), "7340916925458779430"); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("Bilibili route accepted a Douyin id: %v", err)
+	}
+	if _, err := s.OpenDouyin(context.Background(), "BV17x411w7KC"); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("Douyin route accepted a Bilibili id: %v", err)
+	}
+}
+
+func TestDouyinSourceUsesDouyinReferer(t *testing.T) {
+	s := New(func(context.Context, string) (Source, error) {
+		return Source{URL: "https://v1.douyinvod.com/test.mp4", Platform: "douyin", Referer: "https://www.douyin.com/video/7340916925458779430"}, nil
+	}, &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		if got := r.Header.Get("Referer"); got != "https://www.douyin.com/video/7340916925458779430" {
+			t.Fatalf("referer = %q", got)
+		}
+		return rangeResponse(200, "", "", "video/mp4"), nil
+	})})
+	job, err := s.OpenDouyin(context.Background(), "7340916925458779430")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, release, err := s.Fetch(context.Background(), job.ID, "GET", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	release()
+}
+
+func TestDouyinRedirectIsPlatformBoundAndKeepsReferer(t *testing.T) {
+	var hosts []string
+	s := New(func(context.Context, string) (Source, error) {
+		return Source{URL: "https://v1.douyinvod.com/start.mp4", Platform: "douyin", Referer: "https://www.douyin.com/video/7340916925458779430"}, nil
+	}, &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		hosts = append(hosts, r.URL.Hostname())
+		if r.Header.Get("Referer") != "https://www.douyin.com/video/7340916925458779430" || r.Header.Get("Cookie") != "" || r.Header.Get("Authorization") != "" {
+			t.Fatalf("redirect request headers: %+v", r.Header)
+		}
+		if r.URL.Path == "/start.mp4" {
+			return &http.Response{StatusCode: http.StatusFound, Header: http.Header{"Location": {"https://v1.douyinvod.com/final.mp4"}}, Body: io.NopCloser(strings.NewReader(""))}, nil
+		}
+		return rangeResponse(200, "", "", "video/mp4"), nil
+	})})
+	job, err := s.OpenDouyin(context.Background(), "7340916925458779430")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, release, err := s.Fetch(context.Background(), job.ID, "GET", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	release()
+	if len(hosts) != 2 || hosts[0] != "v1.douyinvod.com" || hosts[1] != "v1.douyinvod.com" {
+		t.Fatalf("requested hosts = %v", hosts)
+	}
+
+	client := &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusFound, Header: http.Header{"Location": {"https://media.bilivideo.com/escape.mp4"}}, Body: io.NopCloser(strings.NewReader(""))}, nil
+	})}
+	blocked := New(func(context.Context, string) (Source, error) {
+		return Source{URL: "https://v1.douyinvod.com/start.mp4", Platform: "douyin"}, nil
+	}, client)
+	blockedJob, _ := blocked.OpenDouyin(context.Background(), "7340916925458779430")
+	if _, _, err := blocked.Fetch(context.Background(), blockedJob.ID, "GET", ""); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("cross-platform redirect accepted: %v", err)
+	}
+}
 func TestCanceledResolveDoesNotLeaveSession(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := New(func(context.Context, string) (Source, error) {

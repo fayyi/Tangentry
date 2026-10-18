@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -100,7 +101,21 @@ func (t *Toolkit) mediaArguments(rawURL, directory string, height int, options d
 }
 
 func (t *Toolkit) DownloadMedia(ctx context.Context, rawURL, directory string, height int, options downloads.Options) (downloads.Result, error) {
+	var douyinFallbackErr error
+	if ref, parseErr := discovery.ParseDouyin(rawURL); parseErr == nil && ref.ID != "" {
+		if result, fallbackErr := t.downloadDouyinFallback(ctx, ref.URL, directory, height, options); fallbackErr == nil {
+			return result, nil
+		} else {
+			douyinFallbackErr = fallbackErr
+		}
+	}
 	if !t.Ready() {
+		if douyinFallbackErr != nil {
+			if options.Mode == "audio" {
+				return downloads.Result{}, douyinFallbackErr
+			}
+			return downloads.Result{}, fmt.Errorf("应用内抖音页面下载失败，且 yt-dlp 尚未就绪：%v", douyinFallbackErr)
+		}
 		return downloads.Result{}, downloads.ErrTools
 	}
 	if err := os.MkdirAll(directory, 0700); err != nil {
@@ -124,6 +139,10 @@ func (t *Toolkit) DownloadMedia(ctx context.Context, rawURL, directory string, h
 	if err := cmd.Run(); err != nil {
 		if ctx.Err() != nil {
 			return downloads.Result{}, ctx.Err()
+		}
+		if ref, parseErr := discovery.ParseDouyin(rawURL); parseErr == nil && ref.ID != "" {
+			cookieArgs, _, _ := t.cookieArguments(rawURL)
+			return downloads.Result{}, classifyDouyin(stderr.String(), len(cookieArgs) > 0)
 		}
 		return downloads.Result{}, classify(stderr.String())
 	}

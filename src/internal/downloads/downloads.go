@@ -6,15 +6,18 @@ import (
 	"errors"
 	"sync"
 	"time"
+
+	"tangentry/internal/discovery"
 )
 
 var (
-	ErrInvalid  = errors.New("invalid download request")
-	ErrNotFound = errors.New("download not found")
-	ErrBusy     = errors.New("download queue full")
-	ErrActive   = errors.New("download is active")
-	ErrTools    = errors.New("download tools unavailable")
-	ErrToolBusy = errors.New("tool download in progress")
+	ErrInvalid         = errors.New("invalid download request")
+	ErrNotFound        = errors.New("download not found")
+	ErrBusy            = errors.New("download queue full")
+	ErrActive          = errors.New("download is active")
+	ErrTools           = errors.New("download tools unavailable")
+	ErrToolBusy        = errors.New("tool download in progress")
+	ErrDouyinShortLink = errors.New("douyin short link unavailable")
 )
 
 type Job struct {
@@ -92,4 +95,13 @@ type Service struct {
 	failure           error
 	inspectSlots      chan struct{}
 	observer          func(Job)
+	douyinResolve     func(context.Context, string) (discovery.DouyinReference, error)
+}
+
+// SetDouyinResolver supplies the authenticated platform resolver used to turn
+// v.douyin.com share locators into canonical numeric video IDs before queueing.
+func (s *Service) SetDouyinResolver(resolve func(context.Context, string) (discovery.DouyinReference, error)) {
+	s.mu.Lock()
+	s.douyinResolve = resolve
+	s.mu.Unlock()
 }

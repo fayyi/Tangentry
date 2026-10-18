@@ -6,10 +6,54 @@ import (
 	"testing"
 
 	"tangentry/internal/content"
+	"tangentry/internal/discovery"
 	"tangentry/internal/downloads"
+	"tangentry/internal/playback"
 	"tangentry/internal/subscriptions"
 	"tangentry/internal/transcription"
 )
+
+func TestResolveDouyinPlaybackPrefersWebViewAndFallsBackOnce(t *testing.T) {
+	var calls []string
+	page := func(context.Context, string) (playback.Source, error) {
+		calls = append(calls, "page")
+		return playback.Source{URL: "https://v1.douyinvod.com/page.mp4"}, nil
+	}
+	ytdlp := func(context.Context, string) (playback.Source, error) {
+		calls = append(calls, "yt-dlp")
+		return playback.Source{URL: "https://v2.douyinvod.com/fallback.mp4"}, nil
+	}
+	if source, err := resolveDouyinPlayback(context.Background(), "6961737553342991651", page, ytdlp); err != nil || source.Platform != "douyin" || len(calls) != 1 || calls[0] != "page" {
+		t.Fatalf("page result=%+v err=%v calls=%v", source, err, calls)
+	}
+	calls = nil
+	page = func(context.Context, string) (playback.Source, error) {
+		calls = append(calls, "page")
+		return playback.Source{}, errors.New("page unavailable")
+	}
+	if source, err := resolveDouyinPlayback(context.Background(), "6961737553342991651", page, ytdlp); err != nil || source.Platform != "douyin" || len(calls) != 2 || calls[1] != "yt-dlp" {
+		t.Fatalf("fallback result=%+v err=%v calls=%v", source, err, calls)
+	}
+}
+
+func TestResolveDouyinPlaybackKeepsVerificationAndTimeoutErrors(t *testing.T) {
+	ytdlpCalls := 0
+	ytdlp := func(context.Context, string) (playback.Source, error) {
+		ytdlpCalls++
+		return playback.Source{}, errors.New("yt-dlp should not run")
+	}
+	verification := &discovery.PlatformError{Restricted: true, Message: "应用内抖音页面需要验证"}
+	if _, err := resolveDouyinPlayback(context.Background(), "6961737553342991651", func(context.Context, string) (playback.Source, error) {
+		return playback.Source{}, verification
+	}, ytdlp); !errors.Is(err, verification) || ytdlpCalls != 0 {
+		t.Fatalf("verification err=%v ytdlpCalls=%d", err, ytdlpCalls)
+	}
+	if _, err := resolveDouyinPlayback(context.Background(), "6961737553342991651", func(context.Context, string) (playback.Source, error) {
+		return playback.Source{}, context.DeadlineExceeded
+	}, ytdlp); !errors.Is(err, context.DeadlineExceeded) || ytdlpCalls != 0 {
+		t.Fatalf("timeout err=%v ytdlpCalls=%d", err, ytdlpCalls)
+	}
+}
 
 type sourceContentFunc func(context.Context, string) (content.Item, error)
 

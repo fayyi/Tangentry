@@ -27,12 +27,29 @@ type FeedResponse struct {
 	APIStatus   int
 	Parsed      bool
 	HasMore     bool
+	TooLarge    bool
 	URL         string
 	ContentType string
 }
 
 type Fetcher interface {
 	Fetch(context.Context, string, string, Request) (Response, error)
+}
+
+// VideoMediaResponse is a metadata-only projection of media discovered by a
+// logged-in platform page. Cookies, response bodies and page HTML never cross
+// this port.
+type VideoMediaResponse struct {
+	URL        string
+	Backups    []string
+	Status     int
+	Restricted bool
+	PageURL    string
+	ExpiresAt  int64
+}
+
+type VideoMediaFetcher interface {
+	ResolveVideoMedia(context.Context, string) (VideoMediaResponse, error)
 }
 
 // FeedCaptureResponse is returned by native shells that can observe the

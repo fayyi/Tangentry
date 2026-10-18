@@ -27,6 +27,8 @@ type Source struct {
 	Quality  int
 	Duration int
 	Backups  []string
+	Platform string
+	Referer  string
 }
 type Session struct {
 	ID      string `json:"id"`
@@ -51,9 +53,34 @@ type Service struct {
 	streaming chan struct{}
 }
 
+func (s *Service) OpenDouyin(ctx context.Context, id string) (Session, error) {
+	if !ValidDouyinID(id) {
+		return Session{}, ErrInvalid
+	}
+	return s.open(ctx, id)
+}
+
+// OpenBilibili keeps the Bilibili HTTP route from accepting identifiers that
+// belong to another platform. Open remains as an internal compatibility entry
+// point for callers that still dispatch by identifier prefix.
+func (s *Service) OpenBilibili(ctx context.Context, id string) (Session, error) {
+	if !ValidBilibiliID(id) {
+		return Session{}, ErrInvalid
+	}
+	return s.open(ctx, id)
+}
+
+func sourceReferer(platform, id string) string {
+	if platform == "douyin" {
+		return "https://www.douyin.com/video/" + id
+	}
+	return "https://www.bilibili.com/"
+}
+
 // No arbitrary URL input: only a validated video identifier is resolved by the
 // platform adapter, and only public Bili CDN addresses may be fetched.
-func allowed(raw string) bool {
+func allowed(raw string) bool { return allowedFor("bilibili", raw) }
+func allowedFor(platform, raw string) bool {
 	if len(raw) > 8192 {
 		return false
 	}
@@ -61,7 +88,10 @@ func allowed(raw string) bool {
 	if err != nil || u.Scheme != "https" || u.User != nil || u.Opaque != "" || (u.Port() != "" && u.Port() != "443") {
 		return false
 	}
-	host := strings.ToLower(u.Hostname())
+	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+	if platform == "douyin" {
+		return host == "douyinvod.com" || strings.HasSuffix(host, ".douyinvod.com")
+	}
 	return strings.HasSuffix(host, ".bilivideo.com") || strings.HasSuffix(host, ".bilivideo.cn")
 }
 
@@ -71,11 +101,21 @@ func New(resolve func(context.Context, string) (Source, error), client *http.Cli
 	clone.Timeout = 0 // Media bodies can outlive the metadata client's timeout.
 	check := client.CheckRedirect
 	clone.CheckRedirect = func(req *http.Request, via []*http.Request) error {
-		if len(via) >= 5 || !allowed(req.URL.String()) {
+		if len(via) >= 5 {
+			return ErrUnavailable
+		}
+		platform := ""
+		if len(via) > 0 {
+			platform = mediaPlatform(via[0].URL.String())
+		}
+		if platform == "" || !allowedFor(platform, req.URL.String()) {
 			return ErrUnavailable
 		}
 		req.Header.Del("Cookie")
 		req.Header.Del("Authorization")
+		if len(via) > 0 && via[0].Header.Get("Referer") != "" {
+			req.Header.Set("Referer", via[0].Header.Get("Referer"))
+		}
 		if check != nil {
 			return check(req, via)
 		}
@@ -84,12 +124,30 @@ func New(resolve func(context.Context, string) (Source, error), client *http.Cli
 	return &Service{resolve: resolve, http: &clone, sessions: make(map[string]entry), opening: make(chan struct{}, 2), streaming: make(chan struct{}, 4)}
 }
 
+func mediaPlatform(raw string) string {
+	if allowedFor("douyin", raw) {
+		return "douyin"
+	}
+	if allowedFor("bilibili", raw) {
+		return "bilibili"
+	}
+	return ""
+}
+
 var videoID = regexp.MustCompile(`^BV[0-9A-Za-z]{10}$`)
+var douyinID = regexp.MustCompile(`^[1-9][0-9]{15,19}$`)
+
+func ValidBilibiliID(id string) bool { return videoID.MatchString(id) }
+func ValidDouyinID(id string) bool   { return douyinID.MatchString(id) }
 
 func (s *Service) Open(ctx context.Context, id string) (Session, error) {
-	if !videoID.MatchString(id) {
+	if !ValidBilibiliID(id) && !ValidDouyinID(id) {
 		return Session{}, ErrInvalid
 	}
+	return s.open(ctx, id)
+}
+
+func (s *Service) open(ctx context.Context, id string) (Session, error) {
 	select {
 	case s.opening <- struct{}{}:
 		defer func() { <-s.opening }()
@@ -125,6 +183,15 @@ func (s *Service) Open(ctx context.Context, id string) (Session, error) {
 	// Active readers retain their streams; opening more fails instead of evicting them.
 	if len(s.sessions) >= 32 {
 		return Session{}, ErrBusy
+	}
+	if source.Platform == "" {
+		source.Platform = "bilibili"
+	}
+	if source.Referer == "" {
+		source.Referer = sourceReferer(source.Platform, id)
+	}
+	if !allowedFor(source.Platform, source.URL) {
+		return Session{}, ErrUnavailable
 	}
 	sourceExpires := sourceDeadline(source.URL)
 	if !sourceExpires.IsZero() && !sourceExpires.After(now) {
@@ -176,7 +243,7 @@ func (s *Service) Fetch(ctx context.Context, token, method, byteRange string) (*
 		signatureFailure := false
 		sources := append([]string{value.source.URL}, value.source.Backups...)
 		for _, raw := range sources {
-			candidate, closeAttempt, err := s.fetchCandidate(ctx, method, raw, byteRange)
+			candidate, closeAttempt, err := s.fetchCandidate(ctx, method, raw, byteRange, value.source.Platform, value.source.Referer)
 			if err == nil {
 				if validMediaResponse(candidate, byteRange) && s.rememberSource(token, value.revision, raw, mediaSize(candidate)) {
 					response = candidate
@@ -226,4 +293,9 @@ func (s *Service) Fetch(ctx context.Context, token, method, byteRange string) (*
 }
 
 // ValidSource checks platform media boundaries for app-level composition.
-func ValidSource(source Source) bool { return allowed(source.URL) }
+func ValidSource(source Source) bool {
+	if source.Platform == "" {
+		source.Platform = "bilibili"
+	}
+	return allowedFor(source.Platform, source.URL)
+}

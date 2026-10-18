@@ -114,13 +114,10 @@ func (t *Toolkit) DouyinPlayback(ctx context.Context, raw string) (playback.Sour
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	if err := cmd.Run(); err != nil || stdout.exceeded {
 		if ctx.Err() != nil {
-			return playback.Source{}, &discovery.PlatformError{Message: "抖音视频解析超时，请检查网络和抖音 Cookie 后重试。"}
+			return playback.Source{}, &discovery.PlatformError{Message: "抖音视频解析超时，请检查网络或稍后重试。"}
 		}
-		message := "抖音视频暂时无法获取，请检查网络和工具设置中的抖音 Cookie。"
-		if strings.Contains(strings.ToLower(stderr.String()), "cookie") || strings.Contains(strings.ToLower(stderr.String()), "login") {
-			message = "抖音需要有效 Cookie，请在工具设置 → 抖音 Cookie 配置后重试。"
-		}
-		return playback.Source{}, &discovery.PlatformError{Message: message}
+		cookieArgs, _, _ := t.cookieArguments(ref.URL)
+		return playback.Source{}, &discovery.PlatformError{Message: classifyDouyin(stderr.String(), len(cookieArgs) > 0).Error()}
 	}
 	var data struct {
 		ID       string  `json:"id"`
@@ -133,10 +130,10 @@ func (t *Toolkit) DouyinPlayback(ctx context.Context, raw string) (playback.Sour
 		Height   int     `json:"height"`
 		Duration float64 `json:"duration"`
 	}
-	if err := json.Unmarshal(stdout.Bytes(), &data); err != nil || data.ID != ref.ID || data.URL == "" || data.Protocol != "https" || data.Ext != "mp4" || data.Height > 1080 || data.VCodec == "" || data.ACodec == "" || math.IsNaN(data.Duration) || math.IsInf(data.Duration, 0) || data.Duration < 0 || data.Duration > 1800 || !playback.ValidCompatibilitySource(data.URL) {
+	if err := json.Unmarshal(stdout.Bytes(), &data); err != nil || data.ID != ref.ID || data.URL == "" || data.Protocol != "https" || data.Ext != "mp4" || data.Height > 1080 || data.VCodec == "" || data.ACodec == "" || math.IsNaN(data.Duration) || math.IsInf(data.Duration, 0) || data.Duration < 0 || data.Duration > 1800 || !playback.ValidSource(playback.Source{URL: data.URL, Platform: "douyin"}) {
 		return playback.Source{}, &discovery.PlatformError{Message: "抖音没有返回可兼容播放的 MP4 视频，请下载视频或打开原内容。"}
 	}
-	return playback.Source{URL: data.URL, Quality: data.Height, Duration: int(data.Duration)}, nil
+	return playback.Source{URL: data.URL, Quality: data.Height, Duration: int(data.Duration), Platform: "douyin", Referer: ref.URL}, nil
 }
 func (t *Toolkit) extractVideo(ctx context.Context, platform, id, url string) (content.Item, error) {
 	if !t.ytdlpReady() {
@@ -163,11 +160,8 @@ func (t *Toolkit) extractVideo(ctx context.Context, platform, id, url string) (c
 			return content.Item{}, ctx.Err()
 		}
 		if platform == "douyin" {
-			message := "抖音视频暂时无法获取，请检查链接、网络和工具设置中的抖音 Cookie。"
-			if strings.Contains(strings.ToLower(stderr.String()), "cookie") {
-				message = "抖音需要有效 Cookie，请在工具设置配置自己的抖音 Cookie 后重试。"
-			}
-			return content.Item{}, &discovery.PlatformError{Message: message}
+			cookieArgs, _, _ := t.cookieArguments(url)
+			return content.Item{}, &discovery.PlatformError{Message: classifyDouyin(stderr.String(), len(cookieArgs) > 0).Error()}
 		}
 		return content.Item{}, &discovery.PlatformError{Message: classify(stderr.String()).Error()}
 	}

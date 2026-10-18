@@ -1,8 +1,10 @@
 package httptransport
 
 import (
+	"context"
 	"io"
 	"net/http"
+	"tangentry/internal/playback"
 	"time"
 )
 
@@ -11,7 +13,42 @@ func (h *mediaHandler) playbackOpen(w http.ResponseWriter, r *http.Request) {
 		write(w, 503, apiError{"playback_unavailable", "在线播放暂不可用。"})
 		return
 	}
-	value, err := h.media.Playback.Open(r.Context(), r.PathValue("id"))
+	if !playback.ValidBilibiliID(r.PathValue("id")) {
+		fail(w, playback.ErrInvalid)
+		return
+	}
+	service, ok := h.media.Playback.(interface {
+		OpenBilibili(context.Context, string) (playback.Session, error)
+	})
+	if !ok {
+		// Older test and server adapters only expose the shared Open method.
+		// The concrete playback.Service implements the platform-specific method,
+		// so production routes remain isolated without breaking those adapters.
+		h.openPlayback(w, r, h.media.Playback.Open)
+		return
+	}
+	h.openPlayback(w, r, service.OpenBilibili)
+}
+func (h *mediaHandler) douyinPlaybackOpen(w http.ResponseWriter, r *http.Request) {
+	if !playback.ValidDouyinID(r.PathValue("id")) {
+		fail(w, playback.ErrInvalid)
+		return
+	}
+	service, ok := h.media.Playback.(interface {
+		OpenDouyin(context.Context, string) (playback.Session, error)
+	})
+	if !ok {
+		write(w, 503, apiError{"playback_unavailable", "抖音在线播放暂不可用。"})
+		return
+	}
+	h.openPlayback(w, r, service.OpenDouyin)
+}
+func (h *mediaHandler) openPlayback(w http.ResponseWriter, r *http.Request, open func(context.Context, string) (playback.Session, error)) {
+	if h.media.Playback == nil {
+		write(w, 503, apiError{"playback_unavailable", "在线播放暂不可用。"})
+		return
+	}
+	value, err := open(r.Context(), r.PathValue("id"))
 	if err != nil {
 		fail(w, err)
 		return
