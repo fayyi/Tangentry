@@ -151,3 +151,70 @@ func TestCompatibilityCancellationAndCloseStopWorker(t *testing.T) {
 		t.Fatal("closed service accepted work")
 	}
 }
+
+func TestNeedsPlaybackConversion(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		info PlaybackFormat
+		want bool
+	}{
+		{name: "h264 aac mp4", info: PlaybackFormat{Container: "mp4", VideoCodec: "h264", AudioCodec: "aac"}},
+		{name: "hevc aac mp4", info: PlaybackFormat{Container: "mov,mp4,m4a,3gp,3g2,mj2", VideoCodec: "hevc", AudioCodec: "aac"}},
+		{name: "webm", info: PlaybackFormat{Container: "webm", VideoCodec: "h264", AudioCodec: "aac"}, want: true},
+		{name: "vp9", info: PlaybackFormat{Container: "mp4", VideoCodec: "vp9", AudioCodec: "aac"}, want: true},
+		{name: "opus", info: PlaybackFormat{Container: "mp4", VideoCodec: "h264", AudioCodec: "opus"}, want: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := NeedsPlaybackConversion(test.info); got != test.want {
+				t.Fatalf("NeedsPlaybackConversion(%+v) = %v, want %v", test.info, got, test.want)
+			}
+		})
+	}
+}
+
+func TestCompatibilityAllowsDouyinCDNAndRejectsLookalikes(t *testing.T) {
+	for _, test := range []struct {
+		raw  string
+		want bool
+	}{
+		{raw: "https://v3.douyinvod.com/video.mp4", want: true},
+		{raw: "https://cdn.douyinvod.net/video.mp4", want: true},
+		{raw: "https://douyinvod.com/video.mp4", want: false},
+		{raw: "https://douyinvod.com.evil.example/video.mp4", want: false},
+		{raw: "http://v3.douyinvod.com/video.mp4", want: false},
+	} {
+		if got := ValidCompatibilitySource(test.raw); got != test.want {
+			t.Fatalf("ValidCompatibilitySource(%q) = %v, want %v", test.raw, got, test.want)
+		}
+	}
+}
+
+func TestCompatibilitySkipsConversionForCompatibleMP4(t *testing.T) {
+	var converted bool
+	client := &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		if r.Header.Get("Referer") != "https://www.douyin.com/" {
+			t.Errorf("missing Douyin referer: %q", r.Header.Get("Referer"))
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("source")), ContentLength: 6, Header: make(http.Header)}, nil
+	})}
+	s, err := NewCompatibilityWithProbe(client, func(context.Context, string) (Source, error) {
+		return Source{URL: "https://v3.douyinvod.com/video.mp4"}, nil
+	}, func(context.Context, string, string) error {
+		converted = true
+		return errors.New("conversion should be skipped")
+	}, func(context.Context, string) (PlaybackFormat, error) {
+		return PlaybackFormat{Container: "mp4", VideoCodec: "h264", AudioCodec: "aac"}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	job, err := s.Open("https://www.douyin.com/video/1234567890123456")
+	if err != nil {
+		t.Fatal(err)
+	}
+	compatibilityWait(t, s, job.ID, "ready")
+	if converted {
+		t.Fatal("compatible MP4 was sent to converter")
+	}
+}
