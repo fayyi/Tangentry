@@ -25,15 +25,12 @@ func (h *discoveryHandler) unifiedSearch(w http.ResponseWriter, r *http.Request)
 
 func (h *discoveryHandler) creator(w http.ResponseWriter, r *http.Request) {
 	platform, id := r.PathValue("platform"), r.PathValue("id")
-	if platform != "bilibili" || h.browse.Search == nil {
+	if h.browse.UnifiedSearch == nil {
 		fail(w, discovery.ErrInvalidQuery)
 		return
 	}
-	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-	if page == 0 {
-		page = 1
-	}
-	feed, err := h.browse.Search.Search(r.Context(), id, page)
+	page := r.URL.Query().Get("cursor")
+	feed, err := h.browse.UnifiedSearch.Creator(r.Context(), platform, id, page)
 	if err != nil {
 		fail(w, err)
 		return

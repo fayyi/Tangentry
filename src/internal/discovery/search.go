@@ -24,6 +24,10 @@ type SearchProvider interface {
 	Search(context.Context, string, string) (SearchPage, error)
 }
 
+type CreatorSearchProvider interface {
+	Creator(context.Context, string, string) (SearchPage, error)
+}
+
 type SearchSource struct {
 	Page  SearchPage `json:"page"`
 	Error string     `json:"error,omitempty"`
@@ -50,10 +54,19 @@ type SearchService struct {
 	Local      func(context.Context, content.Query) (content.Page, error)
 	Subscribed func(context.Context) (Feed, error)
 	Providers  map[string]SearchProvider
+	Creators   map[string]CreatorSearchProvider
 	Link       func(context.Context, string) (Feed, error)
 	cacheMu    sync.Mutex
 	cache      map[string]searchCacheEntry
 	ttl        time.Duration
+}
+
+func (s *SearchService) Creator(ctx context.Context, platform, id, cursor string) (SearchPage, error) {
+	provider := s.Creators[platform]
+	if provider == nil {
+		return SearchPage{Platform: platform}, &PlatformError{Message: "该平台暂不支持创作者临时视图。"}
+	}
+	return provider.Creator(ctx, id, cursor)
 }
 
 type searchCacheEntry struct {

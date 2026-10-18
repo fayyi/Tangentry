@@ -22,9 +22,19 @@ func httpDiscoveryDependencies(s *services, adapters httpAdapterBundle) httptran
 		"youtube":     youtubeSearchProvider{toolkit: s.adapters.network.toolkit},
 		"linuxdo":     p.forum,
 		"xiaoyuzhou":  p.podcasts,
-		"xiaohongshu": unsupportedSearchProvider{platform: "小红书"},
-		"douyin":      unsupportedSearchProvider{platform: "抖音"},
+		"xiaohongshu": p.notes,
+		"douyin":      p.douyin,
 	})
+	// Subscription snapshots are part of the local search surface. They are
+	// merged after the FTS-backed library query so saved and subscribed content
+	// share one local result group without changing the library repository.
+	search.Subscribed = s.features.sources.Gallery
+	search.Creators = map[string]discovery.CreatorSearchProvider{
+		"bilibili":   p.bilibili,
+		"youtube":    p.youtube,
+		"linuxdo":    p.forum,
+		"xiaoyuzhou": p.podcasts,
+	}
 	return httptransport.DiscoveryDependencies{
 		Search: discovery.NewService(p.creators), UnifiedSearch: search, BilibiliBrowser: adapters.bilibiliBrowser,
 		RecommendationConfig: s.features.api.preferences, RecommendationQueue: s.features.recommendations.queue,

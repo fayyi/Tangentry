@@ -12,6 +12,7 @@ type DiscoveryService interface {
 
 type UnifiedSearchService interface {
 	Search(context.Context, string, discovery.SearchOptions) (discovery.SearchResponse, error)
+	Creator(context.Context, string, string, string) (discovery.SearchPage, error)
 }
 
 type RecommendationQueue interface {

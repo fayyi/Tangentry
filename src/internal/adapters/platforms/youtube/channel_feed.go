@@ -63,6 +63,20 @@ func (c *Client) FetchConditional(ctx context.Context, id string, v feeds.Valida
 	}
 	return c.feeds.FetchConditional(ctx, discovery.YouTubeChannelFeed(id), v)
 }
+
+func (c *Client) Creator(ctx context.Context, id, cursor string) (discovery.SearchPage, error) {
+	if !discovery.YouTubeChannelID(id) {
+		return discovery.SearchPage{}, discovery.ErrInvalidQuery
+	}
+	if cursor != "" {
+		return discovery.SearchPage{}, discovery.ErrInvalidQuery
+	}
+	result, err := c.FetchConditional(ctx, id, feeds.Validators{})
+	if err != nil {
+		return discovery.SearchPage{}, err
+	}
+	return discovery.SearchPage{Items: result.Feed.Items, Platform: "youtube"}, nil
+}
 func Parse(data []byte, rawURL string) (discovery.Feed, error) {
 	reference, err := discovery.ParseYouTubeChannel(rawURL)
 	if err != nil || reference.ID == "" || rawURL != discovery.YouTubeChannelFeed(reference.ID) {

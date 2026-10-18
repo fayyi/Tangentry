@@ -6,12 +6,14 @@ import (
 	"sync"
 
 	"tangentry/internal/content"
+	"tangentry/internal/platformfetch"
 )
 
 type Client struct {
 	HTTP      *http.Client
 	Cookie    func(string) string
 	UserAgent func(string) string
+	Page      platformfetch.Fetcher
 	mu        sync.Mutex
 	locators  map[string]string
 	order     []string

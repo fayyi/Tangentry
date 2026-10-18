@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -197,6 +198,18 @@ const douyinDomReadScript = `(function(){
   return {pageUrl:location.href, title:document.title || '', ready:document.readyState, cards:cards, responses:(window.__tangentryDouyinFeed || []).splice(0, 32), resources:resources, fetchHookInstalled:window.fetch === window.__tangentryDouyinFetchWrapper, xhrHookInstalled:XMLHttpRequest.prototype.send === window.__tangentryDouyinXHRSend};
 })();`
 
+const searchDomReadScript = `(function(){
+  const text = node => (node && (node.innerText || node.textContent) || '').trim();
+  const absolute = raw => { try { return new URL(raw || '', location.href).href; } catch (_) { return ''; } };
+  const idFrom = raw => { const value = String(raw || ''); let match = value.match(/\/video\/([1-9][0-9]{15,19})/); if (match) return {platform:'douyin',id:match[1]}; match = value.match(/\/(?:explore|discovery\/item)\/([A-Za-z0-9_-]{3,80})/); if (match) return {platform:'xiaohongshu',id:match[1]}; return null; };
+  const authorIDFrom = raw => { const value = String(raw || ''); let match = value.match(/\/user\/profile\/([^/?#]+)/); if (!match) match = value.match(/\/user\/([^/?#]+)/); if (!match) return ''; try { return decodeURIComponent(match[1]); } catch (_) { return ''; } };
+  const imageFrom = node => { const image = node && node.querySelector('img,video,[class*="cover"]'); const raw = image && (image.currentSrc || image.src || image.poster || image.getAttribute('data-src')); return absolute(raw); };
+  const findText = (node, names) => { for (const name of names) { const found = node && node.querySelector(name); if (text(found)) return text(found); } return ''; };
+  const cards = [], seen = new Set();
+  for (const link of document.querySelectorAll('a[href]')) { const url = absolute(link.getAttribute('href') || link.href); const ref = idFrom(url); if (!ref || seen.has(ref.platform+':'+ref.id)) continue; let node = link; for (let i=0;i<6 && node.parentElement;i++) { node=node.parentElement; if (node.querySelector('img,video,[class*="cover"]') || node.querySelectorAll('a[href]').length > 2) break; } const authorLink = Array.from(node.querySelectorAll('a[href]')).map(candidate => ({candidate, url:absolute(candidate.getAttribute('href') || candidate.href)})).find(value => /\/user\//.test(value.url) || /\/profile\//.test(value.url)); const title = text(link) || findText(node,['h1','h2','h3','[class*="title"]','[class*="desc"]']) || text(node).slice(0,200); const author = findText(node,['[class*="author"]','[class*="user"]','[data-e2e*="user"]','a[href*="/user/"]','a[href*="/profile/"]']); cards.push({id:ref.platform+':'+ref.id,url:url.split('?')[0],thumbnailURL:imageFrom(node),title:title,author:author,authorID:authorIDFrom(authorLink && authorLink.url)}); seen.add(ref.platform+':'+ref.id); }
+  return {pageUrl:location.href,title:document.title||'',ready:document.readyState,cards:cards};
+})();`
+
 func newPlatformPageBridge() *platformPageBridge {
 	return &platformPageBridge{sessions: make(map[string]*platformPageSession)}
 }
@@ -384,6 +397,76 @@ func (b *platformPageBridge) CaptureFeed(ctx context.Context, platform string, p
 		pageURL = blocked
 	}
 	return platformfetch.FeedCaptureResponse{Responses: responses, DOMCards: result.Cards, PageURL: pageURL, Title: result.Title, Ready: result.Ready, ResourcePaths: result.ResourcePaths, InitiatorTypes: result.InitiatorTypes, FetchHookInstalled: result.FetchHookInstalled, XHRHookInstalled: result.XHRHookInstalled}, nil
+}
+
+func (b *platformPageBridge) CaptureSearch(ctx context.Context, platform, query, cursor string) (platformfetch.SearchCaptureResponse, error) {
+	origin, ok := platformPageOrigin(platform)
+	if !ok || (platform != "douyin" && platform != "xiaohongshu") {
+		return platformfetch.SearchCaptureResponse{}, errors.New("该平台不支持页面关键词搜索")
+	}
+	path, err := searchPageURL(platform, query, cursor)
+	if err != nil {
+		return platformfetch.SearchCaptureResponse{}, err
+	}
+	session, err := b.session(platform, origin)
+	if err != nil {
+		return platformfetch.SearchCaptureResponse{}, err
+	}
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if err := waitPlatformPage(ctx, session.ready); err != nil {
+		return platformfetch.SearchCaptureResponse{}, err
+	}
+	if err := session.window.Page().LoadURL(path); err != nil {
+		return platformfetch.SearchCaptureResponse{}, err
+	}
+	if err := waitForPageReady(ctx, session.window.Page(), "search"); err != nil {
+		return platformfetch.SearchCaptureResponse{}, err
+	}
+	raw, err := evalPageWithRetry(ctx, session.window.Page(), searchDomReadScript)
+	if err != nil {
+		return platformfetch.SearchCaptureResponse{}, err
+	}
+	encoded, err := json.Marshal(raw)
+	if err != nil {
+		return platformfetch.SearchCaptureResponse{}, err
+	}
+	var result struct {
+		PageURL string                  `json:"pageUrl"`
+		Title   string                  `json:"title"`
+		Ready   string                  `json:"ready"`
+		Cards   []platformfetch.DOMCard `json:"cards"`
+	}
+	if err := json.Unmarshal(encoded, &result); err != nil {
+		return platformfetch.SearchCaptureResponse{}, err
+	}
+	return platformfetch.SearchCaptureResponse{DOMCards: result.Cards, PageURL: result.PageURL, Title: result.Title, Ready: result.Ready}, nil
+}
+
+func searchPageURL(platform, query, cursor string) (string, error) {
+	query = strings.TrimSpace(query)
+	if query == "" || len([]rune(query)) > 200 || strings.ContainsRune(query, '\x00') {
+		return "", errors.New("页面关键词无效")
+	}
+	if cursor != "" {
+		page, err := strconv.Atoi(cursor)
+		if err != nil || page < 1 || page > 1000 {
+			return "", errors.New("页面搜索游标无效")
+		}
+	}
+	var raw string
+	switch platform {
+	case "douyin":
+		raw = "https://www.douyin.com/search/" + url.PathEscape(query)
+	case "xiaohongshu":
+		raw = "https://www.xiaohongshu.com/search_result?keyword=" + url.QueryEscape(query)
+	default:
+		return "", errors.New("该平台不支持页面关键词搜索")
+	}
+	if cursor != "" {
+		raw += "&page=" + url.QueryEscape(cursor)
+	}
+	return raw, nil
 }
 
 type douyinCaptureResponse struct {
@@ -677,6 +760,8 @@ func platformPageOrigin(platform string) (string, bool) {
 		return "https://linux.do/", true
 	case "douyin":
 		return "https://www.douyin.com/", true
+	case "xiaohongshu":
+		return "https://www.xiaohongshu.com/", true
 	default:
 		return "", false
 	}
@@ -727,6 +812,8 @@ func platformPageURLAllowed(raw, platform string) bool {
 		return host == "linux.do"
 	case "douyin":
 		return host == "www.douyin.com"
+	case "xiaohongshu":
+		return host == "www.xiaohongshu.com"
 	default:
 		return false
 	}

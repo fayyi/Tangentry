@@ -4,7 +4,7 @@ import { request } from '../../shared/api/client'
 import type { ContentItem, Feed, SearchPage, UnifiedSearchResponse } from '../../shared/api/types'
 import { ModernGalleryCard } from '../../shared/ui/ModernGalleryCard'
 import { CardCollection } from '../../shared/ui/CardCollection'
-import { appendSearchItems, groupSearchResults, mergeSearchItems, type SearchGroup, type SearchMode } from './searchLogic'
+import { appendSearchItems, buildSearchParams, creatorPlatformSupport, groupSearchResults, mergeSearchItems, type SearchGroup, type SearchMode } from './searchLogic'
 
 const labels: Record<string, string> = { bilibili: 'B站', youtube: 'YouTube', linuxdo: 'Linux.do', xiaoyuzhou: '小宇宙', xiaohongshu: '小红书', douyin: '抖音', local: '本机资料库与订阅' }
 type TimeFilter = '' | 'day' | 'week' | 'month'
@@ -47,8 +47,8 @@ export function UnifiedSearchPage({ initialQuery = '', savedIDs, pending, onRead
         const feed = await request<Feed>(`/discovery/${source}?q=${encodeURIComponent(value)}`, { signal: next.signal })
         setResult({ query: value, local: { items: [], total: 0, counts: {} }, sources: { [source]: { page: { ...feed, platform: source, cursor: undefined } } }, link: feed }); return
       }
-      const params = new URLSearchParams({ q: value }); if (platform) params.set('platform', platform); if (kind) params.set('kind', kind)
-      const bounds = timeBounds(time); if (bounds.from) params.set('from', String(bounds.from)); if (bounds.to) params.set('to', String(bounds.to))
+      const bounds = timeBounds(time)
+      const params = buildSearchParams(value, { platform, kind, ...bounds })
       setResult(await request<UnifiedSearchResponse>(`/search?${params}`, { signal: next.signal }))
     } catch (cause) { if (!next.signal.aborted) setError(cause instanceof Error ? cause.message : '搜索未能完成。') }
   }
@@ -58,8 +58,8 @@ export function UnifiedSearchPage({ initialQuery = '', savedIDs, pending, onRead
     if (!result || !cursor || loadingMore.has(group.key) || group.key === 'local') return
     setLoadingMore(current => new Set(current).add(group.key))
     try {
-      const params = new URLSearchParams({ q: result.query, platform: group.key, cursor }); if (kind) params.set('kind', kind)
-      const bounds = timeBounds(time); if (bounds.from) params.set('from', String(bounds.from)); if (bounds.to) params.set('to', String(bounds.to))
+      const bounds = timeBounds(time)
+      const params = buildSearchParams(result.query, { platform: group.key, cursor, kind, ...bounds })
       const page = await request<UnifiedSearchResponse>(`/search?${params}`); const incoming = page.sources[group.key]?.page
       if (incoming) setResult(current => { if (!current) return page; const previous = current.sources[group.key]?.page; const merged: SearchPage = { ...incoming, items: appendSearchItems(previous?.items ?? [], incoming.items) }; return { ...current, sources: { ...current.sources, [group.key]: { page: merged, error: page.sources[group.key]?.error } } } })
     } catch (cause) { setError(cause instanceof Error ? cause.message : '加载更多结果失败。') }
@@ -67,16 +67,16 @@ export function UnifiedSearchPage({ initialQuery = '', savedIDs, pending, onRead
   }
 
   async function loadCreatorMore() {
-    if (!result || !creator || creatorPlatform !== 'bilibili' || loadingMore.has(creatorPlatform)) return
+    if (!result || !creator || !creatorPlatform || loadingMore.has(creatorPlatform)) return
     const page = result.sources[creatorPlatform]?.page.cursor
     if (!page) return
     setLoadingMore(current => new Set(current).add(creatorPlatform))
     try {
-      const feed = await request<Feed>(`/search/creator/${creatorPlatform}/${encodeURIComponent(creator)}?page=${encodeURIComponent(page)}`)
+      const feed = await request<SearchPage>(`/search/creator/${creatorPlatform}/${encodeURIComponent(creator)}?cursor=${encodeURIComponent(page)}`)
       setResult(current => {
         if (!current) return current
         const previous = current.sources[creatorPlatform]?.page
-        const merged: SearchPage = { ...previous, ...feed, platform: creatorPlatform, items: appendSearchItems(previous?.items ?? [], feed.items), cursor: feed.hasMore ? String(feed.page + 1) : undefined }
+        const merged: SearchPage = { ...previous, ...feed, platform: creatorPlatform, items: appendSearchItems(previous?.items ?? [], feed.items) }
         return { ...current, sources: { ...current.sources, [creatorPlatform]: { page: merged } } }
       })
     } catch (cause) { setError(cause instanceof Error ? cause.message : '加载创作者内容失败。') }
@@ -85,15 +85,18 @@ export function UnifiedSearchPage({ initialQuery = '', savedIDs, pending, onRead
 
   useEffect(() => {
     if (!creator || !creatorPlatform) return
-    if (creatorPlatform !== 'bilibili') { setError(`${labels[creatorPlatform] ?? creatorPlatform} 暂时不支持创作者临时视图。`); return }
+    if (!creatorPlatformSupport(creatorPlatform).view) { setError(`${labels[creatorPlatform] ?? creatorPlatform} 暂时不支持创作者临时视图。`); return }
     const next = new AbortController(); controller.current = next
-    request<Feed>(`/search/creator/${creatorPlatform}/${encodeURIComponent(creator)}`, { signal: next.signal }).then(feed => setResult({ query: creator, local: { items: [], total: 0, counts: {} }, sources: { [creatorPlatform]: { page: { ...feed, platform: creatorPlatform, cursor: feed.hasMore ? String(feed.page + 1) : undefined } } } })).catch(cause => { if (!next.signal.aborted) setError(cause instanceof Error ? cause.message : '暂时无法读取创作者内容。') })
+    request<SearchPage>(`/search/creator/${creatorPlatform}/${encodeURIComponent(creator)}`, { signal: next.signal }).then(feed => setResult({ query: creator, local: { items: [], total: 0, counts: {} }, sources: { [creatorPlatform]: { page: feed } } })).catch(cause => { if (!next.signal.aborted) setError(cause instanceof Error ? cause.message : '暂时无法读取创作者内容。') })
     return () => next.abort()
   }, [creator, creatorPlatform])
 
   function card(item: ContentItem) { return <div className="unified-search-card" key={item.id}><ModernGalleryCard item={item} saved={savedIDs.has(item.id)} pending={pending.has(item.id)} onRead={onRead} onSave={onSave} /><button type="button" className="creator-link" disabled={!item.authorId} onClick={() => onCreator(item.platform, item.authorId)}><UserRound size={13}/>看看 TA 最近</button></div> }
 
-  if (creator && creatorPlatform) return <section className="creator-temporary-view"><button type="button" className="button button-secondary" onClick={() => history.back()}><ArrowLeft size={16}/>返回搜索</button><div className="results-heading"><strong>{labels[creatorPlatform] ?? creatorPlatform} 创作者最近内容</strong><button type="button" className="button button-primary" disabled={creatorPlatform !== 'bilibili'} onClick={() => onSubscribe(creatorPlatform, creator)}>订阅</button></div>{error && <div className="error-panel" role="alert">{error}</div>}{groups.map(group => <div key={group.key}><CardCollection masonry className="modern-gallery">{group.items.map(card)}</CardCollection>{result?.sources[group.key]?.page.hasMore && <button type="button" className="button button-secondary" onClick={() => void loadCreatorMore()} disabled={loadingMore.has(group.key)}>{loadingMore.has(group.key) ? '正在加载…' : '查看更多'}</button>}</div>)}</section>
+  if (creator && creatorPlatform) {
+    const support = creatorPlatformSupport(creatorPlatform)
+    return <section className="creator-temporary-view"><button type="button" className="button button-secondary" onClick={() => history.back()}><ArrowLeft size={16}/>返回搜索</button><div className="results-heading"><div><strong>{labels[creatorPlatform] ?? creatorPlatform} 创作者最近内容</strong>{!support.subscribe && <p className="field-hint">该平台暂不支持一键订阅；这是一次性的临时查看，不会写入订阅或推荐偏好。</p>}</div>{support.subscribe && <button type="button" className="button button-primary" onClick={() => onSubscribe(creatorPlatform, creator)}>订阅</button>}</div>{error && <div className="error-panel" role="alert">{error}</div>}{groups.map(group => <div key={group.key}><CardCollection masonry className="modern-gallery">{group.items.map(card)}</CardCollection>{result?.sources[group.key]?.page.hasMore && result.sources[group.key].page.cursor && <button type="button" className="button button-secondary" onClick={() => void loadCreatorMore()} disabled={loadingMore.has(group.key)}>{loadingMore.has(group.key) ? '正在加载…' : '查看更多'}</button>}</div>)}</section>
+  }
 
   return <>
     <section className="unified-search-head"><h1>统一搜索</h1><form className="search-field unified-search-form" role="search" onSubmit={event => { event.preventDefault(); void search() }}><Search size={17} aria-hidden="true"/><input autoFocus type="search" aria-label="搜索本机资料库与各平台" placeholder="搜索标题、作者、正文或字幕" value={query} onChange={event => setQuery(event.target.value)} /><button type="submit" className="button button-primary">搜索</button></form><div className="unified-search-filters"><label>平台<select value={platform} onChange={event => setPlatform(event.target.value)}><option value="">全部平台</option>{Object.entries(labels).filter(([key]) => key !== 'local').map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label><label>媒体<select value={kind} onChange={event => setKind(event.target.value)}><option value="">全部类型</option><option value="video">视频</option><option value="audio">音频</option><option value="article">文章</option><option value="image">图文</option><option value="pdf">PDF</option></select></label><label>时间<select value={time} onChange={event => setTime(event.target.value as TimeFilter)}><option value="">全部时间</option><option value="day">最近一天</option><option value="week">最近一周</option><option value="month">最近一个月</option></select></label><div className="segmented" role="group" aria-label="结果显示方式"><button type="button" aria-pressed={mode === 'grouped'} onClick={() => setMode('grouped')}>按平台</button><button type="button" aria-pressed={mode === 'mixed'} onClick={() => setMode('mixed')}>混合排序</button></div></div></section>

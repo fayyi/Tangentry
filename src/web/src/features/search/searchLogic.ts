@@ -3,6 +3,39 @@ import type { ContentItem, UnifiedSearchResponse } from '../../shared/api/types'
 export type SearchGroup = { key: string; title: string; items: ContentItem[]; error?: string }
 export type SearchMode = 'grouped' | 'mixed'
 
+const creatorViewPlatforms = ['bilibili', 'youtube', 'linuxdo', 'xiaoyuzhou'] as const
+const creatorSubscriptionPlatforms = ['bilibili', 'youtube'] as const
+
+export type CreatorPlatformSupport = {
+  view: boolean
+  subscribe: boolean
+}
+
+export type SearchFilters = {
+  platform?: string
+  kind?: string
+  from?: number
+  to?: number
+  cursor?: string
+}
+
+export function creatorPlatformSupport(platform: string): CreatorPlatformSupport {
+  return {
+    view: (creatorViewPlatforms as readonly string[]).includes(platform),
+    subscribe: (creatorSubscriptionPlatforms as readonly string[]).includes(platform),
+  }
+}
+
+export function buildSearchParams(query: string, filters: SearchFilters = {}): URLSearchParams {
+  const params = new URLSearchParams({ q: query })
+  if (filters.platform) params.set('platform', filters.platform)
+  if (filters.kind) params.set('kind', filters.kind)
+  if (filters.from) params.set('from', String(filters.from))
+  if (filters.to) params.set('to', String(filters.to))
+  if (filters.cursor) params.set('cursor', filters.cursor)
+  return params
+}
+
 export function groupSearchResults(result: UnifiedSearchResponse, labels: Record<string, string>): SearchGroup[] {
   const groups: SearchGroup[] = []
   if (result.local.items.length) groups.push({ key: 'local', title: '本机资料库与订阅', items: result.local.items })
