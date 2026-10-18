@@ -178,6 +178,13 @@
 .inbox-search-row { display: flex; align-items: center; gap: 8px; }
 .inbox-search { flex: 1; }
 .inbox-filter-strip { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.inbox-view-actions { display: flex; align-items: center; gap: 10px; color: var(--faint); font-size: 12px; }
+.saved-view-settings { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.saved-view-settings .subscription-field { flex: 0 1 150px; }
+.saved-view-settings .subscription-field input, .inbox-filter-strip .subscription-field input { min-height: 34px; padding: 0 9px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--card); color: var(--ink); }
+.inbox-checkbox { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; color: var(--muted); font-size: 12px; }
+.inbox-checkbox input { accent-color: var(--accent); }
+.saved-view-settings .icon-button { color: var(--danger); }
 .inbox-filter-strip .subscription-field select { min-width: 140px; }
 .inbox-entry { min-width: 0; }
 .inbox-provenance { display: flex; flex-wrap: wrap; gap: 6px; margin: -6px 0 10px 194px; color: var(--faint); font-size: 11.5px; }
@@ -218,4 +225,7 @@
   .inbox-search { min-width: 0; }
   .inbox-filter-strip { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
   .inbox-filter-strip > * { flex-shrink: 0; }
+  .saved-view-settings { align-items: stretch; }
+  .saved-view-settings .subscription-field { flex: 1 1 42%; }
+  .inbox-view-actions { align-items: flex-start; flex-direction: column; }
 }

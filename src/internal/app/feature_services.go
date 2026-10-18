@@ -44,6 +44,7 @@ type apiServices struct {
 	favorites      *favoritesync.Service
 	groupService   *subscriptions.GroupService
 	inbox          *subscriptions.InboxService
+	savedViews     *subscriptions.SavedViewService
 	notes          *notes.Service
 	noteFrames     *notes.Frames
 	noteExports    *notes.ExportService
@@ -69,6 +70,7 @@ func wireFeatures(dataDir string, configuration config.Config, option Options, r
 	savedCaptions := subtitles.NewSavedService(store)
 	contentService := content.NewService(store)
 	inboxService := subscriptions.NewInboxService(store)
+	savedViews := subscriptions.NewSavedViewService(store)
 	recommendations := &recommender{
 		platforms:     p,
 		subscriptions: sources.Gallery,
@@ -141,7 +143,7 @@ func wireFeatures(dataDir string, configuration config.Config, option Options, r
 		recommendations: recommendations, discoveryBatch: discoveryBatch, downloads: processing, transcription: speech, modelDownloads: modelDownloads, modelDir: modelDir,
 		api: apiServices{
 			ai: languageAI, compatibility: compatibility, favorites: favorites,
-			groupService: subscriptions.NewGroupService(store), inbox: inboxService,
+			groupService: subscriptions.NewGroupService(store), inbox: inboxService, savedViews: savedViews,
 			notes: noteService, noteFrames: notes.NewFrames(store, processing.NoteFrameFile, toolkit.CaptureNoteFrame),
 			noteExports: notes.NewExporter(store), playback: playback.New(resolvePlayback, p.network.public),
 			progress: readingprogress.NewService(store), readState: readstate.New(store), history: history.New(store),

@@ -20,16 +20,19 @@ import { SubscriptionAddressSettings } from './SubscriptionAddressSettings'
 import { SubscriptionSourceIcon } from './SubscriptionSourceIcon'
 import { PageHeader } from '../../shared/ui/PageHeader'
 import { SubscriptionHealthCenter } from './SubscriptionHealthCenter'
+import type { SavedView } from '../../shared/api/types'
+import type { InboxFilters } from './useSubscriptionInbox'
 
 type Subscriptions = ReturnType<typeof useSubscriptions>
 const updated = (seconds: number) => seconds ? new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(seconds * 1000)) : '尚未更新'
 
-export function SubscriptionsPage({ subscriptions: state, savedIDs, savingUnavailable, savingIDs, onSave, onRead, filter, onFilter, saveNotice, saveError, readStates, readFilter, onReadFilter, inbox, mode, onMode }: {
+export function SubscriptionsPage({ subscriptions: state, savedIDs, savingUnavailable, savingIDs, onSave, onRead, filter, onFilter, saveNotice, saveError, readStates, readFilter, onReadFilter, inbox, mode, onMode, views,selectedViewID,onSaveView,onUpdateView,onDeleteView }: {
   inbox: ReturnType<typeof useSubscriptionInbox>; mode: 'latest' | 'history' | 'health'; onMode: (mode: 'latest' | 'history' | 'health') => void
   readStates: ReturnType<typeof useReadState>; readFilter: 'all' | 'unread' | 'read'; onReadFilter: (value: 'all' | 'unread' | 'read') => void
   subscriptions: Subscriptions; savedIDs: Set<string>; savingUnavailable: boolean; savingIDs: Set<string>
   onSave: (item: ContentItem) => void; onRead: (item: ContentItem) => void
   filter: string; onFilter: (value: string) => void; saveNotice: string; saveError: boolean
+  views: SavedView[];selectedViewID:string;onSaveView:(name:string,filters:InboxFilters)=>Promise<void>;onUpdateView:(id:string,edit:Partial<Pick<SavedView,'name'|'definition'|'icon'|'color'|'default'>>)=>void;onDeleteView:(id:string)=>void
 }) {
   const [editing, setEditing] = useState(false)
   const [kind, setKind] = useState('all')
@@ -80,7 +83,7 @@ export function SubscriptionsPage({ subscriptions: state, savedIDs, savingUnavai
     </>} aria-busy={state.loading}/>
     {state.batch && state.batch.kind === 'update' && <div className={`subscription-batch-progress ${state.batch.running ? 'running' : 'complete'}`} role="status"><div className="subscription-batch-progress-copy"><strong>{state.batch.running ? `正在更新来源 ${state.batch.completed}/${state.batch.total}` : `已完成 ${state.batch.total - state.batch.failed}/${state.batch.total} 个来源`}</strong>{state.batch.failed > 0 && <span>{state.batch.failed} 个来源失败，已保留旧内容。</span>}</div><div className="subscription-batch-progress-track"><span style={{ width: `${state.batch.total ? Math.round(state.batch.completed / state.batch.total * 100) : 0}%` }} /></div>{!state.batch.running && state.batch.failed > 0 && <button className="button button-secondary" onClick={() => void state.retryBatchFailed()}><RefreshCw size={14} aria-hidden="true" />重试失败项</button>}</div>}
     <div id="subscription-add-panel" hidden={!adding}><SubscriptionAddForm busy={busy} creating={state.pending?.kind === 'create'} inputRef={sourceInput} onCreate={(query, name, type) => state.create(query, name, type)} /></div>
-    {mode==='history'?<SubscriptionInbox inbox={inbox} sources={state.sources} groups={groups.groups} readStates={readStates} savedIDs={savedIDs} savingIDs={savingIDs} savingUnavailable={savingUnavailable} onRead={onRead} onSave={onSave} saveNotice={saveNotice} saveError={saveError}/>:mode==='health'?<SubscriptionHealthCenter state={state} onOpenSource={id=>{state.select(id);onMode('latest')}}/>:<>
+    {mode==='history'?<SubscriptionInbox inbox={inbox} sources={state.sources} groups={groups.groups} readStates={readStates} savedIDs={savedIDs} savingIDs={savingIDs} savingUnavailable={savingUnavailable} onRead={onRead} onSave={onSave} saveNotice={saveNotice} saveError={saveError} views={views} selectedViewID={selectedViewID} onSaveView={onSaveView} onUpdateView={onUpdateView} onDeleteView={onDeleteView}/>:mode==='health'?<SubscriptionHealthCenter state={state} onOpenSource={id=>{state.select(id);onMode('latest')}}/>:<>
     {state.actionError && <div className="error-panel" role="alert"><AlertCircle size={18} /><p>{state.actionError}</p></div>}
     {state.notice && <p className="inline-feedback" role="status"><Check size={17} />{state.notice}</p>}
     {state.listError && <div className="error-panel" role="alert"><AlertCircle size={18} /><p>{state.listError} 已显示的来源可能不是最新记录。</p><button className="button button-secondary" disabled={state.loading} onClick={() => void state.reload()}>重新加载来源</button></div>}

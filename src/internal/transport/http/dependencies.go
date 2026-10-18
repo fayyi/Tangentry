@@ -7,6 +7,7 @@ import (
 	"tangentry/internal/discovery"
 	"tangentry/internal/documents"
 	"tangentry/internal/downloads"
+	"tangentry/internal/subscriptions"
 	"tangentry/internal/subtitles"
 )
 
@@ -58,6 +59,17 @@ type Options struct {
 	History                 HistoryService
 	SubscriptionGroups      GroupService
 	SubscriptionInbox       InboxService
+	SavedViews              SavedViewService
+}
+
+type SavedViewService interface {
+	List(context.Context) ([]subscriptions.SavedView, error)
+	Get(context.Context, string) (subscriptions.SavedView, error)
+	Query(context.Context, string, string, int) (subscriptions.InboxPage, int, error)
+	Create(context.Context, subscriptions.SavedViewInput) (subscriptions.SavedView, error)
+	Update(context.Context, string, subscriptions.SavedViewEdit) (subscriptions.SavedView, error)
+	Delete(context.Context, string) error
+	Reorder(context.Context, []string) error
 }
 
 type Dependencies struct {
@@ -145,5 +157,6 @@ type SubscriptionDependencies struct {
 	Subscriptions      SubscriptionService
 	SubscriptionGroups GroupService
 	SubscriptionInbox  InboxService
+	SavedViews         SavedViewService
 	Favorites          FavoriteService
 }

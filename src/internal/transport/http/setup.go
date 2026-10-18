@@ -43,7 +43,7 @@ func New(library *content.Service, discover *discovery.Service, assets fs.FS, op
 		},
 		Feeds: SubscriptionDependencies{
 			SubscriptionGroups: optionsValue.SubscriptionGroups, SubscriptionInbox: optionsValue.SubscriptionInbox, Favorites: optionsValue.Favorites,
-			Subscriptions: optionsValue.Subscriptions,
+			Subscriptions: optionsValue.Subscriptions, SavedViews: optionsValue.SavedViews,
 		},
 	}, assets)
 }

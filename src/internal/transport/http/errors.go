@@ -84,6 +84,8 @@ var errorResponses = []errorResponse{
 	{err: readingprogress.ErrInvalid, status: http.StatusBadRequest, code: "invalid_progress", message: "阅读进度不完整或超出视频时长，请重新加载视频。"},
 	{err: readingprogress.ErrConflict, status: http.StatusConflict, code: "progress_conflict", message: "另一个页面已更新进度。自动保存已暂停，可重新读取或明确保存当前位置。"},
 	{err: subscriptions.ErrInboxInvalid, status: http.StatusBadRequest, code: "invalid_inbox_query", message: "请检查收件箱筛选或重新加载第一页。"},
+	{err: subscriptions.ErrSavedViewInvalid, status: http.StatusBadRequest, code: "invalid_saved_view", message: "请检查视图名称、筛选条件、图标和颜色。"},
+	{err: subscriptions.ErrSavedViewNotFound, status: http.StatusNotFound, code: "saved_view_not_found", message: "这条保存视图已不存在，请重新加载列表。"},
 	{err: subscriptions.ErrInboxNotFound, status: http.StatusNotFound, code: "inbox_not_found", message: "本地历史中没有这份内容，请从来源再次获取。"},
 	{err: subscriptions.ErrGroupInvalid, status: http.StatusBadRequest, code: "invalid_subscription_group", message: "请选择有效分组和当前版本，分组名称为 1–60 字，不能包含换行或控制字符。"},
 	{err: subscriptions.ErrGroupNotFound, status: http.StatusNotFound, code: "subscription_group_not_found", message: "这个分组已经不存在，请重新加载分组。"},

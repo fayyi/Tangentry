@@ -38,6 +38,7 @@ type GroupService interface {
 
 type InboxService interface {
 	List(context.Context, subscriptions.InboxQuery) (subscriptions.InboxPage, error)
+	Count(context.Context, subscriptions.InboxQuery) (int, error)
 	Item(context.Context, string) (content.Item, error)
 }
 
