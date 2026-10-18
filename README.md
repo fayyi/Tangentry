@@ -132,6 +132,21 @@ Tangentry 的思路是：
 
 桌面版自带运行时；**yt-dlp、Deno 与 Whisper 模型会在首次使用时自动下载并校验**，无需手动安装。
 
+#### 一次性准备自动更新签名
+
+桌面版的自动更新由 MyGo 的 Ed25519 签名保护。首次启用时，在本机运行：
+
+```bash
+cd src
+go tool mygo keygen
+```
+
+将生成的 `mygo-update.pub` 公钥内容保存为 `src/updater/mygo-update.pub` 并提交；将 `mygo-update.key` 私钥的完整内容加入 GitHub 仓库的 **Settings → Secrets and variables → Actions**，Secret 名称必须是 `MYGO_UPDATER_PRIVATE_KEY`。私钥不要提交到仓库，请妥善离线备份；私钥丢失后，已经安装的应用将无法验证后续更新，只能重新安装。
+
+发布工作流会把 MyGo 生成的 `update-<os>-<arch>.json`、签名归档和增量文件作为 GitHub Release 资产上传。若未配置 Secret，构建仍会完成但会明确警告，并不会生成可安装的签名更新。
+
+macOS 构建默认使用 ad-hoc 签名。MyGo 更新时会替换整个 `.app` bundle，因此应用安装目录必须对当前用户可写；安装到需要管理员权限的 `/Applications`、只读卷或由包管理器管理的位置时，`Enabled` 会为 false，应用不会自行替换。ad-hoc 签名不能满足其他 Mac 的 Gatekeeper 信任，正式分发应使用 Developer ID 签名并完成 Apple 公证；未公证构建可能需要用户在“系统设置 → 隐私与安全性”中允许，或按现有故障排查说明移除隔离属性。
+
 ### 方式二：Docker 自托管
 
 ```bash
@@ -151,6 +166,8 @@ GitHub Actions 发布镜像前，请在仓库的 **Settings → Secrets and vari
 - `DOCKERHUB_TOKEN`：Docker Hub Access Token（不要使用登录密码）。
 
 请先在 Docker Hub 该用户名下创建名为 `tangentry` 的仓库。本地使用 Compose 前，将 `.env.example` 复制为 `.env` 并设置 Docker Hub 用户名。推送 `v0.0.1` 这类版本 tag 后，工作流会自动发布 `latest`、完整版本号和主次版本号镜像。
+
+Docker 服务端不提供应用内自更新；升级时请拉取新的 Docker 镜像并重新创建容器，数据卷会保留。
 
 首次启动会生成登录密码并写入日志和 `/data/admin-password`：
 

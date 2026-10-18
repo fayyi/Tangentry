@@ -61,7 +61,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	backend := server.New(application.RuntimePort(), application.ShellStatePort(), server.ShellOptions{})
+	backend := server.New(application.RuntimePort(), application.ShellStatePort(), server.ShellOptions{Capabilities: server.Capabilities{Server: true}})
 	defer func() {
 		if err := backend.Close(); err != nil {
 			slog.Error("could not close application services", "error", err)

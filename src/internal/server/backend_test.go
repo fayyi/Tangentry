@@ -67,6 +67,24 @@ func TestCapabilitiesReportOnlyWiredDesktopFeatures(t *testing.T) {
 	if got := read(desktop); got != (Capabilities{PathPicker: true, WindowCapture: true, KeepAwake: true, PlatformWebViewLogin: true}) {
 		t.Fatalf("capabilities = %+v", got)
 	}
+	serverApplication, err := app.New(t.TempDir(), fstest.MapFS{"index.html": {Data: []byte("app")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := New(serverApplication.RuntimePort(), serverApplication.ShellStatePort(), ShellOptions{Capabilities: Capabilities{Server: true}})
+	defer server.Close()
+	if got := read(server); got != (Capabilities{Server: true}) {
+		t.Fatalf("server capabilities = %+v", got)
+	}
+	updaterApplication, err := app.New(t.TempDir(), fstest.MapFS{"index.html": {Data: []byte("app")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	updater := New(updaterApplication.RuntimePort(), updaterApplication.ShellStatePort(), ShellOptions{Capabilities: Capabilities{Updater: true}})
+	defer updater.Close()
+	if got := read(updater); got != (Capabilities{Updater: true}) {
+		t.Fatalf("updater capabilities = %+v", got)
+	}
 }
 
 func TestPlatformLoginRouteStartsOnlySupportedDesktopPlatform(t *testing.T) {

@@ -8,11 +8,13 @@ export type Capabilities = {
   windowCapture: boolean
   notifications: boolean
   keepAwake: boolean
+  updater: boolean
+  server: boolean
   /** Opens the native, platform-scoped WebView login window. */
   platformWebViewLogin: boolean
 }
 
-const none: Capabilities = { pathPicker: false, windowCapture: false, notifications: false, keepAwake: false, platformWebViewLogin: false }
+const none: Capabilities = { pathPicker: false, windowCapture: false, notifications: false, keepAwake: false, updater: false, server: false, platformWebViewLogin: false }
 let current: Capabilities | undefined
 let loading: Promise<Capabilities> | undefined
 

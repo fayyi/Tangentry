@@ -58,12 +58,14 @@ func run() (runErr error) {
 	}
 	platformLogin := newPlatformLoginBridge(application.PlatformCredentialsPort())
 	mygo.BindAs("PlatformLogin", platformLoginService{bridge: platformLogin})
+	updater := newUpdaterService(dataDir)
+	mygo.BindAs("Updater", updater)
 	runtime := application.RuntimePort()
 	activity := application.ActivityPort()
 	backend := server.New(runtime, application.ShellStatePort(), server.ShellOptions{
 		PickPath:      pickPath,
 		PlatformLogin: platformLogin.Open,
-		Capabilities:  server.Capabilities{WindowCapture: true, Notifications: true, KeepAwake: true},
+		Capabilities:  server.Capabilities{WindowCapture: true, Notifications: true, KeepAwake: true, Updater: true},
 	})
 	defer func() {
 		if err := backend.Close(); err != nil {
@@ -75,6 +77,7 @@ func run() (runErr error) {
 		return err
 	}
 	openWindow := newDesktopWindows(address, platformPages.Close).Open
+	updater.StartBackground()
 	activity.ObserveJobs(startJobActivity(openWindow).Observe)
 	registerDesktopLifecycle(openWindow)
 	mygo.App.WhenReady(openWindow)
