@@ -13,6 +13,7 @@ type SocialSource = [platform: string, id: string]
 export interface ReaderContentState {
   item: ContentItem | null
   error: string
+  errorRequiresVerification: boolean
   localReadFailed: boolean
   retryLocalRead: () => void
   social: SocialSource | null
@@ -20,6 +21,7 @@ export interface ReaderContentState {
   waitingForDownloads: boolean
   refreshDetails: () => void
   detailError: string
+  detailRequiresVerification: boolean
   detailLoading: boolean
   detailRead: boolean
   sourceEditing: boolean
@@ -45,10 +47,12 @@ export function useReaderContent({ id, initialItem, jobs, jobsLoading, onItem }:
   const waitingForDownloads = Boolean(social && jobsLoading && initialItem?.id !== id)
   const [item, setItem] = useState<ContentItem | null>(initialItem ?? null)
   const [error, setError] = useState('')
+  const [errorRequiresVerification, setErrorRequiresVerification] = useState(false)
   const [attempt, setAttempt] = useState(0)
   const [localAttempt, setLocalAttempt] = useState(0)
   const [localReadFailed, setLocalReadFailed] = useState(false)
   const [detailError, setDetailError] = useState('')
+  const [detailRequiresVerification, setDetailRequiresVerification] = useState(false)
   const [detailLoading, setDetailLoading] = useState(false)
   const [detailRead, setDetailRead] = useState(false)
   const [sourceEditing, setSourceEditing] = useState(false)
@@ -75,7 +79,9 @@ export function useReaderContent({ id, initialItem, jobs, jobsLoading, onItem }:
     }
     const controller = new AbortController()
     setError('')
+    setErrorRequiresVerification(false)
     setDetailError('')
+    setDetailRequiresVerification(false)
     setDetailLoading(false)
     setDetailRead(false)
     setLocalReadFailed(false)
@@ -213,6 +219,7 @@ export function useReaderContent({ id, initialItem, jobs, jobsLoading, onItem }:
     }).catch(cause => {
       if (!controller.signal.aborted) {
         setLocalReadFailed(cause instanceof LocalNoteReadError)
+        setErrorRequiresVerification(cause instanceof APIError && cause.code === 'platform_restricted')
         setError(cause instanceof Error ? cause.message : '内容暂不可用。')
       }
     })
@@ -228,6 +235,7 @@ export function useReaderContent({ id, initialItem, jobs, jobsLoading, onItem }:
     const controller = new AbortController()
     setDetailLoading(true)
     setDetailError('')
+    setDetailRequiresVerification(false)
     void request<{ items: ContentItem[] }>('/discovery/linuxdo?q=' + encodeURIComponent(item.url), { signal: controller.signal }).then(async feed => {
       const fetched = feed.items.find(candidate => candidate.id === id && candidate.platform === 'linuxdo' && candidate.discussion)
       if (!fetched) throw new Error('未能读取话题楼层，请重试。')
@@ -246,7 +254,10 @@ export function useReaderContent({ id, initialItem, jobs, jobsLoading, onItem }:
         onItem?.(detail)
       }
     }).catch(cause => {
-      if (!controller.signal.aborted) setDetailError(cause instanceof Error ? cause.message : '话题楼层暂时无法读取。')
+      if (!controller.signal.aborted) {
+        setDetailRequiresVerification(cause instanceof APIError && cause.code === 'platform_restricted')
+        setDetailError(cause instanceof Error ? cause.message : '话题楼层暂时无法读取。')
+      }
     }).finally(() => {
       if (!controller.signal.aborted) setDetailLoading(false)
     })
@@ -264,5 +275,5 @@ export function useReaderContent({ id, initialItem, jobs, jobsLoading, onItem }:
     setSourceEditing(false)
   }
 
-  return { item, error, localReadFailed, retryLocalRead, social, localSocial, waitingForDownloads, refreshDetails, detailError, detailLoading, detailRead, sourceEditing, setSourceEditing, onSourceUpdated }
+  return { item, error, errorRequiresVerification, localReadFailed, retryLocalRead, social, localSocial, waitingForDownloads, refreshDetails, detailError, detailRequiresVerification, detailLoading, detailRead, sourceEditing, setSourceEditing, onSourceUpdated }
 }

@@ -128,6 +128,84 @@ func TestPageBridgeIsPreferredForTopicReads(t *testing.T) {
 	}
 }
 
+func TestPageBridgeDetailFailurePreservesDiagnostics(t *testing.T) {
+	c := &Client{Page: pageFetcherFunc(func(_ context.Context, platform, path string, request platformfetch.Request) (platformfetch.Response, error) {
+		if platform != "linuxdo" || path != "/t/42.json" || request.Method != http.MethodGet {
+			t.Fatalf("unexpected page request: %s %s %+v", platform, path, request)
+		}
+		return platformfetch.Response{Status: http.StatusOK, URL: "https://linux.do/t/42.json?token=secret", ContentType: "text/html", Body: "<html>verification-page token=abcdefghijklmnopqrstuvwxyz0123456789</html>"}, nil
+	})}
+	_, err := c.Topic(context.Background(), "42")
+	var platformErr *discovery.PlatformError
+	if !errors.As(err, &platformErr) || !strings.Contains(platformErr.Message, "响应不是 JSON") || !strings.Contains(platformErr.Message, "content-type=text/html") || !strings.Contains(platformErr.Message, "最终 URL=https://linux.do/t/42.json") {
+		t.Fatalf("detail diagnostics lost: %v", err)
+	}
+	if strings.Contains(platformErr.Message, "token=secret") || strings.Contains(platformErr.Message, "abcdefghijklmnopqrstuvwxyz0123456789") {
+		t.Fatalf("diagnostic leaked secret: %s", platformErr.Message)
+	}
+}
+
+func TestPageBridgeUnavailableIncludesReason(t *testing.T) {
+	c := &Client{Page: pageFetcherFunc(func(context.Context, string, string, platformfetch.Request) (platformfetch.Response, error) {
+		return platformfetch.Response{}, errors.New("Completion handler for function call is no longer reachable")
+	})}
+	_, err := c.Topic(context.Background(), "42")
+	var platformErr *discovery.PlatformError
+	if !errors.As(err, &platformErr) || !strings.Contains(platformErr.Message, "页面请求桥不可用") || !strings.Contains(platformErr.Message, "Completion handler") {
+		t.Fatalf("bridge reason lost: %v", err)
+	}
+}
+
+func TestPageBridgeAllowsFourMiBTopicResponse(t *testing.T) {
+	body := `{"id":42,"title":"大响应","posts_count":1,"post_stream":{"stream":[99],"posts":[{"id":99,"post_number":1,"username":"作者","cooked":"<p>正文</p>"}]}}` + strings.Repeat(" ", 3<<20)
+	c := &Client{Page: pageFetcherFunc(func(context.Context, string, string, platformfetch.Request) (platformfetch.Response, error) {
+		return platformfetch.Response{Status: http.StatusOK, URL: "https://linux.do/t/42.json", ContentType: "application/json", Body: body}, nil
+	})}
+	item, err := c.Topic(context.Background(), "42")
+	if err != nil || item.ID != "linuxdo:42" {
+		t.Fatalf("4 MiB bridge response rejected: item=%+v err=%v", item, err)
+	}
+}
+
+func TestTopicPostsParsesRequestedFloors(t *testing.T) {
+	raw := `{"post_stream":{"posts":[{"id":101,"post_number":2,"username":"回复者","created_at":"2026-01-01T00:00:00Z","cooked":"<p>楼层正文</p>"}]}}`
+	c := &Client{Page: pageFetcherFunc(func(_ context.Context, platform, path string, request platformfetch.Request) (platformfetch.Response, error) {
+		if platform != "linuxdo" || path != "/t/42/posts.json?post_ids[]=101" || request.Method != http.MethodGet {
+			t.Fatalf("unexpected posts request: %s %s", platform, path)
+		}
+		return platformfetch.Response{Status: http.StatusOK, URL: "https://linux.do/t/42/posts.json?post_ids%5B%5D=101", ContentType: "application/json", Body: raw}, nil
+	})}
+	discussion, err := c.TopicPosts(context.Background(), "42", []int64{101})
+	if err != nil || discussion.TopicID != "42" || discussion.LoadedPosts != 1 || len(discussion.Posts) != 1 || discussion.Posts[0].ID != 101 {
+		t.Fatalf("topic posts not parsed: %+v, %v", discussion, err)
+	}
+}
+
+func TestTopicPostsEmptyResponseIsActionable(t *testing.T) {
+	c := &Client{Page: pageFetcherFunc(func(context.Context, string, string, platformfetch.Request) (platformfetch.Response, error) {
+		return platformfetch.Response{Status: http.StatusOK, ContentType: "application/json", Body: `{"post_stream":{"posts":[]}}`}, nil
+	})}
+	_, err := c.TopicPosts(context.Background(), "42", []int64{101})
+	var platformErr *discovery.PlatformError
+	if !errors.As(err, &platformErr) || !strings.Contains(platformErr.Message, "未返回请求的楼层正文") {
+		t.Fatalf("empty posts response lost reason: %v", err)
+	}
+}
+
+func TestHTTPTopicResponseSizeLimitIncludesDiagnostics(t *testing.T) {
+	body := `{"id":42,"title":"话题","post_stream":{"posts":[]}}` + strings.Repeat(" ", discourseMaxResponseBody)
+	c := &Client{HTTP: &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		res := response(r, http.StatusOK, body)
+		res.Header.Set("Content-Type", "application/json")
+		return res, nil
+	})}}
+	_, err := c.Topic(context.Background(), "42")
+	var platformErr *discovery.PlatformError
+	if !errors.As(err, &platformErr) || !strings.Contains(platformErr.Message, "响应超过 4 MiB 大小限制") || !strings.Contains(platformErr.Message, "状态码=200") || !strings.Contains(platformErr.Message, "content-type=application/json") {
+		t.Fatalf("oversized detail diagnostics lost: %v", err)
+	}
+}
+
 func TestSessionCheckAndUserAuthorization(t *testing.T) {
 	for _, raw := range []string{`{"current_user":{"id":3,"username":"reader"}}`, `{"current_user":null}`} {
 		c := &Client{HTTP: &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {

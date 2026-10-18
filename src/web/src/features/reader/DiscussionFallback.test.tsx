@@ -29,4 +29,16 @@ describe('DiscussionFallback', () => {
     expect(html).toContain('Linux.do 暂时不可用')
     expect(html).toContain('重试')
   })
+
+  it('offers in-app verification when the platform requires it', () => {
+    const html = renderToStaticMarkup(createElement(DiscussionFallback, {
+      loading: false,
+      error: '需要在应用内完成 Linux.do 验证',
+      onRetry: () => {},
+      onVerify: () => {},
+      children: createElement('article', null, '旧正文'),
+    }))
+
+    expect(html).toContain('重新验证')
+  })
 })
