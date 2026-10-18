@@ -170,7 +170,7 @@ func manifestDatabase(files []File) (File, bool) {
 	return File{}, false
 }
 
-func validateManifestFiles(files []File) error {
+func validateManifestFiles(files []File, includeDownloads bool) error {
 	if len(files) == 0 || len(files)+1 > MaxEntries {
 		return ErrInvalidPackage
 	}
@@ -185,8 +185,10 @@ func validateManifestFiles(files []File) error {
 			if file.Type != FileDatabase {
 				return ErrInvalidPackage
 			}
-		} else if file.Type != FileData {
-			return ErrInvalidPackage
+		} else {
+			if file.Type != FileData || !allowedBackupPath(file.Path, includeDownloads) {
+				return ErrInvalidPackage
+			}
 		}
 		seen[clean] = true
 		total += file.Size
@@ -198,6 +200,24 @@ func validateManifestFiles(files []File) error {
 		return ErrInvalidPackage
 	}
 	return nil
+}
+
+func allowedBackupPath(name string, includeDownloads bool) bool {
+	clean, err := cleanRelative(name)
+	if err != nil || clean != name {
+		return false
+	}
+	parts := strings.Split(clean, "/")
+	if len(parts) < 2 || parts[0] != "documents" && !(includeDownloads && parts[0] == "downloads") {
+		return false
+	}
+	for _, part := range parts[1:] {
+		switch strings.ToLower(part) {
+		case "credentials", "credential", "cookies", "cookie", "keychain", "keychains", "models", "model", "tools", "tool", "cache", "caches", "runtime", ".tangentry-restore":
+			return false
+		}
+	}
+	return true
 }
 
 func readLimited(r io.Reader, limit int64) ([]byte, error) {
@@ -212,22 +232,159 @@ func readLimited(r io.Reader, limit int64) ([]byte, error) {
 }
 
 func ensurePrivateDir(dir string) error {
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	parent := filepath.Dir(dir)
+	name := filepath.Base(dir)
+	parentRoot, err := os.OpenRoot(parent)
+	if err != nil {
 		return err
 	}
-	return os.Chmod(dir, 0700)
+	defer parentRoot.Close()
+	info, err := parentRoot.Lstat(name)
+	if errors.Is(err, os.ErrNotExist) {
+		if err := parentRoot.Mkdir(name, 0700); err != nil && !errors.Is(err, os.ErrExist) {
+			return err
+		}
+		info, err = parentRoot.Lstat(name)
+	}
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return ErrInvalidPackage
+	}
+	opened, err := parentRoot.OpenRoot(name)
+	if err != nil {
+		return err
+	}
+	openedInfo, statErr := opened.Stat(".")
+	closeErr := opened.Close()
+	if statErr != nil || closeErr != nil || !openedInfo.IsDir() || !os.SameFile(info, openedInfo) {
+		return ErrInvalidPackage
+	}
+	if err := parentRoot.Chmod(name, 0700); err != nil {
+		return err
+	}
+	return nil
 }
 
 func chmodTree(root string, fileMode, dirMode os.FileMode) error {
-	return filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+	opened, directories, files, err := inspectTree(root)
+	if err != nil {
+		return err
+	}
+	defer opened.Close()
+	for _, name := range files {
+		if err := opened.Chmod(name, fileMode); err != nil {
+			return err
+		}
+	}
+	sort.Slice(directories, func(i, j int) bool { return strings.Count(directories[i], "/") > strings.Count(directories[j], "/") })
+	for _, name := range directories {
+		if name == "." {
+			continue
+		}
+		if err := opened.Chmod(name, dirMode); err != nil {
+			return err
+		}
+	}
+	return opened.Chmod(".", dirMode)
+}
+
+func syncTree(root string) error {
+	opened, directories, files, err := inspectTree(root)
+	if err != nil {
+		return err
+	}
+	defer opened.Close()
+	for _, name := range files {
+		file, err := opened.Open(name)
 		if err != nil {
 			return err
 		}
-		if info.IsDir() {
-			return os.Chmod(path, dirMode)
+		info, statErr := file.Stat()
+		syncErr := file.Sync()
+		closeErr := file.Close()
+		if statErr != nil || !info.Mode().IsRegular() {
+			return ErrInvalidPackage
 		}
-		return os.Chmod(path, fileMode)
+		if err := errors.Join(syncErr, closeErr); err != nil {
+			return err
+		}
+	}
+	sort.Slice(directories, func(i, j int) bool { return strings.Count(directories[i], "/") > strings.Count(directories[j], "/") })
+	for _, name := range directories {
+		if err := syncRootPath(opened, name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func inspectTree(path string) (*os.Root, []string, []string, error) {
+	before, err := os.Lstat(path)
+	if err != nil || !before.IsDir() || before.Mode()&os.ModeSymlink != 0 {
+		return nil, nil, nil, ErrInvalidPackage
+	}
+	root, err := os.OpenRoot(path)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	after, err := root.Stat(".")
+	if err != nil || !after.IsDir() || !os.SameFile(before, after) {
+		root.Close()
+		return nil, nil, nil, ErrInvalidPackage
+	}
+	var directories []string
+	var files []string
+	err = filepath.Walk(path, func(name string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		relative, err := filepath.Rel(path, name)
+		if err != nil {
+			return err
+		}
+		relative = filepath.ToSlash(relative)
+		checked, err := root.Lstat(relative)
+		if err != nil || checked.Mode()&os.ModeSymlink != 0 || !os.SameFile(info, checked) {
+			return ErrInvalidPackage
+		}
+		if info.IsDir() {
+			directories = append(directories, relative)
+			return nil
+		}
+		if !info.Mode().IsRegular() {
+			return ErrInvalidPackage
+		}
+		files = append(files, relative)
+		return nil
 	})
+	if err != nil {
+		root.Close()
+		return nil, nil, nil, err
+	}
+	return root, directories, files, nil
+}
+
+func syncRootPath(root *os.Root, name string) error {
+	var directory *os.File
+	var err error
+	if name == "." {
+		directory, err = root.Open(".")
+	} else {
+		var nested *os.Root
+		nested, err = root.OpenRoot(name)
+		if err == nil {
+			directory, err = nested.Open(".")
+			closeErr := nested.Close()
+			if err == nil {
+				err = closeErr
+			}
+		}
+	}
+	if err != nil {
+		return err
+	}
+	syncErr := directory.Sync()
+	closeErr := directory.Close()
+	return errors.Join(syncErr, closeErr)
 }
 
 func validateStaged(path string) error {
@@ -243,6 +400,17 @@ func validateStaged(path string) error {
 }
 
 func planPath(workDir, id string) string { return filepath.Join(workDir, "plan-"+id+".json") }
+
+func validateRestorePlan(workDir, id string, plan restorePlan) error {
+	if !validRestoreID(id) || plan.PlanID != id || plan.StagedID != id || plan.PreRestoreSnapshotID != plan.RestoreResult.PreRestoreSnapshotID || !validRestoreID(plan.PreRestoreSnapshotID) ||
+		plan.StagePath != filepath.Join(workDir, "staged-"+plan.StagedID) || plan.PreflightPath != filepath.Join(workDir, "pre-"+plan.PreRestoreSnapshotID) {
+		return ErrInvalidPackage
+	}
+	if plan.SnapshotID != plan.Manifest.SnapshotID || !validSnapshotID(plan.SnapshotID) {
+		return ErrInvalidPackage
+	}
+	return validateManifestFiles(plan.Manifest.Files, plan.Manifest.IncludeDownloads)
+}
 
 func (s *Service) savePlan(plan restorePlan) error {
 	data, err := json.Marshal(plan)
@@ -284,14 +452,9 @@ func (s *Service) cleanExpiredPlans(now time.Time) error {
 		path := filepath.Join(s.workDir, entry.Name())
 		var plan restorePlan
 		data, readErr := os.ReadFile(path)
-		if readErr != nil || json.Unmarshal(data, &plan) != nil || now.Sub(plan.CreatedAt) > RestorePlanTTL {
+		id := strings.TrimSuffix(strings.TrimPrefix(entry.Name(), "plan-"), ".json")
+		if readErr != nil || json.Unmarshal(data, &plan) != nil || validateRestorePlan(s.workDir, id, plan) != nil || now.Sub(plan.CreatedAt) > RestorePlanTTL {
 			removeAll(path)
-			if plan.StagePath != "" {
-				removeAll(plan.StagePath)
-			}
-			if plan.PreflightPath != "" {
-				removeAll(plan.PreflightPath)
-			}
 			continue
 		}
 		pendingPlans = append(pendingPlans, pending{path: path, plan: plan})
@@ -304,7 +467,56 @@ func (s *Service) cleanExpiredPlans(now time.Time) error {
 		removeAll(oldest.plan.StagePath)
 		removeAll(oldest.plan.PreflightPath)
 	}
-	return nil
+	return s.enforceRestoreWorkDirLimit()
+}
+
+func (s *Service) enforceRestoreWorkDirLimit() error {
+	for {
+		size, err := restoreWorkDirSize(s.workDir)
+		if err != nil && !errors.Is(err, ErrInvalidPackage) {
+			return err
+		}
+		if size <= MaxRestoreWorkDirSize {
+			return nil
+		}
+		entries, err := os.ReadDir(s.workDir)
+		if err != nil {
+			return err
+		}
+		var oldest string
+		var oldestTime time.Time
+		for _, entry := range entries {
+			if !strings.HasPrefix(entry.Name(), "plan-") || !strings.HasSuffix(entry.Name(), ".json") {
+				continue
+			}
+			var plan restorePlan
+			data, readErr := os.ReadFile(filepath.Join(s.workDir, entry.Name()))
+			if readErr != nil || json.Unmarshal(data, &plan) != nil {
+				continue
+			}
+			id := strings.TrimSuffix(strings.TrimPrefix(entry.Name(), "plan-"), ".json")
+			if validateRestorePlan(s.workDir, id, plan) != nil {
+				continue
+			}
+			if oldest == "" || plan.CreatedAt.Before(oldestTime) {
+				oldest = entry.Name()
+				oldestTime = plan.CreatedAt
+			}
+		}
+		if oldest == "" {
+			return errors.New("restore workspace exceeds disk limit")
+		}
+		var plan restorePlan
+		data, _ := os.ReadFile(filepath.Join(s.workDir, oldest))
+		_ = json.Unmarshal(data, &plan)
+		_ = removeAllErr(filepath.Join(s.workDir, oldest))
+		id := strings.TrimSuffix(strings.TrimPrefix(oldest, "plan-"), ".json")
+		if validateRestorePlan(s.workDir, id, plan) == nil {
+			_ = removeAllErr(plan.StagePath)
+			_ = removeAllErr(plan.PreflightPath)
+		}
+		delete(s.plans, plan.PlanID)
+	}
 }
 
 type Repository interface {
@@ -330,6 +542,15 @@ type Service struct {
 	version string
 	mu      sync.Mutex
 	plans   map[string]restorePlan
+}
+
+func (s *Service) withRestoreLock(ctx context.Context, fn func() error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return fn()
 }
 
 func NewService(repo Repository, source Source, stores StoreFactory, workDir, version string) *Service {
@@ -392,7 +613,7 @@ func (s *Service) create(ctx context.Context, task Task, password string) (Snaps
 		return Snapshot{}, err
 	}
 	manifest := Manifest{FormatVersion: FormatVersion, TangentryVersion: s.version, SchemaVersion: SchemaVersion, SnapshotID: id, CreatedAt: time.Now().UTC(), TaskID: task.ID, IncludeDownloads: task.IncludeDownloads, Files: files, KDF: KDFParams{Name: "Argon2id", Version: 1, Salt: hex.EncodeToString(salt), Time: KDFTime, Memory: KDFMemory, Threads: KDFThreads, KeyLen: KDFKeyLen}, AEAD: AEADParams{Name: "AES-256-GCM", Version: 1, ChunkSize: ChunkSize, NonceSize: NonceSize}}
-	if err := validateManifestFiles(manifest.Files); err != nil {
+	if err := validateManifestFiles(manifest.Files, task.IncludeDownloads); err != nil {
 		return Snapshot{}, fmt.Errorf("backup source omitted tangentry.db")
 	}
 	archivePath := filepath.Join(s.workDir, "archive-"+id+".zip")
@@ -529,6 +750,14 @@ func (s *Service) Restore(ctx context.Context, targetID, snapshotID, password, d
 		return RestoreResult{}, ErrInvalidPackage
 	}
 	_ = destination // retained for wire compatibility; restart applies to the active data directory.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return RestoreResult{}, err
+	}
+	if err := cleanupRestoreWorkDir(s.workDir); err != nil {
+		return RestoreResult{}, err
+	}
 	if err := s.cleanExpiredPlans(time.Now()); err != nil {
 		return RestoreResult{}, err
 	}
@@ -538,6 +767,20 @@ func (s *Service) Restore(ctx context.Context, targetID, snapshotID, password, d
 	}
 	if pending >= MaxRestorePlans {
 		return RestoreResult{}, errors.New("too many pending restore plans")
+	}
+	if err := ensurePrivateDir(s.workDir); err != nil {
+		return RestoreResult{}, err
+	}
+	if size, err := restoreWorkDirSize(s.workDir); err != nil || size > MaxRestoreWorkDirSize-restoreReservation {
+		if err != nil {
+			return RestoreResult{}, err
+		}
+		return RestoreResult{}, errors.New("restore workspace disk limit exceeded")
+	}
+	if _, err := os.Stat(filepath.Join(s.workDir, "journal.json")); err == nil {
+		return RestoreResult{}, errors.New("a restore is already confirmed; cancel it before preparing another")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return RestoreResult{}, err
 	}
 	if err := ensurePrivateDir(s.workDir); err != nil {
 		return RestoreResult{}, err
@@ -593,11 +836,20 @@ func (s *Service) Restore(ctx context.Context, targetID, snapshotID, password, d
 	if err := ensurePrivateDir(preflight); err != nil {
 		return RestoreResult{}, err
 	}
-	if _, err := s.source.Snapshot(ctx, preflight, false); err != nil {
+	preflightFiles, err := s.source.Snapshot(ctx, preflight, false)
+	if err != nil {
+		removeAll(preflight)
+		return RestoreResult{}, fmt.Errorf("create pre-restore snapshot: %w", err)
+	}
+	if err := validateManifestFiles(preflightFiles, false); err != nil {
 		removeAll(preflight)
 		return RestoreResult{}, fmt.Errorf("create pre-restore snapshot: %w", err)
 	}
 	if err := chmodTree(preflight, 0600, 0700); err != nil {
+		removeAll(preflight)
+		return RestoreResult{}, err
+	}
+	if err := syncTree(preflight); err != nil {
 		removeAll(preflight)
 		return RestoreResult{}, err
 	}
@@ -606,7 +858,7 @@ func (s *Service) Restore(ctx context.Context, targetID, snapshotID, password, d
 		removeAll(preflight)
 		return RestoreResult{}, err
 	}
-	if err := extractArchiveReader(plainFile, plainInfo.Size(), stagePath); err != nil {
+	if err := extractArchiveReader(plainFile, plainInfo.Size(), stagePath, validatedManifest.IncludeDownloads); err != nil {
 		removeAll(preflight)
 		removeAll(stagePath)
 		return RestoreResult{}, fmt.Errorf("stage restored data: %w", err)
@@ -616,6 +868,19 @@ func (s *Service) Restore(ctx context.Context, targetID, snapshotID, password, d
 		removeAll(stagePath)
 		return RestoreResult{}, err
 	}
+	if err := syncTree(stagePath); err != nil {
+		removeAll(preflight)
+		removeAll(stagePath)
+		return RestoreResult{}, err
+	}
+	if size, err := restoreWorkDirSize(s.workDir); err != nil || size > MaxRestoreWorkDirSize-restoreReservation {
+		removeAll(preflight)
+		removeAll(stagePath)
+		if err != nil {
+			return RestoreResult{}, err
+		}
+		return RestoreResult{}, errors.New("restore workspace disk limit exceeded")
+	}
 	result := RestoreResult{PlanID: id, SnapshotID: snapshotID, StagedID: id, PreRestoreSnapshotID: preflightID, Status: "pending_confirmation"}
 	plan := restorePlan{RestoreResult: result, TargetID: targetID, StagePath: stagePath, PreflightPath: preflight, CreatedAt: time.Now().UTC(), Manifest: validatedManifest}
 	if err := s.savePlan(plan); err != nil {
@@ -623,9 +888,7 @@ func (s *Service) Restore(ctx context.Context, targetID, snapshotID, password, d
 		removeAll(stagePath)
 		return RestoreResult{}, err
 	}
-	s.mu.Lock()
 	s.plans[result.PlanID] = plan
-	s.mu.Unlock()
 	return result, nil
 }
 
@@ -654,22 +917,33 @@ func (s *Service) ConfirmRestore(ctx context.Context, planID string) (RestoreRes
 		return RestoreResult{}, errors.New("restore plan not found")
 	}
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := os.Stat(filepath.Join(s.workDir, "journal.json")); err == nil {
+		return RestoreResult{}, errors.New("a restore is already confirmed; cancel it before preparing another")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return RestoreResult{}, err
+	}
 	plan, ok := s.plans[planID]
-	s.mu.Unlock()
 	if !ok {
 		data, err := os.ReadFile(planPath(s.workDir, planID))
 		if err != nil {
 			return RestoreResult{}, errors.New("restore plan not found")
 		}
-		if err := json.Unmarshal(data, &plan); err != nil || plan.PlanID != planID {
+		if err := json.Unmarshal(data, &plan); err != nil || validateRestorePlan(s.workDir, planID, plan) != nil {
 			return RestoreResult{}, errors.New("restore plan not found")
 		}
 	}
-	if plan.Status == "restart_required" {
-		return plan.RestoreResult, nil
+	if err := validateRestorePlan(s.workDir, planID, plan); err != nil {
+		return RestoreResult{}, errors.New("restore plan not found")
+	}
+	if plan.Status != "pending_confirmation" {
+		return RestoreResult{}, errors.New("restore plan not found")
 	}
 	if time.Since(plan.CreatedAt) > RestorePlanTTL {
-		_ = s.CancelRestore(ctx, planID)
+		_ = removeAllErr(plan.StagePath)
+		_ = removeAllErr(plan.PreflightPath)
+		_ = os.Remove(planPath(s.workDir, planID))
+		delete(s.plans, planID)
 		return RestoreResult{}, errors.New("restore plan expired")
 	}
 	if err := validateStaged(plan.StagePath); err != nil {
@@ -683,19 +957,22 @@ func (s *Service) ConfirmRestore(ctx context.Context, planID string) (RestoreRes
 	if err != nil {
 		return RestoreResult{}, err
 	}
-	current, err := currentEntries(filepath.Dir(s.workDir))
+	current, err := currentEntries(filepath.Dir(s.workDir), plan.Manifest.IncludeDownloads)
 	if err != nil {
 		return RestoreResult{}, err
 	}
-	if err := writeRestoreJournal(s.workDir, RestoreJournal{StagedID: plan.StagedID, RollbackID: rollbackID, PreflightID: plan.PreRestoreSnapshotID, Entries: entries, CurrentEntries: current, Manifest: plan.Manifest, Step: "confirmed"}); err != nil {
+	if err := writeRestoreJournal(s.workDir, RestoreJournal{PlanID: planID, StagedID: plan.StagedID, RollbackID: rollbackID, PreflightID: plan.PreRestoreSnapshotID, Entries: journalEntries(entries, entryPending), CurrentEntries: current, Manifest: plan.Manifest, Step: "confirmed"}); err != nil {
 		return RestoreResult{}, err
 	}
 	plan.Status = "restart_required"
 	plan.RestartRequired = true
-	s.mu.Lock()
 	s.plans[planID] = plan
-	s.mu.Unlock()
-	_ = os.Remove(planPath(s.workDir, planID))
+	if err := os.Remove(planPath(s.workDir, planID)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return RestoreResult{}, err
+	}
+	if err := syncDirectory(s.workDir); err != nil {
+		return RestoreResult{}, err
+	}
 	return plan.RestoreResult, nil
 }
 
@@ -704,21 +981,42 @@ func (s *Service) CancelRestore(ctx context.Context, planID string) error {
 		return err
 	}
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	plan, ok := s.plans[planID]
+	journal, journalErr := readRestoreJournal(s.workDir)
+	if journalErr == nil && journal.PlanID == planID {
+		if journal.Step != "confirmed" || journal.PreflightID == "" || journal.PlanID == "" || validateRestoreJournal(journal) != nil {
+			return errors.New("confirmed restore can no longer be cancelled")
+		}
+		if err := removeRestoreJournal(s.workDir); err != nil {
+			return err
+		}
+		delete(s.plans, planID)
+		stagePath := filepath.Join(s.workDir, "staged-"+journal.StagedID)
+		preflightPath := filepath.Join(s.workDir, "pre-"+journal.PreflightID)
+		return errors.Join(removeAllErr(stagePath), removeAllErr(preflightPath), syncDirectory(s.workDir))
+	} else if journalErr != nil && !errors.Is(journalErr, os.ErrNotExist) {
+		return journalErr
+	}
 	if ok {
 		delete(s.plans, planID)
 	}
-	s.mu.Unlock()
 	if !ok {
 		if !validRestoreID(planID) {
 			return os.ErrNotExist
 		}
 		data, err := os.ReadFile(planPath(s.workDir, planID))
-		if err != nil || json.Unmarshal(data, &plan) != nil || plan.PlanID != planID {
+		if err != nil || json.Unmarshal(data, &plan) != nil || validateRestorePlan(s.workDir, planID, plan) != nil {
 			return os.ErrNotExist
 		}
 	}
-	return errors.Join(removeAllErr(plan.StagePath), removeAllErr(plan.PreflightPath), os.Remove(planPath(s.workDir, planID)))
+	if err := os.Remove(planPath(s.workDir, planID)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := syncDirectory(s.workDir); err != nil {
+		return err
+	}
+	return errors.Join(removeAllErr(plan.StagePath), removeAllErr(plan.PreflightPath), syncDirectory(s.workDir))
 }
 
 func validSnapshotID(id string) bool {
@@ -734,10 +1032,10 @@ func validSnapshotID(id string) bool {
 }
 
 func validateStagedManifest(stage string, manifest Manifest) error {
-	if err := validateManifestFiles(manifest.Files); err != nil {
+	if err := validateManifestFiles(manifest.Files, manifest.IncludeDownloads); err != nil {
 		return err
 	}
-	root, err := os.OpenRoot(stage)
+	root, err := openSafeRestoreRoot(stage)
 	if err != nil {
 		return err
 	}
@@ -973,7 +1271,7 @@ func archiveFilesTo(stage string, manifest *Manifest, output io.Writer) error {
 	if _, err = w.Write(raw); err != nil {
 		return err
 	}
-	root, err := os.OpenRoot(stage)
+	root, err := openSafeRestoreRoot(stage)
 	if err != nil {
 		return err
 	}
@@ -1037,16 +1335,18 @@ func (w *countingLimitWriter) Write(p []byte) (int, error) {
 }
 
 func extractArchive(data []byte, destination string) error {
-	return extractArchiveReader(bytes.NewReader(data), int64(len(data)), destination)
+	return extractArchiveReader(bytes.NewReader(data), int64(len(data)), destination, false)
 }
 
-func extractArchiveReader(source io.ReaderAt, size int64, destination string) error {
+func extractArchiveReader(source io.ReaderAt, size int64, destination string, includeDownloads bool) error {
 	if size > MaxArchiveSize {
 		return fmt.Errorf("archive exceeds limit: %w", ErrInvalidPackage)
 	}
-	if err := safeDestinationDir(destination); err != nil {
+	destinationRoot, err := openSafeRestoreRoot(destination)
+	if err != nil {
 		return fmt.Errorf("restore destination: %w", err)
 	}
+	defer destinationRoot.Close()
 	zr, err := zip.NewReader(source, size)
 	if err != nil {
 		return err
@@ -1056,7 +1356,8 @@ func extractArchiveReader(source io.ReaderAt, size int64, destination string) er
 	}
 	var total uint64
 	for _, f := range zr.File {
-		if f.FileInfo().Mode()&os.ModeSymlink != 0 || f.FileInfo().Mode()&os.ModeNamedPipe != 0 || f.FileInfo().Mode()&os.ModeDevice != 0 {
+		mode := f.FileInfo().Mode()
+		if !mode.IsRegular() {
 			return fmt.Errorf("unsafe entry %q: %w", f.Name, ErrInvalidPackage)
 		}
 		if f.UncompressedSize64 > MaxFileSize || f.UncompressedSize64 > uint64(MaxCompressionRatio)*max64(f.CompressedSize64, 1) {
@@ -1073,27 +1374,27 @@ func extractArchiveReader(source io.ReaderAt, size int64, destination string) er
 		if clean == "manifest.json" {
 			continue
 		}
+		if !allowedBackupPath(clean, includeDownloads) && clean != "tangentry.db" {
+			return fmt.Errorf("restore path outside backup scope %q: %w", clean, ErrInvalidPackage)
+		}
 		target := filepath.Join(destination, filepath.FromSlash(clean))
-		if !within(destination, target) {
-			return fmt.Errorf("target outside destination: %w", ErrInvalidPackage)
-		}
-		if err = safeRestoreParents(destination, filepath.Dir(target)); err != nil {
-			return fmt.Errorf("restore parent %q: %w", filepath.Dir(target), err)
-		}
-		root, rootErr := os.OpenRoot(destination)
+		root, base, rootErr := openRestoreParent(destinationRoot, clean)
 		if rootErr != nil {
-			return rootErr
+			return fmt.Errorf("restore parent %q: %w", filepath.Dir(target), rootErr)
 		}
 		r, e := f.Open()
 		if e != nil {
 			root.Close()
 			return e
 		}
-		if existing, statErr := root.Lstat(filepath.ToSlash(clean)); statErr == nil && existing.Mode()&os.ModeSymlink != 0 {
+		if _, statErr := root.Lstat(base); statErr == nil {
 			root.Close()
-			return fmt.Errorf("target symlink: %w", ErrInvalidPackage)
+			return fmt.Errorf("restore target already exists: %w", os.ErrExist)
+		} else if !errors.Is(statErr, os.ErrNotExist) {
+			root.Close()
+			return statErr
 		}
-		out, e := root.OpenFile(filepath.ToSlash(clean), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		out, e := root.OpenFile(base, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 		if e == nil {
 			written, copyErr := io.Copy(out, io.LimitReader(r, MaxFileSize+1))
 			if copyErr != nil {
@@ -1101,7 +1402,15 @@ func extractArchiveReader(source io.ReaderAt, size int64, destination string) er
 			} else if written > MaxFileSize || written != int64(f.UncompressedSize64) {
 				e = ErrInvalidPackage
 			}
-			_ = out.Close()
+			if syncErr := out.Sync(); e == nil && syncErr != nil {
+				e = syncErr
+			}
+			if closeErr := out.Close(); e == nil && closeErr != nil {
+				e = closeErr
+			}
+			if e == nil {
+				e = syncRootDirectory(root)
+			}
 		}
 		r.Close()
 		root.Close()
@@ -1112,7 +1421,100 @@ func extractArchiveReader(source io.ReaderAt, size int64, destination string) er
 			return fmt.Errorf("write restore target %q: %w", target, e)
 		}
 	}
-	return nil
+	return syncRootDirectory(destinationRoot)
+}
+
+func openSafeRestoreRoot(destination string) (*os.Root, error) {
+	abs, err := filepath.Abs(destination)
+	if err != nil {
+		return nil, err
+	}
+	parent, err := os.OpenRoot(filepath.Dir(abs))
+	if err != nil {
+		return nil, err
+	}
+	base := filepath.Base(abs)
+	info, err := parent.Lstat(base)
+	if errors.Is(err, os.ErrNotExist) {
+		if err := parent.Mkdir(base, 0700); err != nil && !errors.Is(err, os.ErrExist) {
+			parent.Close()
+			return nil, err
+		}
+		info, err = parent.Lstat(base)
+	}
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		parent.Close()
+		return nil, ErrInvalidPackage
+	}
+	root, err := parent.OpenRoot(base)
+	if err != nil {
+		parent.Close()
+		return nil, err
+	}
+	openedInfo, err := root.Stat(".")
+	if err != nil || !openedInfo.IsDir() || !os.SameFile(info, openedInfo) {
+		root.Close()
+		parent.Close()
+		return nil, ErrInvalidPackage
+	}
+	if err := parent.Close(); err != nil {
+		root.Close()
+		return nil, err
+	}
+	return root, nil
+}
+
+func openRestoreParent(destination *os.Root, relative string) (*os.Root, string, error) {
+	root, err := destination.OpenRoot(".")
+	if err != nil {
+		return nil, "", err
+	}
+	directory := path.Dir(relative)
+	if directory == "." {
+		return root, path.Base(relative), nil
+	}
+	for _, component := range strings.Split(directory, "/") {
+		info, statErr := root.Lstat(component)
+		if errors.Is(statErr, os.ErrNotExist) {
+			if err := root.Mkdir(component, 0700); err != nil && !errors.Is(err, os.ErrExist) {
+				root.Close()
+				return nil, "", err
+			}
+			if err := syncRootDirectory(root); err != nil {
+				root.Close()
+				return nil, "", err
+			}
+			info, statErr = root.Lstat(component)
+		}
+		if statErr != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			root.Close()
+			return nil, "", ErrInvalidPackage
+		}
+		next, openErr := root.OpenRoot(component)
+		if openErr != nil {
+			root.Close()
+			return nil, "", openErr
+		}
+		nextInfo, statErr := next.Stat(".")
+		if statErr != nil || !nextInfo.IsDir() || !os.SameFile(info, nextInfo) {
+			next.Close()
+			root.Close()
+			return nil, "", ErrInvalidPackage
+		}
+		root.Close()
+		root = next
+	}
+	return root, path.Base(relative), nil
+}
+
+func syncRootDirectory(root *os.Root) error {
+	dir, err := root.Open(".")
+	if err != nil {
+		return err
+	}
+	syncErr := dir.Sync()
+	closeErr := dir.Close()
+	return errors.Join(syncErr, closeErr)
 }
 
 func validateArchive(data []byte, snapshotID string) (Manifest, error) {
@@ -1135,7 +1537,7 @@ func validateArchiveReader(source io.ReaderAt, size int64, snapshotID string) (M
 	files := map[string]bool{}
 	var total uint64
 	for _, f := range zr.File {
-		if f.FileInfo().Mode()&os.ModeSymlink != 0 || f.FileInfo().Mode()&os.ModeNamedPipe != 0 || f.FileInfo().Mode()&os.ModeDevice != 0 {
+		if !f.FileInfo().Mode().IsRegular() {
 			return Manifest{}, ErrInvalidPackage
 		}
 		if f.UncompressedSize64 > MaxFileSize || f.UncompressedSize64 > uint64(MaxCompressionRatio)*max64(f.CompressedSize64, 1) {
@@ -1174,7 +1576,7 @@ func validateArchiveReader(source io.ReaderAt, size int64, snapshotID string) (M
 	if len(manifest.Files) == 0 || len(manifest.Files)+1 != len(zr.File) {
 		return Manifest{}, ErrInvalidPackage
 	}
-	if err := validateManifestFiles(manifest.Files); err != nil {
+	if err := validateManifestFiles(manifest.Files, manifest.IncludeDownloads); err != nil {
 		return Manifest{}, ErrInvalidPackage
 	}
 	expected := map[string]bool{"manifest.json": true}
@@ -1194,7 +1596,7 @@ func validateArchiveReader(source io.ReaderAt, size int64, snapshotID string) (M
 				continue
 			}
 			foundFile = true
-			if entry.FileInfo().Mode()&os.ModeSymlink != 0 || entry.UncompressedSize64 != uint64(f.Size) {
+			if !entry.FileInfo().Mode().IsRegular() || entry.UncompressedSize64 != uint64(f.Size) {
 				return Manifest{}, ErrInvalidPackage
 			}
 			reader, re := entry.Open()
@@ -1228,58 +1630,6 @@ func max64(a, b uint64) uint64 {
 	return b
 }
 
-func safeMkdirParents(dir string) error {
-	abs, err := filepath.Abs(dir)
-	if err != nil {
-		return err
-	}
-	parts := strings.Split(abs, string(filepath.Separator))
-	current := string(filepath.Separator)
-	if len(parts) > 0 && parts[0] == "" {
-		parts = parts[1:]
-	}
-	for _, part := range parts {
-		if part == "" {
-			continue
-		}
-		current = filepath.Join(current, part)
-		info, e := os.Lstat(current)
-		if os.IsNotExist(e) {
-			if e = os.Mkdir(current, 0700); e != nil {
-				return e
-			}
-			continue
-		}
-		if e != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-			return ErrInvalidPackage
-		}
-	}
-	return nil
-}
-
-// safeDestinationDir permits already-existing OS-level ancestors (for
-// example /var -> /private/var on macOS), but never follows a symlink inside
-// the restore destination itself.
-func safeDestinationDir(destination string) error {
-	abs, err := filepath.Abs(destination)
-	if err != nil {
-		return err
-	}
-	parent := filepath.Dir(abs)
-	if err := safeMkdirParentsAllowSymlink(parent); err != nil {
-		return err
-	}
-	if info, statErr := os.Lstat(abs); statErr == nil {
-		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-			return ErrInvalidPackage
-		}
-		return nil
-	} else if !os.IsNotExist(statErr) {
-		return statErr
-	}
-	return os.Mkdir(abs, 0700)
-}
-
 func safeMkdirParentsAllowSymlink(dir string) error {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
@@ -1309,39 +1659,6 @@ func safeMkdirParentsAllowSymlink(dir string) error {
 	return nil
 }
 
-func safeRestoreParents(root, dir string) error {
-	root, _ = filepath.Abs(root)
-	dir, _ = filepath.Abs(dir)
-	if !within(root, dir) {
-		return ErrInvalidPackage
-	}
-	if info, err := os.Lstat(root); err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return ErrInvalidPackage
-	}
-	rel, err := filepath.Rel(root, dir)
-	if err != nil {
-		return err
-	}
-	current := root
-	for _, part := range strings.Split(rel, string(filepath.Separator)) {
-		if part == "" || part == "." {
-			continue
-		}
-		current = filepath.Join(current, part)
-		info, e := os.Lstat(current)
-		if os.IsNotExist(e) {
-			if e = os.Mkdir(current, 0700); e != nil {
-				return e
-			}
-			continue
-		}
-		if e != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-			return ErrInvalidPackage
-		}
-	}
-	return nil
-}
-
 func cleanRelative(name string) (string, error) {
 	p := path.Clean(strings.ReplaceAll(name, "\\", "/"))
 	if p == "." || p == ".." || strings.HasPrefix(p, "../") || strings.HasPrefix(p, "/") {
@@ -1349,6 +1666,7 @@ func cleanRelative(name string) (string, error) {
 	}
 	return p, nil
 }
+
 func within(root, target string) bool {
 	r, _ := filepath.Abs(root)
 	t, _ := filepath.Abs(target)

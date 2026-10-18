@@ -6,10 +6,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -75,6 +78,24 @@ func TestValidateArchiveRequiresDatabaseAndValidFileTypes(t *testing.T) {
 	}
 }
 
+func TestManifestPathAllowlistFollowsDownloadSetting(t *testing.T) {
+	for _, name := range []string{"credentials/session.json", "models/model.bin", "tools/ffmpeg", "cache/item", "documents/credentials/session.json", "documents/cache/item"} {
+		files := []File{{Path: "tangentry.db", Type: FileDatabase}, {Path: name, Type: FileData}}
+		if err := validateManifestFiles(files, true); err == nil {
+			t.Errorf("excluded path %q accepted", name)
+		}
+	}
+	if err := validateManifestFiles([]File{{Path: "tangentry.db", Type: FileDatabase}, {Path: "downloads/video.mp4", Type: FileData}}, false); err == nil {
+		t.Fatal("downloads accepted while disabled")
+	}
+	if err := validateManifestFiles([]File{{Path: "tangentry.db", Type: FileDatabase}, {Path: "downloads/video.mp4", Type: FileData}}, true); err != nil {
+		t.Fatalf("downloads rejected while enabled: %v", err)
+	}
+	if err := validateManifestFiles([]File{{Path: "tangentry.db", Type: FileDatabase}, {Path: "documents/captures/frame.png", Type: FileData}}, false); err != nil {
+		t.Fatalf("documents path rejected: %v", err)
+	}
+}
+
 func archiveFixture(t *testing.T, manifest Manifest, files map[string][]byte) []byte {
 	t.Helper()
 	var buf bytes.Buffer
@@ -123,6 +144,33 @@ func TestExtractArchiveRejectsExistingSymlink(t *testing.T) {
 	}
 	if err := extractArchive(buf.Bytes(), destination); err == nil {
 		t.Fatal("existing symlink followed")
+	}
+}
+
+func TestExtractArchiveRejectsDownloadsWhenDisabled(t *testing.T) {
+	payload := []byte("media fixture")
+	manifest := Manifest{FormatVersion: FormatVersion, SchemaVersion: SchemaVersion, SnapshotID: "snapshot-1", Files: []File{{Path: "tangentry.db", Type: FileDatabase}, {Path: "downloads/video.bin", Type: FileData}}}
+	archive := archiveFixture(t, manifest, map[string][]byte{"tangentry.db": []byte("db"), "downloads/video.bin": payload})
+	if err := extractArchive(archive, filepath.Join(t.TempDir(), "restore")); err == nil {
+		t.Fatal("download media restored when includeDownloads was false")
+	}
+}
+
+func TestExtractArchiveRejectsZipSlipAndHardLinkLikeEntries(t *testing.T) {
+	for _, name := range []string{"../outside.txt", "documents/../../outside.txt", "documents/credentials/secret.json"} {
+		var buf bytes.Buffer
+		zw := zip.NewWriter(&buf)
+		w, err := zw.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = w.Write([]byte("fixture"))
+		if err := zw.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err := extractArchive(buf.Bytes(), filepath.Join(t.TempDir(), "restore")); err == nil {
+			t.Errorf("unsafe entry %q accepted", name)
+		}
 	}
 }
 
@@ -237,13 +285,13 @@ func TestRestoreKeepsPreflightSnapshotUntilConfirmation(t *testing.T) {
 	digest := sha256.Sum256(payload)
 	hash := fmt.Sprintf("%x", digest)
 	dbDigest := sha256.Sum256(dbPayload)
-	manifest := Manifest{FormatVersion: FormatVersion, TangentryVersion: "test", SchemaVersion: SchemaVersion, SnapshotID: "snapshot-1", CreatedAt: time.Now().UTC(), Files: []File{{Path: "restored.txt", Type: FileData, Size: int64(len(payload)), SHA256: hash}, {Path: "tangentry.db", Type: FileDatabase, Size: int64(len(dbPayload)), SHA256: fmt.Sprintf("%x", dbDigest)}}, KDF: KDFParams{Name: "Argon2id", Version: 1, Salt: "00112233445566778899aabbccddeeff", Time: KDFTime, Memory: KDFMemory, Threads: KDFThreads, KeyLen: KDFKeyLen}, AEAD: AEADParams{Name: "AES-256-GCM", Version: 1, ChunkSize: ChunkSize, NonceSize: NonceSize}}
+	manifest := Manifest{FormatVersion: FormatVersion, TangentryVersion: "test", SchemaVersion: SchemaVersion, SnapshotID: "snapshot-1", CreatedAt: time.Now().UTC(), Files: []File{{Path: "documents/restored.txt", Type: FileData, Size: int64(len(payload)), SHA256: hash}, {Path: "tangentry.db", Type: FileDatabase, Size: int64(len(dbPayload)), SHA256: fmt.Sprintf("%x", dbDigest)}}, KDF: KDFParams{Name: "Argon2id", Version: 1, Salt: "00112233445566778899aabbccddeeff", Time: KDFTime, Memory: KDFMemory, Threads: KDFThreads, KeyLen: KDFKeyLen}, AEAD: AEADParams{Name: "AES-256-GCM", Version: 1, ChunkSize: ChunkSize, NonceSize: NonceSize}}
 	var archive bytes.Buffer
 	zw := zip.NewWriter(&archive)
 	raw, _ := json.Marshal(manifest)
 	w, _ := zw.Create("manifest.json")
 	_, _ = w.Write(raw)
-	w, _ = zw.Create("restored.txt")
+	w, _ = zw.Create("documents/restored.txt")
 	_, _ = w.Write(payload)
 	w, _ = zw.Create("tangentry.db")
 	_, _ = w.Write(dbPayload)
@@ -274,6 +322,12 @@ func TestRestoreKeepsPreflightSnapshotUntilConfirmation(t *testing.T) {
 	if confirmed.Status != "restart_required" || !confirmed.RestartRequired {
 		t.Fatalf("restore was not journaled for restart: %+v", confirmed)
 	}
+	if _, err := service.ConfirmRestore(context.Background(), result.PlanID); err == nil {
+		t.Fatal("a second confirmation replaced the active restore journal")
+	}
+	if _, err := service.Restore(context.Background(), "target-1", "snapshot-1", "fixture-password", ""); err == nil {
+		t.Fatal("new restore was prepared while another restore awaited restart")
+	}
 	if err := ApplyPendingRestore(filepath.Dir(filepath.Dir(service.workDir))); err != nil {
 		t.Fatal(err)
 	}
@@ -285,7 +339,10 @@ func TestApplyPendingRestoreIsIdempotentAfterInterruptedMoves(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(workDir, "staged-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dataDir, "old.txt"), []byte("old"), 0600); err != nil {
+	if err := os.MkdirAll(filepath.Join(dataDir, "documents"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "documents", "old.txt"), []byte("old"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(workDir, "staged-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "tangentry.db"), []byte("new"), 0600); err != nil {
@@ -293,7 +350,7 @@ func TestApplyPendingRestoreIsIdempotentAfterInterruptedMoves(t *testing.T) {
 	}
 	if err := writeRestoreJournal(workDir, RestoreJournal{
 		StagedID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", RollbackID: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-		Entries: []string{"tangentry.db"}, CurrentEntries: []string{"old.txt"}, Manifest: Manifest{Files: []File{{Path: "tangentry.db", Type: FileDatabase, Size: 3, SHA256: fmt.Sprintf("%x", sha256.Sum256([]byte("new")))}}}, Step: "confirmed",
+		Entries: []RestoreJournalEntry{{Name: "tangentry.db", State: entryPending}}, CurrentEntries: []RestoreJournalEntry{{Name: "documents", State: entryPending}}, Manifest: Manifest{Files: []File{{Path: "tangentry.db", Type: FileDatabase, Size: 3, SHA256: fmt.Sprintf("%x", sha256.Sum256([]byte("new")))}}}, Step: "confirmed",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -306,8 +363,275 @@ func TestApplyPendingRestoreIsIdempotentAfterInterruptedMoves(t *testing.T) {
 	if got, err := os.ReadFile(filepath.Join(dataDir, "tangentry.db")); err != nil || string(got) != "new" {
 		t.Fatalf("restored database = %q, err=%v", got, err)
 	}
-	if got, err := os.ReadFile(filepath.Join(dataDir, ".tangentry-restore", "rollback-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "old.txt")); err != nil || string(got) != "old" {
+	if got, err := os.ReadFile(filepath.Join(dataDir, ".tangentry-restore", "rollback-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "documents", "old.txt")); err != nil || string(got) != "old" {
 		t.Fatalf("rollback snapshot = %q, err=%v", got, err)
+	}
+}
+
+func TestApplyPendingRestoreRollsBackOnlyInstalledEntriesAfterFailure(t *testing.T) {
+	dataDir := t.TempDir()
+	workDir := restoreWorkDir(dataDir)
+	stagedID := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	rollbackID := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	staged := filepath.Join(workDir, "staged-"+stagedID)
+	rollback := filepath.Join(workDir, "rollback-"+rollbackID)
+	if err := os.MkdirAll(filepath.Join(staged, "documents"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(rollback, "documents"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dataDir, "documents"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "tangentry.db"), []byte("new database"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(staged, "documents", "new.txt"), []byte("new document"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rollback, "documents", "old.txt"), []byte("old document"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dataDir, "documents")); err != nil {
+		t.Fatal(err)
+	}
+	journal := RestoreJournal{
+		StagedID: stagedID, RollbackID: rollbackID,
+		Entries:        []RestoreJournalEntry{{Name: "tangentry.db", State: entryInstalled}, {Name: "documents", State: entryPending}},
+		CurrentEntries: []RestoreJournalEntry{{Name: "documents", State: entryMovedToRollback}},
+		Manifest:       Manifest{Files: []File{{Path: "tangentry.db", Type: FileDatabase}, {Path: "documents/new.txt", Type: FileData}}},
+		Step:           "installing",
+	}
+	if err := writeRestoreJournal(workDir, journal); err != nil {
+		t.Fatal(err)
+	}
+	previousRename := renameRestoreEntry
+	renameRestoreEntry = func(oldpath, newpath string) error {
+		if oldpath == filepath.Join(staged, "documents") {
+			return errors.New("injected install failure")
+		}
+		return os.Rename(oldpath, newpath)
+	}
+	err := ApplyPendingRestore(dataDir)
+	renameRestoreEntry = previousRename
+	if err == nil {
+		t.Fatal("injected install failure was ignored")
+	}
+	if got, readErr := os.ReadFile(filepath.Join(dataDir, "documents", "old.txt")); readErr != nil || string(got) != "old document" {
+		t.Fatalf("old data was not restored: %q, err=%v", got, readErr)
+	}
+	if got, readErr := os.ReadFile(filepath.Join(workDir, "failed-"+stagedID, "tangentry.db")); readErr != nil || string(got) != "new database" {
+		t.Fatalf("installed data was not retained for diagnosis: %q, err=%v", got, readErr)
+	}
+	if err := ApplyPendingRestore(dataDir); err != nil {
+		t.Fatalf("startup cleanup after rollback: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "tangentry.db")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("new database remained installed after rollback: %v", err)
+	}
+}
+
+func TestApplyPendingRestoreResumesHalfInstalledJournal(t *testing.T) {
+	dataDir := t.TempDir()
+	workDir := restoreWorkDir(dataDir)
+	stagedID := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	rollbackID := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	staged := filepath.Join(workDir, "staged-"+stagedID)
+	rollback := filepath.Join(workDir, "rollback-"+rollbackID)
+	if err := os.MkdirAll(filepath.Join(staged, "documents"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(rollback, "documents"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "tangentry.db"), []byte("new database"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(staged, "documents", "new.txt"), []byte("new document"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rollback, "documents", "old.txt"), []byte("old document"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	journal := RestoreJournal{
+		StagedID: stagedID, RollbackID: rollbackID,
+		Entries:        []RestoreJournalEntry{{Name: "tangentry.db", State: entryInstalled}, {Name: "documents", State: entryPending}},
+		CurrentEntries: []RestoreJournalEntry{{Name: "documents", State: entryMovedToRollback}},
+		Manifest:       Manifest{Files: []File{{Path: "tangentry.db", Type: FileDatabase}, {Path: "documents/new.txt", Type: FileData}}},
+		Step:           "installing",
+	}
+	if err := writeRestoreJournal(workDir, journal); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyPendingRestore(dataDir); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(filepath.Join(dataDir, "documents", "new.txt")); err != nil || string(got) != "new document" {
+		t.Fatalf("staged install was not resumed: %q, err=%v", got, err)
+	}
+	if got, err := os.ReadFile(filepath.Join(workDir, "rollback-"+rollbackID, "documents", "old.txt")); err != nil || string(got) != "old document" {
+		t.Fatalf("pre-restore data was not retained: %q, err=%v", got, err)
+	}
+}
+
+func TestApplyPendingRestoreContinuesAfterRollbackWasInterrupted(t *testing.T) {
+	dataDir := t.TempDir()
+	workDir := restoreWorkDir(dataDir)
+	stagedID := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	rollbackID := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	staged := filepath.Join(workDir, "staged-"+stagedID)
+	rollback := filepath.Join(workDir, "rollback-"+rollbackID)
+	failed := filepath.Join(workDir, "failed-"+stagedID)
+	for _, directory := range []string{staged, rollback, failed} {
+		if err := os.MkdirAll(directory, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(dataDir, "documents"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(failed, "tangentry.db"), []byte("new database"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rollback, "documents-old.txt"), []byte("old document"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "documents", "current.txt"), []byte("current document"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	journal := RestoreJournal{
+		StagedID: stagedID, RollbackID: rollbackID,
+		Entries:        []RestoreJournalEntry{{Name: "tangentry.db", State: entryMovedToFailed}},
+		CurrentEntries: []RestoreJournalEntry{{Name: "documents", State: entryRestored}},
+		Manifest:       Manifest{Files: []File{{Path: "tangentry.db", Type: FileDatabase}}},
+		Step:           "rolling_back",
+	}
+	if err := writeRestoreJournal(workDir, journal); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyPendingRestore(dataDir); err == nil {
+		t.Fatal("rollback completion status was not reported")
+	}
+	if got, err := os.ReadFile(filepath.Join(dataDir, "documents", "current.txt")); err != nil || string(got) != "current document" {
+		t.Fatalf("restored current data was lost: %q, err=%v", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(workDir, "journal.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("completed rollback journal not cleaned: %v", err)
+	}
+}
+
+func TestCancelConfirmedRestoreAfterServiceRestart(t *testing.T) {
+	workDir := t.TempDir()
+	planID := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	preflightID := "cccccccccccccccccccccccccccccccc"
+	staged := filepath.Join(workDir, "staged-"+planID)
+	preflight := filepath.Join(workDir, "pre-"+preflightID)
+	if err := os.Mkdir(staged, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(preflight, 0700); err != nil {
+		t.Fatal(err)
+	}
+	manifest := Manifest{SnapshotID: "snapshot-1", Files: []File{{Path: "tangentry.db", Type: FileDatabase}}}
+	if err := writeRestoreJournal(workDir, RestoreJournal{PlanID: planID, StagedID: planID, RollbackID: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", PreflightID: preflightID, Entries: []RestoreJournalEntry{{Name: "tangentry.db", State: entryPending}}, CurrentEntries: []RestoreJournalEntry{{Name: "tangentry.db", State: entryPending}}, Manifest: manifest, Step: "confirmed"}); err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(restoreRepo{}, restoreSource{}, nil, workDir, "test")
+	if err := service.CancelRestore(context.Background(), planID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(workDir, "journal.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("journal still exists after cancellation: %v", err)
+	}
+	for _, path := range []string{staged, preflight} {
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("restore workspace remains at %q: %v", path, err)
+		}
+	}
+}
+
+func TestPruneRollbackKeepsMostRecentDirectory(t *testing.T) {
+	workDir := t.TempDir()
+	for i, id := range []string{"old", "middle", "new"} {
+		path := filepath.Join(workDir, "rollback-"+id)
+		if err := os.Mkdir(path, 0700); err != nil {
+			t.Fatal(err)
+		}
+		stamp := time.Now().Add(time.Duration(i-3) * time.Hour)
+		if err := os.Chtimes(path, stamp, stamp); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := pruneRollbackDirs(workDir, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(workDir, "rollback-new")); err != nil {
+		t.Fatalf("newest rollback was pruned: %v", err)
+	}
+	for _, id := range []string{"old", "middle"} {
+		if _, err := os.Stat(filepath.Join(workDir, "rollback-"+id)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("old rollback %q remains: %v", id, err)
+		}
+	}
+}
+
+func TestRestoreWorkDirSizeRejectsOverLimit(t *testing.T) {
+	workDir := t.TempDir()
+	file, err := os.Create(filepath.Join(workDir, "large-sparse-file"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(MaxRestoreWorkDirSize + 1); err != nil {
+		file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if size, err := restoreWorkDirSize(workDir); err == nil || size <= MaxRestoreWorkDirSize {
+		t.Fatalf("oversized workspace accepted: size=%d, err=%v", size, err)
+	}
+}
+
+func TestRestoreSerializesWorkspaceReservations(t *testing.T) {
+	workDir := t.TempDir()
+	db := []byte("fixture database")
+	digest := sha256.Sum256(db)
+	manifest := Manifest{FormatVersion: FormatVersion, SchemaVersion: SchemaVersion, SnapshotID: "snapshot-1", Files: []File{{Path: "tangentry.db", Type: FileDatabase, Size: int64(len(db)), SHA256: fmt.Sprintf("%x", digest)}}, KDF: KDFParams{Name: "Argon2id", Version: 1, Salt: "00112233445566778899aabbccddeeff", Time: KDFTime, Memory: KDFMemory, Threads: KDFThreads, KeyLen: KDFKeyLen}, AEAD: AEADParams{Name: "AES-256-GCM", Version: 1, ChunkSize: ChunkSize, NonceSize: NonceSize}}
+	encoded, err := Encrypt(archiveFixture(t, manifest, map[string][]byte{"tangentry.db": db}), "fixture-password", &manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(restoreRepo{}, restoreSource{}, func(Target) (ObjectStore, error) { return restoreStore{data: encoded}, nil }, workDir, "test")
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	results := make(chan error, MaxRestorePlans+1)
+	for range MaxRestorePlans + 1 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, err := service.Restore(context.Background(), "target-1", "snapshot-1", "fixture-password", "")
+			results <- err
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+	successes := 0
+	quotaErrors := 0
+	for err := range results {
+		if err == nil {
+			successes++
+		} else if strings.Contains(err.Error(), "too many pending restore plans") {
+			quotaErrors++
+		} else {
+			t.Fatalf("unexpected restore result: %v", err)
+		}
+	}
+	if successes != MaxRestorePlans || quotaErrors != 1 {
+		t.Fatalf("restore reservations: successes=%d quotaErrors=%d", successes, quotaErrors)
 	}
 }
 
@@ -317,15 +641,16 @@ func TestRestorePlansExpireAndEnforceCountLimit(t *testing.T) {
 	now := time.Now().UTC()
 	for i := 0; i < MaxRestorePlans+1; i++ {
 		id := fmt.Sprintf("%032x", i+1)
+		preflightID := fmt.Sprintf("%032x", i+101)
 		stage := filepath.Join(workDir, "staged-"+id)
-		preflight := filepath.Join(workDir, "pre-"+id)
+		preflight := filepath.Join(workDir, "pre-"+preflightID)
 		if err := os.Mkdir(stage, 0700); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.Mkdir(preflight, 0700); err != nil {
 			t.Fatal(err)
 		}
-		plan := restorePlan{RestoreResult: RestoreResult{PlanID: id}, StagePath: stage, PreflightPath: preflight, CreatedAt: now.Add(time.Duration(i) * time.Second)}
+		plan := testRestorePlan(id, preflightID, stage, preflight, now.Add(time.Duration(i)*time.Second))
 		if err := service.savePlan(plan); err != nil {
 			t.Fatal(err)
 		}
@@ -344,15 +669,16 @@ func TestRestorePlanCountPrunesOldestWhenOverLimit(t *testing.T) {
 	service := NewService(restoreRepo{}, restoreSource{}, nil, workDir, "test")
 	for i := 0; i < MaxRestorePlans+1; i++ {
 		id := fmt.Sprintf("%032x", i+1)
+		preflightID := fmt.Sprintf("%032x", i+101)
 		stage := filepath.Join(workDir, "staged-"+id)
-		preflight := filepath.Join(workDir, "pre-"+id)
+		preflight := filepath.Join(workDir, "pre-"+preflightID)
 		if err := os.Mkdir(stage, 0700); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.Mkdir(preflight, 0700); err != nil {
 			t.Fatal(err)
 		}
-		plan := restorePlan{RestoreResult: RestoreResult{PlanID: id}, StagePath: stage, PreflightPath: preflight, CreatedAt: time.Now().UTC().Add(time.Duration(i) * time.Second)}
+		plan := testRestorePlan(id, preflightID, stage, preflight, time.Now().UTC().Add(time.Duration(i)*time.Second))
 		if err := service.savePlan(plan); err != nil {
 			t.Fatal(err)
 		}
@@ -366,5 +692,17 @@ func TestRestorePlanCountPrunesOldestWhenOverLimit(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(workDir, "staged-00000000000000000000000000000001")); !os.IsNotExist(err) {
 		t.Fatalf("oldest staged plan was not removed: %v", err)
+	}
+}
+
+func testRestorePlan(id, preflightID, stage, preflight string, created time.Time) restorePlan {
+	snapshotID := "snapshot-" + id[:8]
+	manifest := Manifest{SnapshotID: snapshotID, Files: []File{{Path: "tangentry.db", Type: FileDatabase}}}
+	return restorePlan{
+		RestoreResult: RestoreResult{PlanID: id, StagedID: id, PreRestoreSnapshotID: preflightID, SnapshotID: snapshotID},
+		StagePath:     stage,
+		PreflightPath: preflight,
+		CreatedAt:     created,
+		Manifest:      manifest,
 	}
 }

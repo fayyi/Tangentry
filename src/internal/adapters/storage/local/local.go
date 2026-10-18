@@ -32,6 +32,26 @@ func New(root string) (*Store, error) {
 		}
 		return nil, err
 	}
+	parent := filepath.Dir(root)
+	base := filepath.Base(root)
+	parentRoot, err := os.OpenRoot(parent)
+	if err != nil {
+		return nil, err
+	}
+	defer parentRoot.Close()
+	parentInfo, err := parentRoot.Lstat(base)
+	if err != nil || !parentInfo.IsDir() || parentInfo.Mode()&os.ModeSymlink != 0 || !os.SameFile(info, parentInfo) {
+		return nil, backup.ErrInvalidPackage
+	}
+	openedViaParent, err := parentRoot.OpenRoot(base)
+	if err != nil {
+		return nil, err
+	}
+	openedInfo, err := openedViaParent.Stat(".")
+	closeErr := openedViaParent.Close()
+	if err != nil || closeErr != nil || !openedInfo.IsDir() || !os.SameFile(parentInfo, openedInfo) {
+		return nil, backup.ErrInvalidPackage
+	}
 	absolute, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
@@ -39,6 +59,11 @@ func New(root string) (*Store, error) {
 	opened, err := os.OpenRoot(absolute)
 	if err != nil {
 		return nil, err
+	}
+	openedRootInfo, err := opened.Stat(".")
+	if err != nil || !openedRootInfo.IsDir() || !os.SameFile(info, openedRootInfo) {
+		_ = opened.Close()
+		return nil, backup.ErrInvalidPackage
 	}
 	return &Store{rootPath: absolute, root: opened}, nil
 }

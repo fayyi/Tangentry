@@ -9,6 +9,17 @@ import (
 	"testing"
 )
 
+func TestNewRejectsSymlinkRoot(t *testing.T) {
+	outside := t.TempDir()
+	link := filepath.Join(t.TempDir(), "target")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skip("symlink unavailable")
+	}
+	if _, err := New(link); err == nil {
+		t.Fatalf("symlink root accepted: %v", err)
+	}
+}
+
 func TestStoreUploadReadListDelete(t *testing.T) {
 	s, err := New(t.TempDir())
 	if err != nil {
