@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"reflect"
 
 	"tangentry/internal/articles"
 	"tangentry/internal/content"
@@ -32,7 +33,75 @@ type apiError struct {
 func write(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(value)
+	jsonValue := emptyJSONLists(reflect.ValueOf(value))
+	if !jsonValue.IsValid() {
+		_ = json.NewEncoder(w).Encode(nil)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(jsonValue.Interface())
+}
+
+var jsonMarshalerType = reflect.TypeOf((*json.Marshaler)(nil)).Elem()
+
+func emptyJSONLists(value reflect.Value) reflect.Value {
+	if !value.IsValid() || value.Type().Implements(jsonMarshalerType) || reflect.PointerTo(value.Type()).Implements(jsonMarshalerType) {
+		return value
+	}
+	switch value.Kind() {
+	case reflect.Interface:
+		if value.IsNil() {
+			return value
+		}
+		result := reflect.New(value.Type()).Elem()
+		result.Set(emptyJSONLists(value.Elem()))
+		return result
+	case reflect.Pointer:
+		if value.IsNil() {
+			return value
+		}
+		result := reflect.New(value.Type().Elem())
+		result.Elem().Set(emptyJSONLists(value.Elem()))
+		return result
+	case reflect.Slice:
+		if value.Type().Elem().Kind() == reflect.Uint8 {
+			return value
+		}
+		length := value.Len()
+		result := reflect.MakeSlice(value.Type(), length, length)
+		for index := 0; index < length; index++ {
+			result.Index(index).Set(emptyJSONLists(value.Index(index)))
+		}
+		return result
+	case reflect.Map:
+		if value.IsNil() {
+			return value
+		}
+		result := reflect.MakeMapWithSize(value.Type(), value.Len())
+		iterator := value.MapRange()
+		for iterator.Next() {
+			result.SetMapIndex(iterator.Key(), emptyJSONLists(iterator.Value()))
+		}
+		return result
+	case reflect.Struct:
+		result := reflect.New(value.Type()).Elem()
+		result.Set(value)
+		for index := 0; index < value.NumField(); index++ {
+			field := value.Type().Field(index)
+			if field.PkgPath != "" || reflect.PointerTo(field.Type).Implements(jsonMarshalerType) {
+				continue
+			}
+			result.Field(index).Set(emptyJSONLists(value.Field(index)))
+		}
+		return result
+	case reflect.Array:
+		result := reflect.New(value.Type()).Elem()
+		for index := 0; index < value.Len(); index++ {
+			result.Index(index).Set(emptyJSONLists(value.Index(index)))
+		}
+		return result
+	default:
+		return value
+	}
 }
 
 // errorResponse maps a domain error to the user-facing API error. respond

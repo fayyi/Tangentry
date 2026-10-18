@@ -1,6 +1,7 @@
 import { Check, CircleHelp, Download, Folder, FolderOpen, RefreshCw } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { request } from '../../shared/api/client'
+import { listOrEmpty } from '../../shared/api/list'
 import { useCapabilities } from '../../shared/api/desktop'
 import type { ToolStatus, BackupTarget, BackupTask, BackupSnapshot, BackupRestoreResult, BackupValidation } from '../../shared/api/types'
 import type { useDownloads } from '../downloads/useDownloads'
@@ -19,12 +20,16 @@ export function StorageSettings({ downloads, onModelDirectoryChanged }: {
   const [modelDirectory, setModelDirectory] = useState('')
   const { pathPicker } = useCapabilities()
   const [updating, setUpdating] = useState(false), [updateError, setUpdateError] = useState('')
-  const toolDownloading = downloads.tools?.tools.some(tool => tool.downloading) ?? false
+  const tools = listOrEmpty(downloads.tools?.tools)
+  const toolDownloading = tools.some(tool => tool.downloading)
   const [backupTargets, setBackupTargets] = useState<BackupTarget[]>([])
   const [backupTasks, setBackupTasks] = useState<BackupTask[]>([])
   const [backupSnapshots, setBackupSnapshots] = useState<BackupSnapshot[]>([])
   const [backupPath, setBackupPath] = useState('')
   const [backupError, setBackupError] = useState('')
+  const [backupLoadError, setBackupLoadError] = useState('')
+  const [backupLoading, setBackupLoading] = useState(true)
+  const [backupRevision, setBackupRevision] = useState(0)
   const [backupPassword, setBackupPassword] = useState('')
   const [restorePlan, setRestorePlan] = useState<BackupRestoreResult | null>(null)
   const [restoreValidation, setRestoreValidation] = useState<BackupValidation | null>(null)
@@ -54,13 +59,21 @@ export function StorageSettings({ downloads, onModelDirectoryChanged }: {
   }, [pathPicker])
   useEffect(() => {
     const controller = new AbortController()
+    setBackupLoading(true)
+    setBackupLoadError('')
     void Promise.all([
       request<BackupTarget[]>('/backup/targets', { signal: controller.signal }),
       request<BackupTask[]>('/backup/tasks', { signal: controller.signal }),
       request<BackupSnapshot[]>('/backup/snapshots', { signal: controller.signal }),
-    ]).then(([targets, tasks, snapshots]) => { setBackupTargets(targets); setBackupTasks(tasks); setBackupSnapshots(snapshots); setSelectedSnapshotId(snapshots[0]?.id ?? '') }).catch(() => {})
+    ]).then(([targets, tasks, snapshots]) => {
+      if (controller.signal.aborted) return
+      const safeTargets = listOrEmpty(targets), safeTasks = listOrEmpty(tasks), safeSnapshots = listOrEmpty(snapshots)
+      setBackupTargets(safeTargets); setBackupTasks(safeTasks); setBackupSnapshots(safeSnapshots); setSelectedSnapshotId(safeSnapshots[0]?.id ?? '')
+    }).catch(cause => {
+      if (!controller.signal.aborted) setBackupLoadError(cause instanceof Error ? cause.message : '备份设置读取失败，请重试。')
+    }).finally(() => { if (!controller.signal.aborted) setBackupLoading(false) })
     return () => controller.abort()
-  }, [])
+  }, [backupRevision])
   async function addBackupTarget() {
     setBackupError('')
     try {
@@ -133,11 +146,14 @@ export function StorageSettings({ downloads, onModelDirectoryChanged }: {
     <section className="settings-section" aria-labelledby="tools-title">
       <div className="settings-heading"><div><h2 id="tools-title">下载工具</h2><p className="field-hint">更改系统工具后，请重启。</p></div><button className="icon-button" aria-label="刷新状态" title="刷新状态" disabled={downloads.loading} onClick={() => void downloads.reload()}><RefreshCw size={16} className={downloads.loading ? 'spin' : undefined}/></button></div>
       {downloads.loading && <p className="field-hint" role="status">正在检查工具…</p>}
-      {downloads.tools?.tools.map(tool => <div className="setting-row settings-tool-row" key={tool.name}><div><strong>{tool.name}</strong><p>{tool.name === 'yt-dlp' ? '获取视频与已有字幕' : '合并音视频与媒体处理'}</p>{tool.managed && !tool.installed && !tool.downloading && !tool.error && <p className="field-hint">首次使用时自动下载并校验。</p>}{tool.error && <p className="subtitle-error" role="alert">{tool.error}</p>}</div><div className="tool-value">{tool.downloading ? <span className="settings-state" role="status"><RefreshCw size={14} className="spin"/> {toolProgress(tool)}</span> : <span className="settings-state" data-ready={tool.available}>{tool.available ? <Check size={14}/> : <CircleHelp size={14}/>} {tool.available ? '已就绪' : '未检测到'}</span>}{tool.version && <small>{tool.version.replace(/^ffmpeg version /, '').split(' Copyright')[0]}</small>}{tool.managed && <button type="button" className="button button-secondary" disabled={tool.downloading || updating} onClick={() => void update()}><Download size={14}/>{tool.installed ? '更新 yt-dlp' : '下载 yt-dlp'}</button>}</div></div>)}
+      {downloads.error && <p className="subtitle-error" role="alert">{downloads.error}</p>}
+      {tools.map(tool => <div className="setting-row settings-tool-row" key={tool.name}><div><strong>{tool.name}</strong><p>{tool.name === 'yt-dlp' ? '获取视频与已有字幕' : '合并音视频与媒体处理'}</p>{tool.managed && !tool.installed && !tool.downloading && !tool.error && <p className="field-hint">首次使用时自动下载并校验。</p>}{tool.error && <p className="subtitle-error" role="alert">{tool.error}</p>}</div><div className="tool-value">{tool.downloading ? <span className="settings-state" role="status"><RefreshCw size={14} className="spin"/> {toolProgress(tool)}</span> : <span className="settings-state" data-ready={tool.available}>{tool.available ? <Check size={14}/> : <CircleHelp size={14}/>} {tool.available ? '已就绪' : '未检测到'}</span>}{tool.version && <small>{tool.version.replace(/^ffmpeg version /, '').split(' Copyright')[0]}</small>}{tool.managed && <button type="button" className="button button-secondary" disabled={tool.downloading || updating} onClick={() => void update()}><Download size={14}/>{tool.installed ? '更新 yt-dlp' : '下载 yt-dlp'}</button>}</div></div>)}
       {updateError && <p className="subtitle-error" role="alert">{updateError}</p>}
     </section>
     <section className="settings-section" aria-labelledby="backup-title">
       <div className="settings-heading"><div><h2 id="backup-title">云端备份</h2><p className="field-hint">快照在本机加密后保存到本地目录。默认不包含下载媒体。</p></div></div>
+      {backupLoading && <p className="field-hint" role="status">正在读取备份设置…</p>}
+      {backupLoadError && <p className="subtitle-error" role="alert">{backupLoadError} <button type="button" className="text-button" disabled={backupLoading} onClick={() => setBackupRevision(value => value + 1)}>重新读取</button></p>}
       <div className="setting-row"><label htmlFor="backup-path"><strong>本地备份目录</strong><span className="field-hint">可选网络挂载目录</span></label><input id="backup-path" value={backupPath} onChange={event => setBackupPath(event.target.value)} placeholder="例如 /Volumes/Backup"/><button type="button" className="button button-secondary" onClick={() => void addBackupTarget()}>添加</button></div>
       {backupTargets.map(target => <div className="setting-row" key={target.id}><div><strong>{target.name}</strong><p className="settings-location-path">{target.path}</p></div><span className="settings-state" data-ready="true">已启用</span></div>)}
       <div className="setting-row"><label htmlFor="backup-password"><strong>备份密码</strong><span className="field-hint">不会写入数据库或快照</span></label><input id="backup-password" type="password" value={backupPassword} onChange={event => setBackupPassword(event.target.value)} autoComplete="new-password"/><button type="button" className="button button-primary" disabled={!backupPassword || !backupTargets.length} onClick={() => void createBackup()}>立即备份</button></div>

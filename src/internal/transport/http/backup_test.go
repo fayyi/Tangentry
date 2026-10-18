@@ -12,15 +12,13 @@ import (
 
 type backupHTTPFixture struct{}
 
-func (backupHTTPFixture) Targets(context.Context) ([]backup.Target, error) { return nil, nil }
-func (backupHTTPFixture) Tasks(context.Context) ([]backup.Task, error)     { return nil, nil }
-func (backupHTTPFixture) Snapshots(context.Context) ([]backup.Snapshot, error) {
-	return []backup.Snapshot{{ID: "snapshot-1"}}, nil
-}
-func (backupHTTPFixture) SaveTarget(context.Context, backup.Target) error { return nil }
-func (backupHTTPFixture) DeleteTarget(context.Context, string) error      { return nil }
-func (backupHTTPFixture) SaveTask(context.Context, backup.Task) error     { return nil }
-func (backupHTTPFixture) DeleteTask(context.Context, string) error        { return nil }
+func (backupHTTPFixture) Targets(context.Context) ([]backup.Target, error)     { return nil, nil }
+func (backupHTTPFixture) Tasks(context.Context) ([]backup.Task, error)         { return nil, nil }
+func (backupHTTPFixture) Snapshots(context.Context) ([]backup.Snapshot, error) { return nil, nil }
+func (backupHTTPFixture) SaveTarget(context.Context, backup.Target) error      { return nil }
+func (backupHTTPFixture) DeleteTarget(context.Context, string) error           { return nil }
+func (backupHTTPFixture) SaveTask(context.Context, backup.Task) error          { return nil }
+func (backupHTTPFixture) DeleteTask(context.Context, string) error             { return nil }
 func (backupHTTPFixture) Create(context.Context, string, string) (backup.Snapshot, error) {
 	return backup.Snapshot{ID: "snapshot-1", Status: "succeeded"}, nil
 }
@@ -63,5 +61,20 @@ func TestBackupRestoreRoutesRequireSameOriginAndDoNotEchoPassword(t *testing.T) 
 	h.ServeHTTP(badResponse, badOrigin)
 	if badResponse.Code != http.StatusForbidden {
 		t.Fatalf("cross-origin request accepted: %d", badResponse.Code)
+	}
+}
+
+func TestBackupListRoutesReturnEmptyArrays(t *testing.T) {
+	h := NewWithDependencies(Dependencies{Backup: backupHTTPFixture{}}, nil)
+	for _, path := range []string{"/api/backup/targets", "/api/backup/tasks", "/api/backup/snapshots"} {
+		t.Run(path, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, path, nil)
+			r.Host = "127.0.0.1"
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+			if w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != "[]" {
+				t.Fatalf("GET %s = %d %s, want 200 []", path, w.Code, w.Body.String())
+			}
+		})
 	}
 }

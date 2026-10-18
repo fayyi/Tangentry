@@ -1,6 +1,7 @@
 import { ArrowUpRight, LoaderCircle, RefreshCw, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { request } from '../../shared/api/client'
+import { listOrEmpty } from '../../shared/api/list'
 import type { Feed, ToolReport } from '../../shared/api/types'
 
 export function YouTubeRecommendations({ tools, onFeed, onDiscover }: {
@@ -25,8 +26,9 @@ export function YouTubeRecommendations({ tools, onFeed, onDiscover }: {
     try {
       const feed = await request<Feed>('/recommendations/youtube', { signal: active.signal })
       if (active.signal.aborted) return
-      setResult(`已读取 ${feed.items.length} 条${feed.sourceTitle === 'YouTube 账号订阅动态' ? '账号订阅动态' : '首页推荐'}。`)
-      onFeed(feed)
+      const items = listOrEmpty(feed.items)
+      setResult(`已读取 ${items.length} 条${feed.sourceTitle === 'YouTube 账号订阅动态' ? '账号订阅动态' : '首页推荐'}。`)
+      onFeed({ ...feed, items })
     } catch (cause) {
       if (!active.signal.aborted) setError(cause instanceof Error ? cause.message : '推荐暂不可用。')
     } finally {
