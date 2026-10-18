@@ -1,7 +1,7 @@
 .DEFAULT_GOAL := build
 .PHONY: dev build server docker test test-unit test-e2e check-race desktop desktop-build desktop-build-windows desktop-build-linux desktop-build-all clean
 
-VERSION ?= 0.0.1
+VERSION ?= 0.0.2
 IMAGE ?= tangentry
 SOURCE_DIR ?= src
 WEB_DIR := $(SOURCE_DIR)/web
