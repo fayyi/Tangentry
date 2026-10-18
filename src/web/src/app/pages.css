@@ -7,6 +7,7 @@
 /* Without a summary line the title and its action share one centred row at every width. */
 .page-heading:not(:has(.page-heading-copy > p)) { flex-wrap: nowrap; align-items: center; }
 .page-heading:not(:has(.page-heading-copy > p)) .page-heading-copy { flex: 1 1 auto; }
+.discovery-page-container, .active-page-container { display: contents; }
 .content-container > .page-heading-compact { height: 0; min-height: 0; margin: 0; padding: 0; }
 .page-heading-compact > svg, .page-heading-compact .page-symbol { display: none; }
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 36px; margin: 0 0 12px; }
