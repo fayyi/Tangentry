@@ -421,7 +421,7 @@ func ToItem(paper Paper) content.Item {
 		Author: strings.Join(authors, ", "), Category: category, URL: paper.PDFURL, MediaURL: paper.PDFURL,
 		Description: paper.Abstract, PublishedAt: paper.PublishedAt,
 		Paper: &content.PaperMetadata{
-			ArxivID: paper.ID, Version: paper.Version, Authors: authors, Categories: append([]string(nil), paper.Categories...),
+			ArxivID: paper.ID, Title: paper.Title, Version: paper.Version, Authors: authors, Categories: append([]string(nil), paper.Categories...),
 			Abstract: paper.Abstract, PublishedAt: paper.PublishedAt, UpdatedAt: paper.UpdatedAt, PDFURL: paper.PDFURL,
 			ArxivURL: paper.ArxivURL, HFURL: paper.HFURL, GitHubURL: paper.GitHubURL, AlphaXivURL: paper.AlphaXivURL,
 			Upvotes: paper.Upvotes, GitHubStars: paper.GitHubStars, AIKeywords: append([]string(nil), paper.AIKeywords...), AISummary: paper.AISummary,

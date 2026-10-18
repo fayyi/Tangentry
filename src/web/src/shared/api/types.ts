@@ -78,6 +78,7 @@ export interface ContentItem {
 
 export interface PaperMetadata {
   arxivId: string
+  title?: string
   documentId?: string
   version?: number
   authors: string[]

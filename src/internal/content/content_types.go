@@ -36,6 +36,7 @@ type Item struct {
 // them into the free-form description shown by ordinary content items.
 type PaperMetadata struct {
 	ArxivID     string   `json:"arxivId"`
+	Title       string   `json:"title,omitempty"`
 	DocumentID  string   `json:"documentId,omitempty"`
 	Authors     []string `json:"authors,omitempty"`
 	Categories  []string `json:"categories,omitempty"`
