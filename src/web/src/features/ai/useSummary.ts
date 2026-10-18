@@ -7,9 +7,13 @@ import { notifyNotesChanged } from '../notes/changes'
 
 export interface SummarySegmentInput { index: number; start?: number; end?: number; page?: number; text: string }
 
+export function summaryInputFromTrack(contentId: string, source: string, track: SubtitleTrack): { contentId: string; source: string; segments: SummarySegmentInput[]; revision: number } {
+  return { contentId, source, segments: track.cues.map((cue, index) => ({ index, start: cue.start, end: cue.end, text: cue.text })), revision: 0 }
+}
+
 export function useSummary(contentId: string, source: string, track?: SubtitleTrack, onSeek?: (seconds: number) => void, text?: string, segments?: SummarySegmentInput[]) {
   const visible = usePageVisibility()
-  const input = useMemo(() => track ? { contentId, source, segments: track.cues.map((cue, index) => ({ index, start: cue.start, end: cue.end, text: cue.text })), revision: 0 } : segments?.length ? { contentId, source, segments, revision: 0 } : text?.trim() ? { contentId, source, text, revision: 0 } : null, [contentId, source, track, text, segments])
+  const input = useMemo(() => track ? summaryInputFromTrack(contentId, source, track) : segments?.length ? { contentId, source, segments, revision: 0 } : text?.trim() ? { contentId, source, text, revision: 0 } : null, [contentId, source, track, text, segments])
   const scope = useMemo(() => input ? JSON.stringify(input) : '', [input])
   const liveScope = useRef(scope); liveScope.current = scope
   const [inspection, setInspection] = useState<SummaryInspection | null>(null)
@@ -70,7 +74,7 @@ export function useSummary(contentId: string, source: string, track?: SubtitleTr
   }, [visible, pending, loading, error, dataScope, scope, inspection])
   // regenerate replaces the stored summary with one from the current model.
   async function generate(regenerate = false) {
-    if (!input || !inspection || dataScope !== scope || loading || error || pending || mutation.current || inspection.active || inspection.settings.translating || !(inspection.settings.summaryReady ?? inspection.settings.ready)) return
+    if (!input || !inspection || dataScope !== scope || loading || pending || mutation.current || inspection.active || inspection.settings.translating || !(inspection.settings.summaryReady ?? inspection.settings.ready)) return
     const controller = new AbortController(); mutation.current = controller; const requestedScope = scope; const snapshot = inspection
     setPending(true); setError(''); setNotice('')
     if (regenerate) setInspection({ ...snapshot, result: { ...snapshot.result, complete: false, completedCalls: 0, overview: undefined, points: undefined, citations: undefined } })
@@ -95,5 +99,5 @@ export function useSummary(contentId: string, source: string, track?: SubtitleTr
     } finally { if (timer) clearTimeout(timer); controller.abort(); if (mutation.current === controller) { mutation.current = null; if (liveScope.current === requestedScope) setPending(false) } }
   }
   function cancel() { mutation.current?.abort(); mutation.current = null; setPending(false); setNotice('已取消摘要，已完成部分保留。'); void reload() }
-  return { contentId, inspection: dataScope === scope ? inspection : null, loading, pending, error, notice, reload, generate, cancel, onSeek }
+  return { contentId, input, hasInput: Boolean(input), inspection: dataScope === scope ? inspection : null, loading, pending, error, notice, reload, generate, cancel, onSeek }
 }

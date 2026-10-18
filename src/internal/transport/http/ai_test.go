@@ -40,6 +40,28 @@ func TestAIOutputFailuresAreActionableAndDoNotExposeProviderText(t *testing.T) {
 	}
 }
 
+func TestSummaryErrorsExplainNextStep(t *testing.T) {
+	for _, tc := range []struct {
+		err     error
+		status  int
+		code    string
+		message string
+	}{
+		{ai.ErrInvalid, 400, "invalid_ai_summary", "摘要来源和正文内容"},
+		{ai.ErrNotReady, 503, "ai_not_ready", "工具设置填写支持指令与 JSON 输出的摘要模型"},
+		{ai.ErrBusy, 409, "ai_busy", "已有 AI 操作正在进行"},
+		{ai.ErrConflict, 409, "ai_config_changed", "AI 配置已更新"},
+		{ai.ErrStorage, 503, "ai_storage_failed", "摘要缓存无法读写"},
+	} {
+		w := httptest.NewRecorder()
+		summaryFail(w, tc.err)
+		var output apiError
+		if err := json.Unmarshal(w.Body.Bytes(), &output); err != nil || w.Code != tc.status || output.Code != tc.code || !strings.Contains(output.Message, tc.message) {
+			t.Fatalf("summary error mapping changed: %#v status=%d body=%s err=%v", tc, w.Code, w.Body.String(), err)
+		}
+	}
+}
+
 func TestAIParameterRejectionIsDistinctFromNetworkFailure(t *testing.T) {
 	for _, operation := range []struct {
 		name string
