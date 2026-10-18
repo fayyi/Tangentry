@@ -86,3 +86,12 @@ func (s *Service) Search(ctx context.Context, query string, page int) (Feed, err
 	}
 	return Feed{Items: []content.Item{item}, Page: 1, Total: 1, SourceTitle: item.Author, Query: id}, nil
 }
+
+// CreatorVideos exposes the existing creator feed for temporary creator views.
+// It does not create a subscription or update recommendation preferences.
+func (s *Service) CreatorVideos(ctx context.Context, id string, page int) (Feed, error) {
+	if !uidPattern.MatchString(id) || page < 1 || page > 1000 {
+		return Feed{}, ErrInvalidQuery
+	}
+	return s.provider.CreatorVideos(ctx, id, page)
+}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"tangentry/internal/adapters/platforms/youtube"
 	"tangentry/internal/content"
 	"tangentry/internal/discovery"
 	"tangentry/internal/downloads"
@@ -18,6 +19,19 @@ func (t *Toolkit) YouTubeRecommendationStatus() downloads.ToolStatus {
 func (t *Toolkit) YouTubeRecommendations(ctx context.Context) (discovery.Feed, error) {
 	feed, _, err := t.youTubeHomeBatch(ctx, nil)
 	return feed, err
+}
+
+func (t *Toolkit) YouTubeSearch(ctx context.Context, query, cursor string) (discovery.SearchPage, error) {
+	if t.youtubeHome == nil {
+		return discovery.SearchPage{}, &discovery.PlatformError{Message: "YouTube 搜索暂不可用。"}
+	}
+	cookie := ""
+	if t.credentials != nil {
+		cookie = t.credentials.Header("youtube", "https://www.youtube.com/youtubei/v1/search")
+	}
+	home := youtube.NewHome()
+	home.UserAgent = ""
+	return home.SearchWithCookie(ctx, cookie, query, cursor)
 }
 
 func (t *Toolkit) youTubeHomeBatch(ctx context.Context, continuation json.RawMessage) (discovery.Feed, json.RawMessage, error) {

@@ -13,6 +13,8 @@ func (h *Handler) registerDiscoveryRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/discovery/topics/{id}", h.discovery.topicUpdate)
 	mux.HandleFunc("DELETE /api/discovery/topics/{id}", h.discovery.topicDelete)
 	mux.HandleFunc("GET /api/discovery/bilibili", h.discovery.search)
+	mux.HandleFunc("GET /api/search", h.discovery.unifiedSearch)
+	mux.HandleFunc("GET /api/search/creator/{platform}/{id}", h.discovery.creator)
 	mux.HandleFunc("GET /api/discovery/{source}", h.discovery.importSearch)
 	mux.HandleFunc("GET /api/discovery/linuxdo/posts", h.discovery.linuxdoPosts)
 	mux.HandleFunc("GET /api/recommendations/{source}", h.discovery.recommendationRead)

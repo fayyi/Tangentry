@@ -84,6 +84,19 @@ export interface Feed {
   sourceTitle: string
   query: string
 }
+export interface SearchPage {
+  items: ContentItem[]
+  cursor?: string
+  hasMore: boolean
+  platform: string
+}
+export interface SearchSourceResult { page: SearchPage; error?: string }
+export interface UnifiedSearchResponse {
+  query: string
+  local: { items: ContentItem[]; total: number; counts: Record<string, number>; next?: number }
+  sources: Record<string, SearchSourceResult>
+  link?: Feed
+}
 
 export type DiscoveryView = 'wander' | 'latest' | 'topic' | 'random'
 export interface DiscoveryBatchRequest {

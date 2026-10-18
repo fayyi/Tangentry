@@ -76,6 +76,21 @@
 .search-history li .icon-button { width: 28px; height: 28px; min-height: 28px; opacity: .7; }
 @media (hover: hover) and (pointer: fine) { .search-history li:hover { background: var(--hover); } }
 .search-history > .button { width: 100%; margin-top: 8px; }
+.unified-search-head { display: grid; gap: 14px; max-width: 860px; margin-bottom: 28px; }
+.unified-search-head h1 { margin: 0; font-size: clamp(24px, 4vw, 34px); }
+.unified-search-form { display: flex; align-items: center; gap: 9px; min-height: 44px; padding: 4px 6px 4px 13px; border: 1px solid var(--line-strong); border-radius: var(--radius-full); background: var(--card); }
+.unified-search-form input { flex: 1; min-width: 0; min-height: 34px; background: transparent; color: var(--ink); outline: none; }
+.unified-search-filters { display: flex; gap: 10px; flex-wrap: wrap; color: var(--muted); font-size: 12px; }
+.unified-search-filters label { display: inline-flex; align-items: center; gap: 7px; }
+.unified-search-filters select { min-height: 32px; padding: 0 26px 0 9px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--card); color: var(--ink); }
+.unified-search-group { margin-top: 28px; }
+.unified-search-group .results-heading { margin-bottom: 12px; }
+.unified-search-card { min-width: 0; }
+.creator-link { display: inline-flex; align-items: center; gap: 5px; margin-top: 6px; color: var(--muted); font-size: 12px; }
+.creator-link:disabled { opacity: .45; }
+.search-mixed-summary { margin-top: 24px; color: var(--faint); font-size: 12px; }
+.creator-temporary-view { display: grid; gap: 18px; }
+.creator-temporary-view > .results-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 
 /* ---------- 历史 ---------- */
 .history-workspace .page-heading { margin-bottom: 18px; }
