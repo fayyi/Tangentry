@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { shouldRenderInlineSummary, summaryAvailability, summaryButtonState, summaryControlPresentation, summaryControlState, summaryGenerationBlockedReason, summaryNeedsOutlineRegeneration, summaryStatusPresentation, summaryTextFallback } from './summaryPresentation'
+import { shouldRenderInlineSummary, summaryAvailability, summaryButtonState, summaryControlPresentation, summaryControlState, summaryEmptyInputPresentation, summaryGenerationBlockedReason, summaryNeedsOutlineRegeneration, summaryStatusPresentation, summaryTextFallback } from './summaryPresentation'
 import { summaryInputFromText, summaryInputFromTrack } from './useSummary'
 import type { SummaryResult } from './summaryTypes'
 import type { SubtitleTrack } from '../../shared/api/types'
@@ -64,6 +64,11 @@ test('summary status presentation keeps next steps out of the toolbar flow', () 
   expect(summaryStatusPresentation('missing-input')).toEqual({ message: '当前没有字幕或可用文字。', tone: 'warning', actionLabel: '先转录再摘要' })
   expect(summaryStatusPresentation('saved')).toEqual({ message: '这份摘要已经保存。', tone: 'success' })
   expect(summaryStatusPresentation('ready')).toEqual({ message: '当前内容可以生成摘要。', tone: 'neutral', actionLabel: '生成摘要' })
+})
+
+test('PDF empty summary input has a clear explanation without a transcription action', () => {
+  expect(summaryEmptyInputPresentation('pdf')).toEqual({ message: '此 PDF 没有可提取的文字，暂时无法摘要。' })
+  expect(summaryEmptyInputPresentation('media')).toEqual({ message: '当前没有字幕或可用文字。', actionLabel: '先转录再摘要' })
 })
 
 test('summary control state maps content and inspection to the toolbar action', () => {

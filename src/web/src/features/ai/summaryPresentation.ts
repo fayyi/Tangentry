@@ -6,6 +6,10 @@ export type SummaryAvailability = SummaryButtonState | 'missing-input' | 'ai-not
 export type SummaryControlAction = 'none' | 'generate' | 'retry' | 'settings' | 'transcribe'
 export type SummaryStatusTone = 'neutral' | 'success' | 'warning' | 'danger'
 
+export function summaryEmptyInputPresentation(context: 'media' | 'pdf' = 'media'): { message: string; actionLabel?: string } {
+  return context === 'pdf' ? { message: '此 PDF 没有可提取的文字，暂时无法摘要。' } : { message: '当前没有字幕或可用文字。', actionLabel: '先转录再摘要' }
+}
+
 export function summaryTextFallback(...texts: Array<string | undefined>): string | undefined {
   return texts.find(text => Boolean(text?.trim()))?.trim()
 }

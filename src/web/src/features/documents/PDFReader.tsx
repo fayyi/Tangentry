@@ -7,6 +7,7 @@ import { pdfSelection, viewportPDFRect } from './pdfAnchors'
 import { pdfSummarySegments } from './pdfAnchors'
 import { useSummary } from '../ai/useSummary'
 import { SummaryControl } from '../ai/SummaryControl'
+import { summaryEmptyInputPresentation } from '../ai/summaryPresentation'
 import { AIInsights } from '../ai/AIInsights'
 import { ReaderActions } from '../../shared/reader/ReaderActions'
 import { useReadingNotebook } from '../../shared/reader/ReadingNotebook'
@@ -165,6 +166,6 @@ export function PDFReader({ id, contentId = id, paper, notes = [], focus, onQuot
     {selection && onQuote && <div className="pdf-selection-tools"><button className="button button-secondary" onMouseDown={event => event.preventDefault()} onClick={() => { onQuote(selection.quote, selection); setSelection(null); window.getSelection()?.removeAllRanges() }}><Quote size={15} aria-hidden="true"/>引用 PDF 选区到批注</button><span>第 {selection.page} 页 · {Array.from(selection.quote).length} 字 · 保存后保留高亮</span></div>}
     {selectionHint && <p className="field-hint" role="status">{selectionHint}</p>}
     {document && <details className="pdf-text"><summary>查看本页文字</summary><p>{!ready ? '正在读取本页文字…' : rendered?.text || '本页未检测到可提取文字，可能是扫描图片。'}</p></details>}
-    <ReaderActions><SummaryControl summary={summary} source={{ contentId: id, title: 'PDF 文档' }}/></ReaderActions>
+    <ReaderActions><SummaryControl summary={summary} source={{ contentId: id, title: 'PDF 文档' }} emptyMessage={summaryEmptyInputPresentation('pdf').message} emptyAction={null}/></ReaderActions>
   </section>
 }
