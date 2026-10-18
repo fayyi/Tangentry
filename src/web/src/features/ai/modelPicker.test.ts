@@ -1,0 +1,39 @@
+import { describe, expect, it } from 'vitest'
+import { filterModels, getModelCapabilities, getModelProvider, getModelProviderStats, groupModelsByProvider, modelsForTask, setModelsEnabled, sortModelsWithEnabledFirst } from './modelPicker'
+
+describe('model picker helpers', () => {
+  it('groups by provider prefix and puts prefixless models in custom', () => {
+    expect(groupModelsByProvider(['group/one', 'codex/gpt', 'custom', 'group/two'])).toEqual([
+      { provider: 'group', models: ['group/one', 'group/two'] }, { provider: 'codex', models: ['codex/gpt'] }, { provider: '其他/自定义', models: ['custom'] },
+    ])
+    expect(getModelProvider('siliconflow/Qwen/Qwen3')).toBe('siliconflow')
+  })
+  it('filters case-insensitively and supports empty results', () => {
+    expect(filterModels(['OpenRouter/Free', 'codex/gpt'], 'openrouter')).toEqual(['OpenRouter/Free'])
+    expect(filterModels(['OpenRouter/Free', 'codex/gpt'], 'missing')).toEqual([])
+  })
+  it('sorts enabled models first without duplicates', () => {
+    expect(sortModelsWithEnabledFirst(['b', 'a', 'b', 'c'], ['c', 'a'])).toEqual(['a', 'c', 'b'])
+  })
+  it('reports provider totals and enabled counts', () => {
+    expect(getModelProviderStats(['codex/a', 'codex/b', 'custom'], ['codex/b'])).toEqual([
+      { provider: 'codex', models: ['codex/a', 'codex/b'], enabledCount: 1 }, { provider: '其他/自定义', models: ['custom'], enabledCount: 0 },
+    ])
+  })
+  it('uses strict translation-only detection and conservative defaults', () => {
+    expect(getModelCapabilities('doubao-translate/fixture')).toEqual(['translation-only'])
+    expect(getModelCapabilities('bilibili/Index-Translate-35B-A3B')).toEqual(['translation-only'])
+    expect(getModelCapabilities('model/r1')).toEqual(['text'])
+    expect(getModelCapabilities('model', { capabilities: ['vision', 'text'] })).toEqual(['vision', 'text'])
+  })
+  it('filters enabled models for translation, summary, and chat', () => {
+    const models = ['doubao-translate/fixture', 'bilibili/Index-Translate-35B-A3B', 'general-chat']
+    expect(modelsForTask(models, models, 'translation')).toEqual(models)
+    expect(modelsForTask(models, models, 'summary')).toEqual(['general-chat'])
+    expect(modelsForTask(models, models, 'chat')).toEqual(['general-chat'])
+  })
+  it('batch toggles without duplicates or losing manual models', () => {
+    expect(setModelsEnabled(['group/one', 'manual/model'], ['manual/model'], true)).toEqual(['manual/model', 'group/one'])
+    expect(setModelsEnabled(['group/one'], ['manual/model', 'group/one'], false)).toEqual(['manual/model'])
+  })
+})
