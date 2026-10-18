@@ -33,13 +33,11 @@ func New(root string, results ResultStore, provider Translator, summarizers ...S
 	if c.Protocol == "" {
 		c.Protocol = "openai"
 	}
-	if c.ChatModel == "" {
-		c.ChatModel = chatModel(c)
-	} else if likelyTranslationModel(c.ChatModel) {
+	if likelyTranslationModel(c.ChatModel) {
 		// Older settings used the first enabled model (often a translation-only
-		// model) as the implicit chat model. Recompute that implicit choice once.
+		// model) as the implicit chat model. Clear that implicit choice instead of
+		// silently selecting another model.
 		c.ChatModel = ""
-		c.ChatModel = chatModel(c)
 	}
 	if len(c.EnabledModels) == 0 && c.Model != "" {
 		c.EnabledModels = []string{c.Model}
