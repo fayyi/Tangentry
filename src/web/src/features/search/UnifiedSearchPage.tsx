@@ -8,7 +8,7 @@ import { appendSearchItems, buildSearchParams, creatorPlatformSupport, groupSear
 
 const labels: Record<string, string> = { bilibili: 'B站', youtube: 'YouTube', linuxdo: 'Linux.do', xiaoyuzhou: '小宇宙', xiaohongshu: '小红书', douyin: '抖音', local: '本机资料库与订阅' }
 type TimeFilter = '' | 'day' | 'week' | 'month'
-type Props = { initialQuery?: string; savedIDs: Set<string>; pending: Set<string>; onRead: (item: ContentItem) => void; onSave: (item: ContentItem) => void; onCreator: (platform: string, authorID: string) => void; onReturnCreator?: () => void; onRouteChange?: (path: string) => void; onSubscribe: (platform: string, authorID: string) => void }
+type Props = { initialQuery?: string; savedIDs: Set<string>; pending: Set<string>; onRead: (item: ContentItem) => void; onSave: (item: ContentItem) => void; onCreator: (platform: string, authorID: string) => void; onReturnCreator?: () => void; onReturnCreatorLabel?: string; onRouteChange?: (path: string) => void; onSubscribe: (platform: string, authorID: string) => void }
 
 function timeBounds(value: TimeFilter): { from?: number; to?: number } {
   if (!value) return {}
@@ -16,7 +16,7 @@ function timeBounds(value: TimeFilter): { from?: number; to?: number } {
   return { from: to - (value === 'day' ? 86400 : value === 'week' ? 7 * 86400 : 30 * 86400), to }
 }
 
-export function UnifiedSearchPage({ initialQuery = '', savedIDs, pending, onRead, onSave, onCreator, onReturnCreator, onRouteChange, onSubscribe }: Props) {
+export function UnifiedSearchPage({ initialQuery = '', savedIDs, pending, onRead, onSave, onCreator, onReturnCreator, onReturnCreatorLabel = '返回搜索', onRouteChange, onSubscribe }: Props) {
   const [query, setQuery] = useState(initialQuery)
   const [platform, setPlatform] = useState('')
   const [kind, setKind] = useState('')
@@ -118,7 +118,7 @@ export function UnifiedSearchPage({ initialQuery = '', savedIDs, pending, onRead
 
   if (creator && creatorPlatform) {
     const support = creatorPlatformSupport(creatorPlatform)
-    return <section className="creator-temporary-view"><button type="button" className="button button-secondary" onClick={() => onReturnCreator?.()}><ArrowLeft size={16}/>返回搜索</button><div className="results-heading"><div><strong>{labels[creatorPlatform] ?? creatorPlatform} 创作者最近内容</strong>{!support.subscribe && <p className="field-hint">该平台暂不支持一键订阅；这是一次性的临时查看，不会写入订阅或推荐偏好。</p>}</div>{support.subscribe && <button type="button" className="button button-primary" onClick={() => onSubscribe(creatorPlatform, creator)}>订阅</button>}</div>{error && <div className="error-panel" role="alert">{error}</div>}{groups.map(group => <div key={group.key}><CardCollection masonry className="modern-gallery">{group.items.map(card)}</CardCollection>{result?.sources[group.key]?.page.hasMore && result.sources[group.key].page.cursor && <button type="button" className="button button-secondary" onClick={() => void loadCreatorMore()} disabled={loadingMore.has(group.key)}>{loadingMore.has(group.key) ? '正在加载…' : '查看更多'}</button>}</div>)}</section>
+    return <section className="creator-temporary-view"><button type="button" className="button button-secondary" onClick={() => onReturnCreator?.()}><ArrowLeft size={16}/>{onReturnCreatorLabel}</button><div className="results-heading"><div><strong>{labels[creatorPlatform] ?? creatorPlatform} 创作者最近内容</strong>{!support.subscribe && <p className="field-hint">该平台暂不支持一键订阅；这是一次性的临时查看，不会写入订阅或推荐偏好。</p>}</div>{support.subscribe && <button type="button" className="button button-primary" onClick={() => onSubscribe(creatorPlatform, creator)}>订阅</button>}</div>{error && <div className="error-panel" role="alert">{error}</div>}{groups.map(group => <div key={group.key}><CardCollection masonry className="modern-gallery">{group.items.map(card)}</CardCollection>{result?.sources[group.key]?.page.hasMore && result.sources[group.key].page.cursor && <button type="button" className="button button-secondary" onClick={() => void loadCreatorMore()} disabled={loadingMore.has(group.key)}>{loadingMore.has(group.key) ? '正在加载…' : '查看更多'}</button>}</div>)}</section>
   }
 
   return <>

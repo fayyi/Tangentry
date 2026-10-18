@@ -4,7 +4,7 @@ import type { ContentItem } from '../../shared/api/types'
 import { bilibiliRouteUpdate, bilibiliStateFromURL, type BilibiliArea, type BilibiliTab } from './bilibiliNavigation'
 
 export type { BilibiliArea, BilibiliTab } from './bilibiliNavigation'
-export { bilibiliPath, bilibiliRouteUpdate, bilibiliStateFromURL } from './bilibiliNavigation'
+export { bilibiliPath, bilibiliReturnPath, bilibiliRouteUpdate, bilibiliStateFromURL } from './bilibiliNavigation'
 export type LiveRoom = { id: string; title: string; author: string; thumbnailUrl: string; url: string }
 type Page = { items: ContentItem[]; rooms?: LiveRoom[]; page: number; next?: string; hasMore: boolean; sourceTitle: string; notice?: string }
 type Profile = { loggedIn: boolean; id?: string; name?: string; avatar?: string; level?: number }

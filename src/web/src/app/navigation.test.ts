@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest'
 import type { ContentItem } from '../shared/api/types'
-import { appPageLayers, navigateBack, readerPath, readerPathForItem, resolveViewportTarget, routeKey, type View, type ViewportSnapshot } from './navigation'
+import { appPageLayers, creatorReturnFromPath, navigateBack, readerPath, readerPathForItem, resolveViewportTarget, routeKey, type View, type ViewportSnapshot } from './navigation'
 
 const item = (overrides: Partial<ContentItem>): ContentItem => ({
   id: 'bilibili:dynamic:123', platform: 'bilibili', platformId: 'dynamic:123', kind: 'article',
@@ -155,4 +155,12 @@ test('非法 fallback 降级到发现页时不携带外部恢复目标', () => {
     hasMatchingHistoryEntry: false,
     fallback: { path: 'https://example.invalid/outside', top: 900, sourceID: 'external-card', focusID: 'external-focus' },
   })).toEqual({ action: 'replace', path: '/', restore: { top: 0, sourceID: '', focusID: '' } })
+})
+
+test('创作者返回目标按来源页面生成路径、视图和中文按钮文案', () => {
+  expect(creatorReturnFromPath('/reader?contentId=article%3A1#notes')).toEqual({ path: '/reader?contentId=article%3A1#notes', view: 'reader', label: '返回阅读' })
+  expect(creatorReturnFromPath('/?topic=技术&platform=bilibili&q=AI')).toEqual({ path: '/?topic=%E6%8A%80%E6%9C%AF&platform=bilibili&q=AI', view: 'discovery', label: '返回发现' })
+  expect(creatorReturnFromPath('/search?q=AI&mode=mixed')).toEqual({ path: '/search?q=AI&mode=mixed', view: 'search', label: '返回搜索' })
+  expect(creatorReturnFromPath('/subscriptions?mode=history')).toEqual({ path: '/subscriptions?mode=history', view: 'subscriptions', label: '返回' })
+  expect(creatorReturnFromPath('https://example.invalid/outside')).toEqual({ path: '/search', view: 'search', label: '返回搜索' })
 })

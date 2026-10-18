@@ -16,6 +16,19 @@ export function bilibiliRouteUpdate(tab: BilibiliTab, area: string = '1') {
   return { action: 'replace' as const, path: bilibiliPath(tab, area) }
 }
 
+/** Preserve a discovery URL when entering B站; unrelated/direct entries fall back to home. */
+export function bilibiliReturnPath(path?: string) {
+  if (!path || !path.startsWith('/') || path.startsWith('//')) return '/'
+  try {
+    const url = new URL(path, 'http://tangentry.local')
+    return url.origin === 'http://tangentry.local' && url.pathname === '/'
+      ? `${url.pathname}${url.search}${url.hash}`
+      : '/'
+  } catch {
+    return '/'
+  }
+}
+
 export function bilibiliStateFromURL(path = typeof window === 'undefined' ? '/bilibili' : window.location.href): { tab: BilibiliTab; area: BilibiliArea } {
   const params = new URL(path, 'http://tangentry.local').searchParams
   const value = params.get('tab')

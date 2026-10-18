@@ -60,6 +60,20 @@ export type NavigationReturnDecision = {
   }
 }
 
+export type CreatorReturn = { path: string; view: View; label: string }
+
+/** Resolve the creator view's contextual return target and Chinese label. */
+export function creatorReturnFromPath(path?: string): CreatorReturn {
+  const fallback: CreatorReturn = { path: viewPaths.search, view: 'search', label: '返回搜索' }
+  if (!path || !isAppPath(path)) return fallback
+  const target = routeKey(path)
+  const pathname = new URL(target, 'http://tangentry.local').pathname
+  const view = Object.entries(viewPaths).find(([, value]) => value === pathname)?.[0] as View | undefined
+  if (!view) return fallback
+  const label = view === 'reader' ? '返回阅读' : view === 'discovery' ? '返回发现' : view === 'search' ? '返回搜索' : '返回'
+  return { path: target, view, label }
+}
+
 const normalizeRestoreTarget = (snapshot: NavigationSnapshot | ViewportTarget | null | undefined) => ({
   top: Number.isFinite(snapshot?.top) ? Math.max(0, snapshot?.top ?? 0) : 0,
   sourceID: typeof snapshot?.sourceID === 'string' ? snapshot.sourceID : '',
