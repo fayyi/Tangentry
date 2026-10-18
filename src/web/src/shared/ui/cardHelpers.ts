@@ -14,6 +14,12 @@ export const platformMetadata: Readonly<Record<string, PlatformMetadata>> = {
   linuxdo: { label: 'Linux.do', colorToken: '--linuxdo' },
 }
 
+const creatorViewPlatforms = new Set(['bilibili', 'youtube', 'linuxdo', 'xiaoyuzhou'])
+
+export function creatorViewSupported(platform: string) {
+  return creatorViewPlatforms.has(platform)
+}
+
 export function platformLabel(platform: string) {
   return platformMetadata[platform]?.label || platform
 }

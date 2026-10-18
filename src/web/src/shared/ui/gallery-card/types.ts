@@ -12,6 +12,7 @@ export interface GalleryCardProps {
   pending: boolean
   onRead: (item: ContentItem) => void
   onSave: (item: ContentItem) => void
+  onCreator?: (item: ContentItem) => void
   onDownload?: (item: ContentItem) => void
   progress?: ReadingProgress | null
   status?: ReactNode

@@ -1,4 +1,4 @@
-import { ArrowLeft, Search, UserRound } from 'lucide-react'
+import { ArrowLeft, Search } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { request } from '../../shared/api/client'
 import type { ContentItem, Feed, SearchPage, UnifiedSearchResponse } from '../../shared/api/types'
@@ -91,7 +91,7 @@ export function UnifiedSearchPage({ initialQuery = '', savedIDs, pending, onRead
     return () => next.abort()
   }, [creator, creatorPlatform])
 
-  function card(item: ContentItem) { return <div className="unified-search-card" key={item.id}><ModernGalleryCard item={item} saved={savedIDs.has(item.id)} pending={pending.has(item.id)} onRead={onRead} onSave={onSave} /><button type="button" className="creator-link" disabled={!item.authorId} onClick={() => onCreator(item.platform, item.authorId)}><UserRound size={13}/>看看 TA 最近</button></div> }
+  function card(item: ContentItem) { return <ModernGalleryCard item={item} saved={savedIDs.has(item.id)} pending={pending.has(item.id)} onRead={onRead} onSave={onSave} onCreator={item.authorId ? value => onCreator(value.platform, value.authorId) : undefined} /> }
 
   if (creator && creatorPlatform) {
     const support = creatorPlatformSupport(creatorPlatform)

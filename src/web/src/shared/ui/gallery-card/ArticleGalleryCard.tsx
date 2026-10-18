@@ -4,9 +4,10 @@ import { SaveCardAction } from './GalleryCardActions'
 import { useCardCover } from './useCardCover'
 import type { GalleryCardContentProps } from './types'
 import { retryThroughProxy, sourceImageURL } from '../../media/sourceImage'
-import { AuthorAvatar, AuthorName, AuthorPublication } from '../CardAuthor'
+import { AuthorLink, AuthorPublication } from '../CardAuthor'
+import { creatorViewSupported } from '../cardHelpers'
 
-export function ArticleGalleryCard({ item, origin, discoveryReason, discoveryType, saved, pending, onRead, onSave, status, excerpt, discovery = false, onFeedback }: GalleryCardContentProps) {
+export function ArticleGalleryCard({ item, origin, discoveryReason, discoveryType, saved, pending, onRead, onSave, onCreator, status, excerpt, discovery = false, onFeedback }: GalleryCardContentProps) {
   const { failed: coverFailed, setFailed: setCoverFailed } = useCardCover(item.thumbnailUrl)
   return (
     <GalleryCardFrame item={item} origin={origin} discoveryReason={discoveryReason} className="card-article" onRead={onRead} status={status} onFeedback={discovery ? onFeedback : undefined}>
@@ -22,11 +23,7 @@ export function ArticleGalleryCard({ item, origin, discoveryReason, discoveryTyp
           {item.viewCount ? <span>{item.viewCount} 浏览</span> : null}
         </div>}
         <div className="modern-card-author">
-          {(item.authorAvatarUrl || item.platform === 'xiaohongshu') && <AuthorAvatar item={item} />}
-          <div className="author-info" style={{ flex: 1 }}>
-            <AuthorName item={item} discoveryType={discovery ? discoveryType : undefined} discoveryReason={discoveryReason} />
-            <AuthorPublication item={item} />
-          </div>
+          <AuthorLink item={item} onCreator={onCreator} showAvatar={Boolean(item.authorAvatarUrl || item.platform === 'xiaohongshu' || (onCreator && item.authorId && creatorViewSupported(item.platform)))} discoveryType={discovery ? discoveryType : undefined} discoveryReason={discoveryReason}><AuthorPublication item={item} /></AuthorLink>
           <div className="modern-card-actions"><SaveCardAction item={item} saved={saved} pending={pending} onSave={onSave} /></div>
         </div>
       </div>
