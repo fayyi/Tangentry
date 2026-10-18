@@ -7,6 +7,7 @@ describe('chat model presentation', () => {
     expect(selectedChatModel({ enabledModels: ['general-chat'] })).toBe('')
     expect(selectedChatModel({ chatModel: 'not-enabled', enabledModels: ['general-chat'] })).toBe('')
     expect(selectedChatModel({ enabledModels: ['bilibili/Index-Translate-35B-A3B'] })).toBe('')
+    expect(selectedChatModel({ chatModel: 'doubao-translate/fixture', enabledModels: ['doubao-translate/fixture'] })).toBe('')
   })
 
   it('stores and clears a manually selected model', () => {
