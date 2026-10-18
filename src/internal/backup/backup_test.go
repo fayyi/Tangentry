@@ -368,6 +368,137 @@ func TestApplyPendingRestoreIsIdempotentAfterInterruptedMoves(t *testing.T) {
 	}
 }
 
+func TestApplyPendingRestoreRecoversPartiallyMovedConfirmedJournal(t *testing.T) {
+	dataDir := t.TempDir()
+	workDir := restoreWorkDir(dataDir)
+	stagedID := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	rollbackID := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	staged := filepath.Join(workDir, "staged-"+stagedID)
+	rollback := filepath.Join(workDir, "rollback-"+rollbackID)
+	for _, directory := range []string{staged, filepath.Join(dataDir, "documents"), filepath.Join(rollback, "documents")} {
+		if err := os.MkdirAll(directory, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db := []byte("new database")
+	document := []byte("new document")
+	oldDocument := []byte("old document")
+	if err := os.WriteFile(filepath.Join(staged, "tangentry.db"), db, 0600); err != nil {
+		t.Fatal(err)
+	}
+	// The staged documents directory has moved to the active directory while
+	// the journal still says confirmed, as in the legacy crash window.
+	if err := os.WriteFile(filepath.Join(dataDir, "documents", "new.txt"), document, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rollback, "documents", "old.txt"), oldDocument, 0600); err != nil {
+		t.Fatal(err)
+	}
+	dbHash := sha256.Sum256(db)
+	docHash := sha256.Sum256(document)
+	journal := RestoreJournal{
+		StagedID: stagedID, RollbackID: rollbackID,
+		Entries: []RestoreJournalEntry{
+			{Name: "documents", State: entryPending},
+			{Name: "tangentry.db", State: entryPending},
+		},
+		CurrentEntries: []RestoreJournalEntry{{Name: "documents", State: entryPending}},
+		Manifest: Manifest{Files: []File{
+			{Path: "documents/new.txt", Type: FileData, Size: int64(len(document)), SHA256: fmt.Sprintf("%x", docHash)},
+			{Path: "tangentry.db", Type: FileDatabase, Size: int64(len(db)), SHA256: fmt.Sprintf("%x", dbHash)},
+		}},
+		Step: "confirmed",
+	}
+	if err := writeRestoreJournal(workDir, journal); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyPendingRestore(dataDir); err != nil {
+		t.Fatalf("resume partially moved confirmed restore: %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(dataDir, "tangentry.db")); err != nil || !bytes.Equal(got, db) {
+		t.Fatalf("restored database = %q, err=%v", got, err)
+	}
+	if got, err := os.ReadFile(filepath.Join(dataDir, "documents", "new.txt")); err != nil || !bytes.Equal(got, document) {
+		t.Fatalf("restored document = %q, err=%v", got, err)
+	}
+	if got, err := os.ReadFile(filepath.Join(rollback, "documents", "old.txt")); err != nil || !bytes.Equal(got, oldDocument) {
+		t.Fatalf("pre-restore document = %q, err=%v", got, err)
+	}
+}
+
+func TestApplyPendingRestorePersistsInstallingBeforeFirstMove(t *testing.T) {
+	dataDir := t.TempDir()
+	workDir := restoreWorkDir(dataDir)
+	stagedID := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	rollbackID := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	staged := filepath.Join(workDir, "staged-"+stagedID)
+	if err := os.MkdirAll(filepath.Join(staged, "documents"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dataDir, "documents"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	db := []byte("new database")
+	document := []byte("new document")
+	if err := os.WriteFile(filepath.Join(staged, "tangentry.db"), db, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(staged, "documents", "new.txt"), document, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "documents", "old.txt"), []byte("old document"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	dbHash := sha256.Sum256(db)
+	docHash := sha256.Sum256(document)
+	journal := RestoreJournal{
+		StagedID: stagedID, RollbackID: rollbackID,
+		Entries:        []RestoreJournalEntry{{Name: "documents", State: entryPending}, {Name: "tangentry.db", State: entryPending}},
+		CurrentEntries: []RestoreJournalEntry{{Name: "documents", State: entryPending}},
+		Manifest: Manifest{Files: []File{
+			{Path: "documents/new.txt", Type: FileData, Size: int64(len(document)), SHA256: fmt.Sprintf("%x", docHash)},
+			{Path: "tangentry.db", Type: FileDatabase, Size: int64(len(db)), SHA256: fmt.Sprintf("%x", dbHash)},
+		}},
+		Step: "confirmed",
+	}
+	if err := writeRestoreJournal(workDir, journal); err != nil {
+		t.Fatal(err)
+	}
+	previousRename := renameRestoreEntry
+	crashed := false
+	renameRestoreEntry = func(oldpath, newpath string) error {
+		persisted, err := readRestoreJournal(workDir)
+		if err != nil || persisted.Step != "installing" {
+			return fmt.Errorf("journal state before first move = %q, err=%v", persisted.Step, err)
+		}
+		if err := os.Rename(oldpath, newpath); err != nil {
+			return err
+		}
+		if !crashed {
+			crashed = true
+			panic("simulated process interruption after rename")
+		}
+		return nil
+	}
+	func() {
+		defer func() { _ = recover() }()
+		_ = ApplyPendingRestore(dataDir)
+	}()
+	renameRestoreEntry = previousRename
+	if !crashed {
+		t.Fatal("restore did not reach the simulated crash point")
+	}
+	if err := ApplyPendingRestore(dataDir); err != nil {
+		t.Fatalf("resume after interrupted first move: %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(dataDir, "tangentry.db")); err != nil || !bytes.Equal(got, db) {
+		t.Fatalf("restored database = %q, err=%v", got, err)
+	}
+	if got, err := os.ReadFile(filepath.Join(workDir, "rollback-"+rollbackID, "documents", "old.txt")); err != nil || string(got) != "old document" {
+		t.Fatalf("pre-restore document = %q, err=%v", got, err)
+	}
+}
+
 func TestApplyPendingRestoreRollsBackOnlyInstalledEntriesAfterFailure(t *testing.T) {
 	dataDir := t.TempDir()
 	workDir := restoreWorkDir(dataDir)

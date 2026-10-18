@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -149,36 +150,57 @@ func ApplyPendingRestore(dataDir string) error {
 	if journal.Step == "rolling_back" {
 		return finishRestoreRollback(dataDir, workDir, staged, rollback, journal, errors.New("restore startup transaction rolled back"))
 	}
-	if journal.Step != "installed" && journal.Step != "installing" {
-		if err := validateStaged(staged); err != nil {
+	if journal.Step == "confirmed" {
+		partialInstall, err := reconcileConfirmedInstall(dataDir, staged, rollback, &journal)
+		if err != nil {
 			return err
 		}
-		if err := validateStagedManifest(staged, journal.Manifest); err != nil {
+		if err := validateJournalManifestParts(staged, dataDir, journal.Manifest, journal.Entries); err != nil {
+			if partialInstall {
+				return failRestoreAndRollback(dataDir, workDir, staged, rollback, journal, err)
+			}
 			return err
 		}
-	}
-	if journal.Step == "confirmed" || journal.Step == "saving_current" {
 		if err := os.MkdirAll(rollback, 0700); err != nil {
 			return failRestoreAndRollback(dataDir, workDir, staged, rollback, journal, err)
 		}
 		if err := syncDirectory(workDir); err != nil {
 			return failRestoreAndRollback(dataDir, workDir, staged, rollback, journal, err)
 		}
-		journal.Step = "saving_current"
+		journal.Step = "installing"
 		if err := writeRestoreJournal(workDir, journal); err != nil {
-			return failRestoreAndRollback(dataDir, workDir, staged, rollback, journal, err)
+			return err
+		}
+	}
+	if journal.Step == "saving_current" {
+		if err := validateStaged(staged); err != nil {
+			return err
+		}
+		if err := validateStagedManifest(staged, journal.Manifest); err != nil {
+			return err
 		}
 		if err := moveJournalEntries(dataDir, rollback, workDir, &journal, &journal.CurrentEntries, entryMovedToRollback); err != nil {
 			return failRestoreAndRollback(dataDir, workDir, staged, rollback, journal, err)
 		}
-		journal.Step = "current_saved"
+		journal.Step = "installing"
 		if err := writeRestoreJournal(workDir, journal); err != nil {
 			return failRestoreAndRollback(dataDir, workDir, staged, rollback, journal, err)
 		}
 	}
-	if journal.Step == "current_saved" || journal.Step == "installing" {
+	if journal.Step == "current_saved" {
+		if err := validateStaged(staged); err != nil {
+			return err
+		}
+		if err := validateStagedManifest(staged, journal.Manifest); err != nil {
+			return err
+		}
 		journal.Step = "installing"
 		if err := writeRestoreJournal(workDir, journal); err != nil {
+			return failRestoreAndRollback(dataDir, workDir, staged, rollback, journal, err)
+		}
+	}
+	if journal.Step == "installing" {
+		if err := moveJournalEntries(dataDir, rollback, workDir, &journal, &journal.CurrentEntries, entryMovedToRollback); err != nil {
 			return failRestoreAndRollback(dataDir, workDir, staged, rollback, journal, err)
 		}
 		if err := moveJournalEntries(staged, dataDir, workDir, &journal, &journal.Entries, entryInstalled); err != nil {
@@ -204,6 +226,122 @@ func ApplyPendingRestore(dataDir string) error {
 			return err
 		}
 		return removeRestoreJournal(workDir)
+	}
+	return nil
+}
+
+// Older confirmed journals may have been interrupted after a rename but before
+// the installing state reached disk. Detect those moves from the staged,
+// active, and rollback trees so startup can resume without validating a staged
+// tree that is necessarily incomplete.
+func reconcileConfirmedInstall(dataDir, staged, rollback string, journal *RestoreJournal) (bool, error) {
+	currentNames := make(map[string]bool, len(journal.CurrentEntries))
+	for _, entry := range journal.CurrentEntries {
+		currentNames[entry.Name] = true
+	}
+	partial := false
+	for i := range journal.Entries {
+		entry := &journal.Entries[i]
+		_, stagedErr := os.Lstat(filepath.Join(staged, entry.Name))
+		_, dataErr := os.Lstat(filepath.Join(dataDir, entry.Name))
+		if stagedErr != nil && !errors.Is(stagedErr, os.ErrNotExist) {
+			return false, stagedErr
+		}
+		if dataErr != nil && !errors.Is(dataErr, os.ErrNotExist) {
+			return false, dataErr
+		}
+		if stagedErr == nil {
+			continue
+		}
+		if entry.State == entryInstalled {
+			partial = true
+			continue
+		}
+		if entry.State != entryPending {
+			return false, ErrInvalidPackage
+		}
+		if currentNames[entry.Name] {
+			if errors.Is(dataErr, os.ErrNotExist) {
+				return false, ErrInvalidPackage
+			}
+			if _, rollbackErr := os.Lstat(filepath.Join(rollback, entry.Name)); rollbackErr != nil {
+				if errors.Is(rollbackErr, os.ErrNotExist) {
+					return false, ErrInvalidPackage
+				}
+				return false, rollbackErr
+			}
+		} else if errors.Is(dataErr, os.ErrNotExist) {
+			return false, ErrInvalidPackage
+		}
+		entry.State = entryInstalled
+		partial = true
+	}
+	if partial {
+		for i := range journal.CurrentEntries {
+			entry := &journal.CurrentEntries[i]
+			_, rollbackErr := os.Lstat(filepath.Join(rollback, entry.Name))
+			if rollbackErr == nil {
+				entry.State = entryMovedToRollback
+			} else if !errors.Is(rollbackErr, os.ErrNotExist) {
+				return false, rollbackErr
+			} else if entry.State == entryMovedToRollback {
+				return false, ErrInvalidPackage
+			} else if entry.State != entryPending {
+				return false, ErrInvalidPackage
+			}
+		}
+	}
+	return partial, nil
+}
+
+func validateJournalManifestParts(staged, dataDir string, manifest Manifest, entries []RestoreJournalEntry) error {
+	if err := validateManifestFiles(manifest.Files, manifest.IncludeDownloads); err != nil {
+		return err
+	}
+	states := make(map[string]string, len(entries))
+	for _, entry := range entries {
+		states[entry.Name] = entry.State
+	}
+	stageRoot, err := openSafeRestoreRoot(staged)
+	if err != nil {
+		return err
+	}
+	defer stageRoot.Close()
+	dataRoot, err := openSafeRestoreRoot(dataDir)
+	if err != nil {
+		return err
+	}
+	defer dataRoot.Close()
+	for _, expected := range manifest.Files {
+		top := expected.Path
+		if expected.Type != FileDatabase {
+			top = strings.SplitN(expected.Path, "/", 2)[0]
+		}
+		root := stageRoot
+		if states[top] == entryInstalled {
+			root = dataRoot
+		} else if states[top] != entryPending {
+			return ErrInvalidPackage
+		}
+		before, err := root.Lstat(expected.Path)
+		if err != nil || !before.Mode().IsRegular() || before.Mode()&os.ModeSymlink != 0 {
+			return ErrInvalidPackage
+		}
+		file, err := root.Open(expected.Path)
+		if err != nil {
+			return ErrInvalidPackage
+		}
+		info, statErr := file.Stat()
+		if statErr != nil || !info.Mode().IsRegular() || !os.SameFile(before, info) || info.Size() != expected.Size {
+			file.Close()
+			return ErrInvalidPackage
+		}
+		hash := sha256.New()
+		n, copyErr := io.Copy(hash, io.LimitReader(file, MaxFileSize+1))
+		closeErr := file.Close()
+		if copyErr != nil || closeErr != nil || n != expected.Size || fmt.Sprintf("%x", hash.Sum(nil)) != strings.ToLower(expected.SHA256) {
+			return ErrInvalidPackage
+		}
 	}
 	return nil
 }
