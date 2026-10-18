@@ -11,6 +11,11 @@ export function bilibiliPath(tab: BilibiliTab, area: string = '1') {
   return `/bilibili?${params}`
 }
 
+/** Sub-view changes stay in the current history entry; the app shell owns the actual replace. */
+export function bilibiliRouteUpdate(tab: BilibiliTab, area: string = '1') {
+  return { action: 'replace' as const, path: bilibiliPath(tab, area) }
+}
+
 export function bilibiliStateFromURL(path = typeof window === 'undefined' ? '/bilibili' : window.location.href): { tab: BilibiliTab; area: BilibiliArea } {
   const params = new URL(path, 'http://tangentry.local').searchParams
   const value = params.get('tab')

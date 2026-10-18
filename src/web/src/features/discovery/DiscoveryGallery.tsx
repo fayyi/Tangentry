@@ -59,8 +59,8 @@ export function DiscoveryGallery({ active, kind, onKind, query, onClearQuery, on
     if (values.query.trim()) params.set('q', values.query.trim())
     onRouteChange?.(`/${params.toString() ? `?${params}` : ''}`)
   }
-  const setPlatform = (value: string) => { setPlatformState(value); updateDiscoveryFilterState({ platform: value }); syncURL({ platform: value }) }
-  const setTopic = (value: string) => { setTopicState(value); updateDiscoveryFilterState({ topic: value }); syncURL({ topic: value }) }
+  const setPlatform = (value: string) => { setPlatformState(value); updateDiscoveryFilterState({ platform: value }); batchState.setOptions({ source: value === 'all' ? '' : value }); syncURL({ platform: value }) }
+  const setTopic = (value: string) => { setTopicState(value); updateDiscoveryFilterState({ topic: value }); batchState.setOptions({ topic: value }); syncURL({ topic: value }) }
   const setKind = (value: string) => { onKind(value); updateDiscoveryFilterState({ kind: value }); syncURL({ kind: value }) }
   useEffect(() => {
     const sync = () => {
@@ -68,9 +68,11 @@ export function DiscoveryGallery({ active, kind, onKind, query, onClearQuery, on
       const params = new URLSearchParams(location.search)
       const nextKind = params.get('kind') ?? 'all', nextPlatform = params.get('platform') ?? 'all', nextTopic = params.get('topic') ?? ''
       onKind(nextKind); setPlatformState(nextPlatform); setTopicState(nextTopic); onQueryChange?.(params.get('q') ?? ''); updateDiscoveryFilterState({ kind: nextKind, platform: nextPlatform, topic: nextTopic })
+      const source = nextPlatform === 'all' ? '' : nextPlatform
+      if (batchState.options.topic !== nextTopic || batchState.options.source !== source) batchState.setOptions({ topic: nextTopic, source })
     }
     sync(); window.addEventListener('popstate', sync); return () => window.removeEventListener('popstate', sync)
-  }, [onKind])
+  }, [batchState.options.source, batchState.options.topic, batchState.setOptions, onKind, onQueryChange])
 
   useEffect(() => {
     const target = sentinel.current
@@ -159,7 +161,7 @@ export function DiscoveryGallery({ active, kind, onKind, query, onClearQuery, on
       <div className="discovery-filter-rail" role="group" aria-label="筛选发现内容" tabIndex={0}>
         <MediaFilters value={kind} onChange={setKind} />
         <div className="discovery-platforms" role="group" aria-label="内容来源"><button type="button" aria-pressed={platform === 'all'} onClick={() => setPlatform('all')}>全部</button>{sourceOptions.map(source => <button key={source} type="button" data-platform={source} aria-pressed={platform === source} onClick={() => setPlatform(platform === source ? 'all' : source)}><span className="platform-dot" aria-hidden="true" />{labels[source]}</button>)}</div>
-        <div className="discovery-topics" role="group" aria-label="主题筛选"><button type="button" aria-pressed={!topic} onClick={() => { setTopic(''); batchState.setOptions({ topic: '' }) }}>全部主题</button>{topicState.topics.map(value => <span className="discovery-topic-chip" key={value.id}><button type="button" aria-pressed={topic === value.id} onClick={() => { setTopic(value.id); batchState.setOptions({ topic: value.id }) }}>{value.name}</button><button type="button" className="discovery-topic-action" aria-label={`编辑主题 ${value.name}`} title="编辑主题" onClick={() => manageTopic(value)}><Edit3 size={12} /></button><button type="button" className="discovery-topic-action" aria-label={`删除主题 ${value.name}`} title="删除主题" onClick={() => void topicState.remove(value)}><X size={12} /></button></span>)}<button type="button" className="discovery-topic-add" aria-label="新增主题" title="新增主题" onClick={() => manageTopic()}><Plus size={15} /></button></div>
+        <div className="discovery-topics" role="group" aria-label="主题筛选"><button type="button" aria-pressed={!topic} onClick={() => setTopic('')}>全部主题</button>{topicState.topics.map(value => <span className="discovery-topic-chip" key={value.id}><button type="button" aria-pressed={topic === value.id} onClick={() => setTopic(value.id)}>{value.name}</button><button type="button" className="discovery-topic-action" aria-label={`编辑主题 ${value.name}`} title="编辑主题" onClick={() => manageTopic(value)}><Edit3 size={12} /></button><button type="button" className="discovery-topic-action" aria-label={`删除主题 ${value.name}`} title="删除主题" onClick={() => void topicState.remove(value)}><X size={12} /></button></span>)}<button type="button" className="discovery-topic-add" aria-label="新增主题" title="新增主题" onClick={() => manageTopic()}><Plus size={15} /></button></div>
         <span className="content-count">{items.length} 条内容</span>
       </div>
     </div>

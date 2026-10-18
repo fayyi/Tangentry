@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { replacePath } from '../../shared/browser/historyStack'
 import { request } from '../../shared/api/client'
 import type { ContentItem } from '../../shared/api/types'
-import { bilibiliPath, bilibiliStateFromURL, type BilibiliArea, type BilibiliTab } from './bilibiliNavigation'
+import { bilibiliRouteUpdate, bilibiliStateFromURL, type BilibiliArea, type BilibiliTab } from './bilibiliNavigation'
 
 export type { BilibiliArea, BilibiliTab } from './bilibiliNavigation'
-export { bilibiliPath, bilibiliStateFromURL } from './bilibiliNavigation'
+export { bilibiliPath, bilibiliRouteUpdate, bilibiliStateFromURL } from './bilibiliNavigation'
 export type LiveRoom = { id: string; title: string; author: string; thumbnailUrl: string; url: string }
 type Page = { items: ContentItem[]; rooms?: LiveRoom[]; page: number; next?: string; hasMore: boolean; sourceTitle: string; notice?: string }
 type Profile = { loggedIn: boolean; id?: string; name?: string; avatar?: string; level?: number }
@@ -19,7 +18,9 @@ function initialArea(): BilibiliArea {
   return bilibiliStateFromURL().area
 }
 
-export function useBilibiliBrowse(active: boolean) {
+export function useBilibiliBrowse(active: boolean, onRouteChange: (path: string) => void) {
+  const routeChangeRef = useRef(onRouteChange)
+  routeChangeRef.current = onRouteChange
   const [tab, setTab] = useState<BilibiliTab>(initialTab)
   const [area, setAreaState] = useState<BilibiliArea>(initialArea)
   const setArea = (value: string) => setAreaState(bilibiliStateFromURL(`/bilibili?tab=live&area=${encodeURIComponent(value)}`).area)
@@ -72,7 +73,10 @@ export function useBilibiliBrowse(active: boolean) {
   }, [])
   useEffect(() => {
     if (active && !current.current[key]?.known) void read(tab, area)
-    if (active) replacePath(bilibiliPath(tab, area))
+    if (active) {
+      const update = bilibiliRouteUpdate(tab, area)
+      routeChangeRef.current(update.path)
+    }
     return () => {
       const identities = Object.keys(controllers.current)
       for (const controller of Object.values(controllers.current)) controller.abort()

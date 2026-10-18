@@ -76,7 +76,7 @@ export function App() {
   useEffect(() => {
     if (view === 'discovery') setDiscoveryMounted(true)
   }, [view])
-  const bilibili = useBilibiliBrowse(view === 'bilibili')
+  const bilibili = useBilibiliBrowse(view === 'bilibili', path => navigate('bilibili', false, path))
   const subscriptions = useSubscriptions(view === 'subscriptions')
   const [subscriptionView, setSubscriptionView] = useState(() => selectedSavedViewFromURL())
   const [subscriptionMode,setSubscriptionMode] = useState<'latest'|'history'|'health'>(() => selectedSavedViewFromURL() || new URLSearchParams(location.search).get('mode') === 'history' ? 'history' : window.location.hash === '#health' ? 'health' : 'latest')
