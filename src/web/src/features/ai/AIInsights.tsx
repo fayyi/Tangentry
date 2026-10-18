@@ -7,7 +7,7 @@ import type { useSummary } from './useSummary'
 import { request } from '../../shared/api/client'
 import { buildChatContext } from './chatContext'
 import { rememberedChatModel, rememberChatModel, selectedChatModel } from './chatPresentation'
-import { modelsForTask } from './modelPicker'
+import { mergeModelLists, modelsForTask } from './modelPicker'
 import './ai.css'
 
 function clock(seconds: number) { const total = Math.max(0, Math.floor(seconds)); const m = Math.floor(total / 60); return `${m}:${String(total % 60).padStart(2, '0')}` }
@@ -39,7 +39,7 @@ export function AIChatPanel({ contentId, context, revision }: { contentId: strin
   const [error, setError] = useState('')
   const abort = useRef<AbortController | null>(null)
   const composer = useRef<HTMLTextAreaElement>(null)
-  useEffect(() => { let alive = true; setMessages([]); setModels([]); setModel(''); void Promise.all([request<{ messages: ChatMessage[] }>(`/ai/chat?contentId=${encodeURIComponent(contentId)}`), request<{ enabledModels?: string[]; availableModels?: string[]; chatModel?: string }>('/ai/settings')]).then(([history, settings]) => { if (!alive) return; setMessages(history.messages); const enabled = [...new Set((settings.enabledModels ?? []).filter(Boolean))]; const chatModels = modelsForTask(settings.availableModels ?? enabled, enabled, 'chat'); setModels(chatModels); setModel(selectedChatModel(settings) || rememberedChatModel(chatModels)) }).catch(() => {}); return () => { alive = false; abort.current?.abort() } }, [contentId])
+  useEffect(() => { let alive = true; setMessages([]); setModels([]); setModel(''); void Promise.all([request<{ messages: ChatMessage[] }>(`/ai/chat?contentId=${encodeURIComponent(contentId)}`), request<{ enabledModels?: string[]; availableModels?: string[]; chatModel?: string }>('/ai/settings')]).then(([history, settings]) => { if (!alive) return; setMessages(history.messages); const enabled = [...new Set((settings.enabledModels ?? []).filter(Boolean))]; const chatModels = modelsForTask(mergeModelLists(settings.availableModels ?? [], enabled), enabled, 'chat'); setModels(chatModels); setModel(selectedChatModel(settings) || rememberedChatModel(chatModels)) }).catch(() => {}); return () => { alive = false; abort.current?.abort() } }, [contentId])
   const suggestions = ['这个讲了什么', '列出关键观点', '有哪些值得记下的地方']
   const resize = () => { const element = composer.current; if (!element) return; element.style.height = 'auto'; element.style.height = `${Math.min(element.scrollHeight, 180)}px` }
   const send = async (question = input.trim(), conversation = messages) => {

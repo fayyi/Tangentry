@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { filterModels, getModelCapabilities, getModelProvider, getModelProviderStats, groupModelsByProvider, modelsForTask, setModelsEnabled, sortModelsWithEnabledFirst } from './modelPicker'
+import { filterModels, getModelCapabilities, getModelProvider, getModelProviderStats, getVisibleModelRows, groupModelsByProvider, mergeModelLists, modelsForTask, setModelsEnabled, sortModelsWithEnabledFirst } from './modelPicker'
 
 describe('model picker helpers', () => {
   it('groups by provider prefix and puts prefixless models in custom', () => {
@@ -12,12 +12,18 @@ describe('model picker helpers', () => {
     expect(filterModels(['OpenRouter/Free', 'codex/gpt'], 'openrouter')).toEqual(['OpenRouter/Free'])
     expect(filterModels(['OpenRouter/Free', 'codex/gpt'], 'missing')).toEqual([])
   })
+  it('merges available and enabled models without losing enabled-only entries', () => {
+    expect(mergeModelLists(['remote/model'], ['saved/model', 'remote/model'])).toEqual(['remote/model', 'saved/model'])
+  })
   it('sorts enabled models first without duplicates', () => {
     expect(sortModelsWithEnabledFirst(['b', 'a', 'b', 'c'], ['c', 'a'])).toEqual(['a', 'c', 'b'])
   })
   it('reports provider totals and enabled counts', () => {
     expect(getModelProviderStats(['codex/a', 'codex/b', 'custom'], ['codex/b'])).toEqual([
       { provider: 'codex', models: ['codex/a', 'codex/b'], enabledCount: 1 }, { provider: '其他/自定义', models: ['custom'], enabledCount: 0 },
+    ])
+    expect(getModelProviderStats(['codex/a', 'codex/b'], ['codex/a', 'codex/b'])).toEqual([
+      { provider: 'codex', models: ['codex/a', 'codex/b'], enabledCount: 2 },
     ])
   })
   it('uses strict translation-only detection and conservative defaults', () => {
@@ -35,5 +41,11 @@ describe('model picker helpers', () => {
   it('batch toggles without duplicates or losing manual models', () => {
     expect(setModelsEnabled(['group/one', 'manual/model'], ['manual/model'], true)).toEqual(['manual/model', 'group/one'])
     expect(setModelsEnabled(['group/one'], ['manual/model', 'group/one'], false)).toEqual(['manual/model'])
+  })
+  it('renders no group rows while collapsed and caps expanded groups at 50 rows', () => {
+    const models = Array.from({ length: 80 }, (_, index) => `provider/model-${index}`)
+    expect(getVisibleModelRows(models, false)).toEqual([])
+    expect(getVisibleModelRows(models, true)).toHaveLength(50)
+    expect(getVisibleModelRows(models, true, 80)).toHaveLength(80)
   })
 })

@@ -32,6 +32,10 @@ export function filterModels(models: string[], query: string): string[] {
   return uniqueModels(models).filter(model => !needle || model.toLocaleLowerCase().includes(needle))
 }
 
+export function mergeModelLists(...lists: string[][]): string[] {
+  return uniqueModels(lists.flat())
+}
+
 export function sortModelsWithEnabledFirst(models: string[], enabledModels: string[]): string[] {
   const enabled = new Set(enabledModels)
   return uniqueModels(models).sort((left, right) => Number(enabled.has(right)) - Number(enabled.has(left)))
@@ -56,6 +60,10 @@ export function getModelCapabilities(modelId: string, metadata?: ModelMetadata):
 export function modelsForTask(models: string[], enabledModels: string[], task: ModelTask): string[] {
   const enabled = new Set(enabledModels)
   return uniqueModels(models).filter(model => enabled.has(model) && (task === 'translation' || !isTranslationOnlyModel(model)))
+}
+
+export function getVisibleModelRows(models: string[], open: boolean, limit = 50): string[] {
+  return open ? uniqueModels(models).slice(0, Math.max(0, limit)) : []
 }
 
 function uniqueModels(models: string[]): string[] {
