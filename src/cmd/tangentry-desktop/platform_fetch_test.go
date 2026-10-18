@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -70,11 +72,49 @@ func TestDouyinFeedCaptureScriptHooksPageRequests(t *testing.T) {
 			t.Fatalf("capture script does not contain %q", part)
 		}
 	}
-	code := feedCaptureScript(2)
-	for _, part := range []string{"window.scrollTo", "await wait(1200)", "splice(0, 32)", "pageUrl", "ready"} {
+	for _, part := range []string{"pageUrl", "ready"} {
+		if !strings.Contains(douyinFeedScrollScript, part) || !strings.Contains(douyinFeedReadScript, part) {
+			t.Fatalf("capture execution scripts do not contain %q", part)
+		}
+	}
+	for _, part := range []string{"window.scrollTo", "splice(0, 32)"} {
+		code := douyinFeedScrollScript + douyinFeedReadScript
 		if !strings.Contains(code, part) {
 			t.Fatalf("capture execution script does not contain %q: %s", part, code)
 		}
+	}
+}
+
+func TestEvalWithRetryRetriesDestroyedPageContext(t *testing.T) {
+	calls := 0
+	value, err := evalWithRetry(context.Background(), func(context.Context, string) (any, error) {
+		calls++
+		if calls < 3 {
+			return nil, errors.New("Completion handler for function call is no longer reachable")
+		}
+		return "ok", nil
+	}, "return true")
+	if err != nil || value != "ok" || calls != 3 {
+		t.Fatalf("retry result=%v err=%v calls=%d", value, err, calls)
+	}
+}
+
+func TestEvalWithRetryDoesNotRetryUnrelatedErrors(t *testing.T) {
+	calls := 0
+	_, err := evalWithRetry(context.Background(), func(context.Context, string) (any, error) {
+		calls++
+		return nil, errors.New("syntax error")
+	}, "return true")
+	if err == nil || calls != 1 {
+		t.Fatalf("unrelated error calls=%d err=%v", calls, err)
+	}
+}
+
+func TestWaitCapturePollHonorsContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := waitCapturePoll(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("wait error=%v", err)
 	}
 }
 
