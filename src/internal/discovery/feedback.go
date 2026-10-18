@@ -109,6 +109,11 @@ func validFeedback(kind FeedbackType, target FeedbackTarget, value string) bool 
 }
 
 func feedbackID(kind FeedbackType, target FeedbackTarget, value string) string {
+	if kind == FeedbackMore || kind == FeedbackLess {
+		// These are mutually exclusive preferences for the same target. Reusing
+		// one key makes the latest choice replace the previous one.
+		return "preference:" + string(target) + ":" + value
+	}
 	return string(kind) + ":" + string(target) + ":" + value
 }
 

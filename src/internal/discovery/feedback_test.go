@@ -67,3 +67,21 @@ func TestFeedbackMatchesTargets(t *testing.T) {
 		}
 	}
 }
+
+func TestFeedbackLatestWeightChoiceReplacesPreviousChoice(t *testing.T) {
+	repo := &feedbackRepo{}
+	service := NewFeedbackService(repo)
+	service.clock = func() time.Time { return time.UnixMilli(1000) }
+	first, err := service.Save(context.Background(), FeedbackInput{Type: FeedbackMore, Target: TargetCreator, Value: "creator-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := service.Save(context.Background(), FeedbackInput{Type: FeedbackLess, Target: TargetCreator, Value: "creator-1"})
+	if err != nil || first.ID != second.ID {
+		t.Fatalf("weight choices should share a replacement key: %#v %#v %v", first, second, err)
+	}
+	values, err := service.List(context.Background())
+	if err != nil || len(values) != 1 || values[0].Type != FeedbackLess {
+		t.Fatalf("latest weight choice was not retained: %#v %v", values, err)
+	}
+}

@@ -31,7 +31,7 @@ func (s *Store) SaveDiscoveryFeedback(ctx context.Context, value discovery.Feedb
 		return discovery.ErrInvalidFeedback
 	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO discovery_feedback(id,type,target,value,expires_at,created_at) VALUES(?,?,?,?,?,?)
-	 ON CONFLICT(id) DO UPDATE SET expires_at=excluded.expires_at,created_at=excluded.created_at`, value.ID, value.Type, value.Target, value.Value, value.ExpiresAt, value.CreatedAt)
+	 ON CONFLICT(id) DO UPDATE SET type=excluded.type,target=excluded.target,value=excluded.value,expires_at=excluded.expires_at,created_at=excluded.created_at`, value.ID, value.Type, value.Target, value.Value, value.ExpiresAt, value.CreatedAt)
 	return err
 }
 
