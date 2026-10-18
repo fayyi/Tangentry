@@ -12,7 +12,8 @@
 :root {
   --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Segoe UI', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
   --font-display: var(--font-ui);
-  --font-reading: 'LXGW WenKai Screen', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+  /* Put Latin glyphs in Inter first; CJK glyphs fall through to WenKai. */
+  --font-reading: 'Inter', 'LXGW WenKai Screen', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
   --font-reading-size: 15px;
   --font-reading-line-height: 1.9;
   --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;

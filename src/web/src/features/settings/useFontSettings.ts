@@ -29,9 +29,9 @@ export const uiFontStacks: Record<UIFont, string> = {
 }
 
 export const readingFontStacks: Record<ReadingFont, string> = {
-  system: uiFontStacks.system,
-  wenkai: "'LXGW WenKai Screen', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif",
-  noto: "'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif",
+  system: "'Inter', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Segoe UI', 'Microsoft YaHei', 'Noto Sans SC', sans-serif",
+  wenkai: "'Inter', 'LXGW WenKai Screen', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif",
+  noto: "'Inter', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif",
 }
 
 export const readingSizes: Record<ReadingSize, string> = { small: '14px', medium: '15px', large: '17px' }

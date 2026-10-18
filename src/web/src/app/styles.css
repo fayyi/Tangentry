@@ -5,7 +5,7 @@
 @import './pages.css';
 
 /* Reading preferences apply to prose without changing reader layout or controls. */
-:where(.article-text, .article-structured, .article-reader > p:not(.field-hint), .reader-description > :is(p, .description-bilingual), .watch-description p, .watch-details .reader-description > :is(p, .description-bilingual), .markdown-body, .note-body, .note-preview, .notes-workspace .note-editor textarea, .subtitle-cues p, .subtitle-study > p, .ai-summary-result li, .ai-summary-overview, .ai-chat-message p, .ai-outline-toggle) {
+:where(.article-text, .article-structured, .article-reader > p:not(.field-hint), .reader-description > :is(p, .description-bilingual), .watch-description p, .watch-details .reader-description > :is(p, .description-bilingual), .bilingual-title > p, .markdown-body, .note-body, .note-preview, .notes-workspace .note-editor textarea, .subtitle-cues p, .subtitle-study > p, .ai-summary-result li, .ai-summary-overview, .ai-chat-message p, .ai-outline-toggle) {
   font-family: var(--font-reading) !important;
   font-size: var(--font-reading-size) !important;
   line-height: var(--font-reading-line-height) !important;

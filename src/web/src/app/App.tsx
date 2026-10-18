@@ -139,6 +139,8 @@ export function App() {
   const currentReadingItem = readingItem?.id === readerQuery || readingItem?.platformId === readerQuery ? readingItem : null
   const cachedReadingItem = currentReadingItem?.platform === 'rss' && libraryReadingItem && libraryReadingItem.description.length > currentReadingItem.description.length
     ? libraryReadingItem
+    : currentReadingItem?.platform === 'linuxdo' && libraryReadingItem
+      ? { ...currentReadingItem, savedAt: libraryReadingItem.savedAt }
     : currentReadingItem ?? libraryReadingItem ?? discovery.feed?.items.find(item => (item.id === readerQuery || item.platformId === readerQuery)) ?? subscriptions.detail?.items.find(item => (item.id === readerQuery || item.platformId === readerQuery)) ?? (!library.loading ? viewingHistory.entries.find(({item}) => item.id === readerQuery || item.platformId === readerQuery)?.item : undefined)
 
   const readingID = readerQuery.startsWith('BV') ? `bilibili:${readerQuery}` : readerQuery

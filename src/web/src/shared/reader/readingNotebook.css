@@ -42,10 +42,15 @@
 .immersive-reader .reading-columns.reading-notebook:not(:has(> .reading-ai)) > .reader-primary { grid-column: 1; grid-row: 1; }
 .immersive-reader .reading-columns.reading-notebook:not(:has(> .reading-ai)) > .reading-resize-notes { grid-column: 2; grid-row: 1; }
 .immersive-reader .reading-columns.reading-notebook:not(:has(> .reading-ai)) > .reading-notes { grid-column: 3; grid-row: 1; }
-.reading-resize-handle { position: relative; z-index: 2; min-width: 12px; cursor: col-resize; touch-action: none; }
-.reading-resize-handle::after { content: ''; position: absolute; inset: 0 5px; border-inline: 1px solid transparent; }
+.reading-resize-handle { position: relative; z-index: 4; width: 40px; min-width: 12px; margin-inline: -14px; cursor: col-resize; touch-action: none; justify-self: center; }
+.reading-resize-handle::after { content: ''; position: absolute; inset: 0 19px; border-inline: 1px solid transparent; pointer-events: none; }
 .reading-resize-handle:hover::after, .reading-resize-handle:focus-visible::after { border-color: var(--control-line); }
 .reading-resize-handle:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
+.experience-reading .reading-columns.reading-notebook { align-items: stretch !important; }
+.experience-reading .reading-columns.reading-notebook > .reading-resize-handle { align-self: stretch; min-height: 100%; }
+.immersive-reader .reading-columns.reading-notebook:has(> .reading-ai) > .reading-resize-ai,
+.immersive-reader .reading-columns.reading-notebook:has(> .reading-ai) > .reading-resize-notes { grid-row: 1; }
+.immersive-reader .reading-columns.reading-notebook:not(:has(> .reading-ai)) > .reading-resize-notes { grid-row: 1; }
 .reader-player-resizable { position: relative; width: min(100%, var(--reader-player-width, 100%)); max-width: 100%; margin-inline: auto; }
 .reader-player-resize-handle { position: absolute; z-index: 3; right: -5px; bottom: -5px; width: 18px; height: 18px; cursor: col-resize; touch-action: none; }
 .reader-player-resize-handle::after { content: ''; position: absolute; inset: 5px; border-right: 2px solid transparent; border-bottom: 2px solid transparent; }
@@ -64,7 +69,6 @@
 .reading-ai-collapsed .reading-ai-heading strong { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 .immersive-reader .reading-notes { max-height: calc(100dvh - var(--nav-height, 64px) - 32px); overflow-y: auto; scrollbar-width: none; padding-bottom: 16px; }
 .immersive-reader .reading-notes .notes-workspace { max-height: none; }
-
 @media (max-width: 1180px) and (min-width: 761px) {
   .immersive-reader .reading-columns.reading-notebook:has(> .reading-ai) { grid-template-columns: minmax(210px, var(--reading-ai-width, 240px)) 12px minmax(0, 1fr) 12px minmax(300px, var(--reading-notes-width, 340px)); gap: 18px 0; }
   .reading-ai { padding-right: 10px; }

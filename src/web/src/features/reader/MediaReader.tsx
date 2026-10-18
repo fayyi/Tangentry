@@ -22,6 +22,7 @@ import { XiaohongshuSourceForm } from './XiaohongshuSourceForm'
 import { PodcastArtwork } from '../../shared/ui/PodcastArtwork'
 import { ReaderPublication } from './ReaderPublication'
 import { DiscussionReader } from './DiscussionReader'
+import { DiscussionFallback } from './DiscussionFallback'
 import { useReaderContent } from './useReaderContent'
 import './reader.css'
 import './watch.css'
@@ -85,7 +86,11 @@ export function MediaReader({ id, initialItem, jobs, jobsLoading = false, video,
   const lastMedia = useRef<HTMLMediaElement|null>(null)
   const bindMedia=(node:HTMLMediaElement|null)=>{native.current=node;if(node)lastMedia.current=node;if(mediaRef)mediaRef.current=node}
   useEffect(()=>{return()=>{const node=lastMedia.current;node?.pause();if(node){node.removeAttribute('src');node.load()}onReady?.(false);onPosition?.(null)}},[id,onReady,onPosition])
-  const captureQuote=()=>{if(item?.kind==='article'||item?.kind==='image'||item?.kind==='pdf'){setQuote('');return}const selection=window.getSelection();setQuote(selection?.anchorNode&&selection.focusNode&&body.current?.contains(selection.anchorNode)&&body.current.contains(selection.focusNode)?selection.toString().trim().slice(0,2000):'')}
+  const captureQuote=()=>{
+    if (item?.kind==='article'||item?.kind==='image'||item?.kind==='pdf') { setQuote(''); return }
+    const selection=window.getSelection()
+    setQuote(selection?.anchorNode && selection.focusNode && body.current?.contains(selection.anchorNode) && body.current.contains(selection.focusNode) ? selection.toString().trim().slice(0,2000) : '')
+  }
   const report=()=>{
     const node = native.current
     const position = node && node.readyState >= 1 && !node.error && !(item?.kind === 'audio' && node.seeking) && (!(node instanceof HTMLVideoElement) || node.videoWidth > 0) && Number.isFinite(node.currentTime) ? node.currentTime : null
@@ -159,9 +164,10 @@ export function MediaReader({ id, initialItem, jobs, jobsLoading = false, video,
     : null
   const textAboveNotes = Boolean(notes && item?.platform === 'xiaohongshu' && item.kind === 'image')
   const sourceText = item && (item.kind === 'article' || item.kind === 'image') && !(item.kind === 'article' && item.platform === 'rss')
-    ? <ArticleReader collapsible={textAboveNotes} contentId={item.description?.trim()?item.id:undefined} summarySource="article:content" sourceTitle={item.title} sourceURL={item.url} title={item.platform==='rss'?'订阅源正文':item.platform==='linuxdo'?'':'笔记正文'} text={item.description || (item.articleBlocks?.length ? item.articleBlocks.filter(block => block.kind !== 'image' && block.kind !== 'emoji').map(block => block.text).filter(Boolean).join('\n\n') : '') || (item.platform==='xiaohongshu'?(detailRead?'这篇笔记没有附加文字。':detailLoading?'正在获取正文…':'正文尚未读取。'):'来源没有提供正文，可打开原内容查看。')} blocks={item.articleBlocks} feed={item.platform==='rss'} notes={annotations} focus={textFocus} onQuote={item.description?quoteText:undefined} onOpenNotes={revealNotes} onUnresolved={onUnresolved} navigationTarget={notesNavigation} onReturnedToReading={returnedToReading}/>
+    ? <ArticleReader collapsible={textAboveNotes} contentId={item.description?.trim() || item.articleBlocks?.length ? item.id : undefined} summarySource="article:content" toolbarOwnsSummary={item.platform==='linuxdo'} sourceTitle={item.title} sourceURL={item.url} title={item.platform==='rss'?'订阅源正文':item.platform==='linuxdo'?'':'笔记正文'} text={item.description || (item.articleBlocks?.length ? item.articleBlocks.filter(block => block.kind !== 'image' && block.kind !== 'emoji').map(block => block.text).filter(Boolean).join('\n\n') : '') || (item.platform==='xiaohongshu'?(detailRead?'这篇笔记没有附加文字。':detailLoading?'正在获取正文…':'正文尚未读取。'):'来源没有提供正文，可打开原内容查看。')} blocks={item.articleBlocks?.length ? item.articleBlocks : undefined} feed={item.platform==='rss'} notes={annotations} focus={textFocus} onQuote={item.description || item.articleBlocks?.length ? quoteText : undefined} onOpenNotes={revealNotes} onUnresolved={onUnresolved} navigationTarget={notesNavigation} onReturnedToReading={returnedToReading}/>
     : null
-  const discussionText = item?.platform === 'linuxdo' && item.discussion ? <DiscussionReader discussion={item.discussion} topicURL={item.url} sourceURL={item.url} viewCount={item.viewCount} likeCount={item.likeCount} notes={annotations} focus={textFocus} onQuote={quoteText} onOpenNotes={revealNotes} onUnresolved={onUnresolved}/> : null
+  const discussionText = item?.platform === 'linuxdo' ? <DiscussionFallback discussion={item.discussion?.posts?.length ? <DiscussionReader discussion={item.discussion} topicURL={item.url} sourceURL={item.url} viewCount={item.viewCount} likeCount={item.likeCount} notes={annotations} focus={textFocus} onQuote={quoteText} onOpenNotes={revealNotes} onUnresolved={onUnresolved}/> : undefined} loading={detailLoading} error={detailError} onRetry={refreshDetails}>{sourceText || <article className="article-reader"><p>{item.description || '话题正文暂不可用，可打开原内容查看。'}</p></article>}</DiscussionFallback>
+    : null
   const videoLayout = Boolean(video || item?.kind === 'video')
   const audioLayout = item?.kind === 'audio'
   const heading = <>{item ? <BilingualTitle heading contentId={item.id} text={item.title}/> : <h1>内容阅读</h1>}{item && <p className="reading-meta">{item.author||'未知作者'} · <ReaderPublication key={item.id} item={item}/></p>}</>
@@ -177,8 +183,8 @@ export function MediaReader({ id, initialItem, jobs, jobsLoading = false, video,
     {!item&&!error&&<p role="status" className="field-hint">正在读取内容…</p>}
       <ReadingNotebook enabled={Boolean(notes || insights || reading)} ai={insights}><div className="reader-primary" ref={body} onMouseUp={captureQuote} onKeyUp={captureQuote}>{videoLayout && videoDetails}{player}{(!item||item.kind==='video'&&Boolean(video))&&reading}
       {audioLayout && item && <div className="listen-heading"><PodcastArtwork key={item.id + item.thumbnailUrl} item={item} className="listen-artwork" resolveMissing={Boolean(item.mediaUrl)}/><div>{heading}</div></div>}
-      {detailLoading && <p className="field-hint" role="status">正在读取笔记正文与图片…</p>}
-      {detailError && <div className="error-panel reader-source-error" role="alert"><p>{detailError}</p><div className="reader-source-error-actions"><button className="button button-secondary" onClick={refreshDetails}><RotateCw size={14}/>重新获取笔记</button><button className="button button-secondary" onClick={()=>setSourceEditing(true)}>更新链接</button><a className="button button-secondary" href="/tools#accounts">检查登录</a></div></div>}
+      {detailLoading && item?.platform === 'xiaohongshu' && <p className="field-hint" role="status">正在读取笔记正文与图片…</p>}
+      {detailError && item?.platform === 'xiaohongshu' && <div className="error-panel reader-source-error" role="alert"><p>{detailError}</p><div className="reader-source-error-actions"><button className="button button-secondary" onClick={refreshDetails}><RotateCw size={14}/>重新获取笔记</button><button className="button button-secondary" onClick={()=>setSourceEditing(true)}>更新链接</button><a className="button button-secondary" href="/tools#accounts">检查登录</a></div></div>}
       {item && (item.kind==='pdf'?(item.platform==='pdf'?<PDFReader id={item.platformId} {...pdfAnnotations}/>:item.mediaUrl?<FeedDocumentReader url={item.mediaUrl} annotations={pdfAnnotations}/>:<p className="field-hint">来源没有提供 PDF 文件地址。</p>):<>
         {item.kind==='audio'&&<div className="audio-reader">{item.mediaUrl?<><audio ref={bindMedia} aria-label="播客播放器" controls preload="none" src={item.mediaUrl} onLoadedMetadata={audioLoaded} onTimeUpdate={report} onSeeking={report} onSeeked={report} onPause={report} onError={()=>{setAudioError(true);onReady?.(false);onPosition?.(null)}}/>{audioError&&<div className="audio-playback-error" role="alert"><p>音频暂时无法播放，可重新连接或打开原内容收听。</p><button type="button" className="button button-secondary" onClick={reconnectAudio}><RotateCw size={14}/>重新连接音频</button></div>}</>:<p className="field-hint">这份内容没有可播放的公开音频地址，可在原站收听。</p>}</div>}
         {item.kind==='audio'&&item.mediaUrl&&<AudioControls media={native} identity={`${id}:${item.mediaUrl}`}/>}

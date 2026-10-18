@@ -2,7 +2,7 @@ import { ArrowLeft, BookOpen, StickyNote, X } from 'lucide-react'
 import { Fragment, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode, type Ref } from 'react'
 import { createPortal } from 'react-dom'
 import type { ArticleBlock, ReadingNote, TextAnchor } from '../../shared/api/types'
-import { anchorSelection, hashArticle, highlightSegments, resolveTextAnchor } from '../../shared/text/textAnchors'
+import { anchorRange, hashArticle, highlightSegments, resolveTextAnchor } from '../../shared/text/textAnchors'
 import { TextTranslationControl, useTextTranslation } from '../ai/TextTranslation'
 import { articleTranslationParts } from './articleTranslation'
 import { useSummary } from '../ai/useSummary'
@@ -17,14 +17,17 @@ import { shouldRenderInlineSummary } from '../ai/summaryPresentation'
 import MarkdownRenderer from '../notes/MarkdownRenderer'
 import { isLikelyMarkdown, markdownToPlainText } from './markdownContent'
 import { proxiedImageURL } from '../../shared/media/sourceImage'
+import { selectionActionPosition } from './selectionAction'
 
 export interface ArticleReaderHandle { locateQuote: (quote: string) => string | null }
 
-export function ArticleReader({ ref: externalRef, contentId = '', text, blocks, feed, notes, focus, onQuote, onOpenNotes, onUnresolved, navigationTarget, onReturnedToReading, collapsible = false, title = '订阅源正文', sourceURL, sourceTitle, summarySource = contentId.startsWith('xiaohongshu:') ? 'article:social' : undefined, toolbarOwnsSummary = false }: {
+export function ArticleReader({ ref: externalRef, contentId = '', text, blocks, feed, notes, focus, onQuote, onOpenNotes, onUnresolved, navigationTarget, onReturnedToReading, collapsible = false, title = '订阅源正文', sourceURL, sourceTitle, summarySource = contentId.startsWith('xiaohongshu:') ? 'article:social' : undefined, toolbarOwnsSummary = false, postNumber, postId }: {
   ref?: Ref<ArticleReaderHandle>
   contentId?: string
   summarySource?: string
   toolbarOwnsSummary?: boolean
+  postNumber?: number
+  postId?: number
   sourceURL?: string
   sourceTitle?: string
   blocks?: ArticleBlock[]
@@ -37,7 +40,7 @@ export function ArticleReader({ ref: externalRef, contentId = '', text, blocks, 
   const root = useRef<HTMLDivElement>(null)
   const handledFocus = useRef<{ id: string; token: number } | null>(null)
   const [hashed, setHashed] = useState({ text: '', hash: '' })
-  const [selection, setSelection] = useState<TextAnchor | null>(null)
+  const [selection, setSelection] = useState<{ anchor: TextAnchor; top: number; left: number } | null>(null)
   const initialFocus = useRef(focus?.token)
   const [returnPoint, setReturnPoint] = useState<{ identity: string; offset: number; top: number } | null>(null)
   const [citation, setCitation] = useState<{ text: string; start: number; end: number } | null>(null)
@@ -90,7 +93,7 @@ export function ArticleReader({ ref: externalRef, contentId = '', text, blocks, 
     void hashArticle(annotationText).then(hash => { if (current) setHashed({ text: annotationText, hash }) }).catch(() => { if (current) setHashed({ text: annotationText, hash: '' }) })
     return () => { current = false }
   }, [annotationText])
-  const resolved = useMemo(() => notes.filter(note => note.textAnchor).map(note => ({ id: note.id, range: resolveTextAnchor(annotationText, sourceHash, note.textAnchor!) })), [notes, annotationText, sourceHash])
+  const resolved = useMemo(() => notes.filter(note => note.textAnchor && (postNumber === undefined ? note.textAnchor.postNumber === undefined : note.textAnchor.postNumber === postNumber && (note.textAnchor.postId === undefined || note.textAnchor.postId === postId))).map(note => ({ id: note.id, range: resolveTextAnchor(annotationText, sourceHash, note.textAnchor!) })), [notes, annotationText, sourceHash, postNumber, postId])
   const segments = useMemo(() => highlightSegments(annotationText, resolved.flatMap(value => value.range ? [{ id: value.id, ...value.range }] : []), citationRange ? [citationRange.start, citationRange.end] : []), [annotationText, resolved, citationRange])
   const locateQuote = (quote: string): string | null => {
     if (!sourceHash || !root.current) return '原文还未就绪，请稍后重试。'
@@ -132,10 +135,12 @@ export function ArticleReader({ ref: externalRef, contentId = '', text, blocks, 
   useEffect(() => { if (sourceHash) onUnresolved?.(resolved.filter(value => !value.range).map(value => value.id)) }, [sourceHash, resolved, onUnresolved])
   useEffect(() => {
     if (!focus || !sourceHash || handledFocus.current?.id === focus.id && handledFocus.current.token === focus.token) return
+    const focusedNote = notes.find(note => note.id === focus.id)
+    if (focusedNote?.textAnchor?.postNumber !== undefined && (focusedNote.textAnchor.postNumber !== postNumber || focusedNote.textAnchor.postId !== undefined && focusedNote.textAnchor.postId !== postId)) return
     if (collapsible && !textExpanded) { setTextExpanded(true); return }
     let node = root.current?.querySelector<HTMLElement>(`[data-note-ids~="${focus.id}"]`)
     if (!node) {
-      const quote = notes.find(note => note.id === focus.id)?.textAnchor?.quote
+      const quote = focusedNote?.textAnchor?.quote
       if (quote && root.current) {
         const walker = document.createTreeWalker(root.current, NodeFilter.SHOW_TEXT)
         while (walker.nextNode()) {
@@ -168,7 +173,23 @@ export function ArticleReader({ ref: externalRef, contentId = '', text, blocks, 
     onReturnedToReading?.()
   }
   const returnControls = <><button type="button" onClick={returnToReading}><ArrowLeft size={15} aria-hidden="true"/>返回阅读位置</button><button type="button" aria-label="关闭阅读返回" title="关闭阅读返回" onClick={() => { setReturnPoint(null); setCitation(null); root.current?.focus({ preventScroll: true }) }}><X size={15} aria-hidden="true"/></button></>
-  const capture = () => { if (root.current) setSelection(anchorSelection(root.current, annotationText, sourceHash)) }
+  const capture = () => {
+    const node = root.current
+    if (!node) return
+    const current = window.getSelection()
+    if (!current || current.rangeCount !== 1 || current.isCollapsed) { setSelection(null); return }
+    const range = current.getRangeAt(0).cloneRange()
+    if (!node.contains(range.startContainer) || !node.contains(range.endContainer)) { setSelection(null); return }
+    const rect = range.getBoundingClientRect()
+    const position = selectionActionPosition(rect, { width: window.innerWidth, height: window.innerHeight })
+    const save = (hash: string) => {
+      if (root.current !== node) return
+      const anchor = anchorRange(node, annotationText, hash, range)
+      setSelection(anchor ? { anchor, ...position } : null)
+    }
+    if (sourceHash) save(sourceHash)
+    else void hashArticle(annotationText).then(save).catch(() => setSelection(null))
+  }
   useEffect(() => {
     // selectionchange also covers touch selection handles and keyboard selection.
     document.addEventListener('selectionchange', capture)
@@ -218,14 +239,14 @@ export function ArticleReader({ ref: externalRef, contentId = '', text, blocks, 
       if (block.kind === 'onebox') return <Fragment key={index}>{separator}<p className="article-block article-block-onebox"><a href={block.url} target="_blank" rel="noreferrer">{renderBlockText(block, start, end)}</a></p></Fragment>
       if (block.kind === 'list') return <Fragment key={index}>{separator}<Tag className={`article-block article-block-list article-list-depth-${block.level ?? 0}`}><li>{renderBlockText(block, start, end)}</li></Tag></Fragment>
       if (block.kind === 'table') return <Fragment key={index}>{separator}<p className="article-block article-block-table">{renderBlockText(block, start, end)}</p></Fragment>
-      return <Fragment key={index}>{separator}<Tag className={`article-block article-block-${block.kind}`}>{renderBlockText(block, start, end, block.kind !== 'code')}</Tag>{translation.show && translatedParagraphs[index] && <p data-translation="true" className="article-translated" lang="zh-Hans">{translatedParagraphs[index]}</p>}</Fragment>
+      return <Fragment key={index}>{separator}<Tag className={`article-block article-block-${block.kind}`}>{renderBlockText(block, start, end, block.kind !== 'code')}</Tag>{translation.show && translatedParagraphs[index] && <p data-translation="true" data-source-start={start} data-source-end={end} className="article-translated" lang="zh-Hans">{translatedParagraphs[index]}</p>}</Fragment>
     }).concat(renderSegments(offset, annotationText.length, false, true)) : annotationText.split(/(\n\n+)/).map((part, index) => {
       const start = offset; offset += part.length
-      return <Fragment key={index}>{renderSegments(start, offset)}{index % 2 === 0 && translation.show && translatedParagraphs[index / 2] && <p data-translation="true" className="article-translated" lang="zh-Hans">{translatedParagraphs[index / 2]}</p>}</Fragment>
+      return <Fragment key={index}>{renderSegments(start, offset)}{index % 2 === 0 && translation.show && translatedParagraphs[index / 2] && <p data-translation="true" data-source-start={start} data-source-end={offset} className="article-translated" lang="zh-Hans">{translatedParagraphs[index / 2]}</p>}</Fragment>
     })}</div>
     </ArticleReflowGuard>
     {collapsible && textOverflow && <button type="button" className="text-button article-expand" aria-expanded={textExpanded} onClick={() => { readingPosition.pause(); setTextExpanded(value => !value) }}>{textExpanded ? '收起正文' : '展开全文'}</button>}
-    {selection && onQuote && <div className="article-selection"><button className="button button-secondary" onMouseDown={event => event.preventDefault()} onClick={() => { onQuote(selection.quote, selection); setSelection(null); window.getSelection()?.removeAllRanges() }}><StickyNote size={15} aria-hidden="true"/>引用选中文字到批注</button><span>{Array.from(selection.quote).length} 字 · 保存笔记后保留划线</span></div>}
+    {selection && onQuote && createPortal(<div className="article-selection" style={{ top: selection.top, left: selection.left }}><button className="button button-secondary" onMouseDown={event => event.preventDefault()} onClick={() => { onQuote(selection.anchor.quote, selection.anchor); setSelection(null); window.getSelection()?.removeAllRanges() }}><StickyNote size={15} aria-hidden="true"/>引用 / 记笔记</button></div>, document.body)}
     {feed && <p className="field-hint">显示订阅源提供的文字；摘要源可能不包含全文。</p>}
     {returnAvailable && <><div className="article-jump-return" data-mobile-target={Boolean(navigationTarget)} role="group" aria-label="返回正文阅读">{returnControls}</div>{navigationTarget && createPortal(<div className="article-return-mobile" role="group" aria-label="返回正文阅读">{returnControls}</div>, navigationTarget)}</>}
   </article>

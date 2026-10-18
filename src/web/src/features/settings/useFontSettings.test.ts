@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { defaultFontSettings, fontSettingsKey, readFontSettings, validateFontSettings, writeFontSettings } from './useFontSettings'
+import { defaultFontSettings, fontSettingsKey, readFontSettings, readingFontStacks, validateFontSettings, writeFontSettings } from './useFontSettings'
 
 function storage(initial?: string) {
   let value = initial ?? null
@@ -26,5 +26,9 @@ describe('font settings', () => {
     expect(validateFontSettings({ ui: {}, reading: [], size: null, lineHeight: 1 })).toEqual(defaultFontSettings)
     expect(readFontSettings(storage('{bad json'))).toEqual(defaultFontSettings)
     expect(readFontSettings({ getItem: key => key === fontSettingsKey ? JSON.stringify({ reading: 'noto' }) : null, setItem: () => {} })).toEqual({ ...defaultFontSettings, reading: 'noto' })
+  })
+
+  it('uses a Latin-first stack for every reading font choice', () => {
+    for (const stack of Object.values(readingFontStacks)) expect(stack.startsWith("'Inter'")).toBe(true)
   })
 })

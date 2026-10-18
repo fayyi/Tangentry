@@ -19,7 +19,7 @@ export function FontSettings() {
     <div className="settings-heading"><div><h2 id="font-settings-title">字体</h2><p className="field-hint">为界面、正文和代码选择本地字体，调整会立即应用并保存在这台设备。</p></div><button type="button" className="button button-secondary" disabled={isDefault} onClick={reset}><RotateCcw size={14}/>恢复默认</button></div>
     <div className="font-preview" aria-label="字体实时预览">
       <p className="font-preview-ui">Tangentry / 发现 · Inter 2026</p>
-      <p className="font-preview-reading">把想法写下来，隔一段时间再回来阅读。好的字体让长文、笔记和字幕都更容易读下去。</p>
+      <p className="font-preview-reading">Readable English 2026 · 1234567890<br/>把想法写下来，隔一段时间再回来阅读。</p>
       <code className="font-preview-code">const reading = "清晰、耐看、可持续"</code>
     </div>
     <Choice<UIFont> name="font-ui" legend="界面字体" hint="导航、按钮、设置和 AI 区域使用" value={settings.ui} options={uiOptions} onChange={ui => change({ ui })}/>
