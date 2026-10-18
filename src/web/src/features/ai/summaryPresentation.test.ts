@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { shouldRenderInlineSummary, summaryAvailability, summaryButtonState, summaryControlPresentation, summaryControlState, summaryGenerationBlockedReason, summaryNeedsOutlineRegeneration, summaryTextFallback } from './summaryPresentation'
+import { shouldRenderInlineSummary, summaryAvailability, summaryButtonState, summaryControlPresentation, summaryControlState, summaryGenerationBlockedReason, summaryNeedsOutlineRegeneration, summaryStatusPresentation, summaryTextFallback } from './summaryPresentation'
 import { summaryInputFromText, summaryInputFromTrack } from './useSummary'
 import type { SummaryResult } from './summaryTypes'
 import type { SubtitleTrack } from '../../shared/api/types'
@@ -36,6 +36,7 @@ test('RSS summary has one toolbar action and no inline duplicate', () => {
 
 test('summary availability explains every blocked state', () => {
   expect(summaryAvailability({ input: true, inspection: null, loading: true, pending: false })).toBe('loading')
+  expect(summaryAvailability({ input: false, inspection: null, loading: true, pending: false })).toBe('missing-input')
   expect(summaryAvailability({ input: true, inspection: inspection(), loading: false, pending: true })).toBe('generating')
   expect(summaryAvailability({ input: false, inspection: null, loading: false, pending: false })).toBe('missing-input')
   expect(summaryAvailability({ input: true, inspection: inspection({ summaryReady: false }), loading: false, pending: false })).toBe('ai-not-configured')
@@ -56,7 +57,13 @@ test('summary control presentation exposes next steps for every state', () => {
   expect(summaryControlPresentation('ai-not-configured')).toMatchObject({ label: 'AI 摘要 · 去设置', disabled: false, action: 'settings' })
   expect(summaryControlPresentation('error')).toMatchObject({ label: 'AI 摘要 · 重试', disabled: false, action: 'retry' })
   expect(summaryControlPresentation('busy')).toMatchObject({ label: 'AI 摘要 · 其他任务占用', disabled: true, action: 'none' })
-  expect(summaryControlPresentation('missing-input')).toMatchObject({ label: 'AI 摘要 · 需先转录', disabled: true, action: 'transcribe' })
+  expect(summaryControlPresentation('missing-input')).toMatchObject({ label: 'AI 摘要 · 需先转录', disabled: false, action: 'transcribe' })
+})
+
+test('summary status presentation keeps next steps out of the toolbar flow', () => {
+  expect(summaryStatusPresentation('missing-input')).toEqual({ message: '当前没有字幕或可用文字。', tone: 'warning', actionLabel: '先转录再摘要' })
+  expect(summaryStatusPresentation('saved')).toEqual({ message: '这份摘要已经保存。', tone: 'success' })
+  expect(summaryStatusPresentation('ready')).toEqual({ message: '当前内容可以生成摘要。', tone: 'neutral', actionLabel: '生成摘要' })
 })
 
 test('summary control state maps content and inspection to the toolbar action', () => {

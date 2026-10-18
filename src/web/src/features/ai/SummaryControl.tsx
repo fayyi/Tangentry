@@ -1,8 +1,9 @@
-import { LoaderCircle, Sparkles } from 'lucide-react'
+import { AlertCircle, Check, LoaderCircle, Sparkles } from 'lucide-react'
 import type { ReactNode } from 'react'
 import type { useSummary } from './useSummary'
 import type { SummarySource } from './summaryMarkdown'
-import { summaryControlState, summaryNeedsOutlineRegeneration } from './summaryPresentation'
+import { summaryControlState, summaryNeedsOutlineRegeneration, summaryStatusPresentation } from './summaryPresentation'
+import { ToolbarPopover } from '../../shared/ui/ToolbarPopover'
 import './ai.css'
 
 export function openTranscription() {
@@ -33,17 +34,20 @@ export function SummaryControl({ summary, source: _source, onLocateQuote: _onLoc
   const { inspection, loading, pending, error, notice, generate, cancel, reload, hasInput } = summary
   const result = inspection?.result
   const { availability, ...presentation } = summaryControlState({ input: hasInput, inspection, loading, pending, error })
+  const status = summaryStatusPresentation(availability)
   const retry = () => { if (availability === 'error' && inspection) void generate(summaryNeedsOutlineRegeneration(result)); else if (availability === 'error') void reload() }
   const activate = () => {
     if (presentation.action === 'retry') retry()
     else if (presentation.action === 'generate') void generate(summaryNeedsOutlineRegeneration(result))
   }
   return <div className="ai-summary-control">
-    {presentation.action === 'settings' ? <a className="ai-inline-trigger" href="/tools#translation" title={presentation.title}><Sparkles size={14} aria-hidden="true" />{presentation.label}</a> : <button type="button" className="ai-inline-trigger" aria-busy={pending || loading} disabled={presentation.disabled} title={presentation.title} onClick={activate}>{pending ? <LoaderCircle size={14} className="spin" aria-hidden="true" /> : <Sparkles size={14} aria-hidden="true" />}{presentation.label}</button>}
-    {presentation.action === 'transcribe' && <div className="ai-summary-empty"><p className="ai-summary-muted">{emptyMessage || '当前没有字幕或可用文字。'}</p>{emptyAction || <button type="button" className="text-button" onClick={openTranscription}>先转录再摘要</button>}</div>}
-    {availability === 'busy' && <p className="ai-summary-muted" role="status">另一个 AI 任务正在运行，完成后会自动恢复。请稍候。</p>}
-    {pending && <p className="ai-summary-muted" role="status">正在生成，已完成 {result?.completedCalls ?? 0} / {result?.totalCalls ?? 0} 次 <button type="button" className="text-button" onClick={cancel}>取消</button></p>}
-    {notice && <p className="ai-summary-feedback" role="status">{notice}</p>}
-    {error && <p className="ai-summary-feedback" role="alert">{error} <button type="button" className="text-button" onClick={retry}>{inspection ? '重试生成' : '重新读取摘要状态'}</button></p>}
+    {presentation.action === 'transcribe' ? <ToolbarPopover label={presentation.label} title={presentation.title} tone={status.tone} showLabel icon={<Sparkles size={14} aria-hidden="true" />} announcement={emptyMessage || status.message}>
+      <p role="status">{emptyMessage || status.message}</p>
+      {emptyAction !== undefined ? emptyAction : <button type="button" className="text-button" onClick={openTranscription}>{status.actionLabel}</button>}
+    </ToolbarPopover> : presentation.action === 'settings' ? <a className="ai-inline-trigger" href="/tools#translation" title={presentation.title}><Sparkles size={14} aria-hidden="true" />{presentation.label}</a> : <button type="button" className="ai-inline-trigger" aria-busy={pending || loading} disabled={presentation.disabled} title={presentation.title} onClick={activate}>{pending ? <LoaderCircle size={14} className="spin" aria-hidden="true" /> : <Sparkles size={14} aria-hidden="true" />}{presentation.label}</button>}
+    {availability === 'busy' && <ToolbarPopover label="摘要暂时不可用" title={status.message} tone={status.tone} announcement={status.message}><p role="status">{status.message}</p></ToolbarPopover>}
+    {pending && <ToolbarPopover label="摘要生成进度" title="查看摘要生成进度" announcement={`正在生成，已完成 ${result?.completedCalls ?? 0} / ${result?.totalCalls ?? 0} 次`}><p role="status">正在生成，已完成 {result?.completedCalls ?? 0} / {result?.totalCalls ?? 0} 次</p><button type="button" className="text-button" onClick={cancel}>取消</button></ToolbarPopover>}
+    {notice && <ToolbarPopover label="摘要已更新" title={notice} tone="success" icon={<Check size={15} aria-hidden="true" />} announcement={notice}><p role="status">{notice}</p></ToolbarPopover>}
+    {error && <ToolbarPopover label="摘要操作失败" title="查看摘要错误" tone="danger" icon={<AlertCircle size={15} aria-hidden="true" />} announcement={error}><p role="alert">{error}</p><button type="button" className="text-button" onClick={retry}>{inspection ? '重试生成' : '重新读取摘要状态'}</button></ToolbarPopover>}
   </div>
 }

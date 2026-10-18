@@ -4,6 +4,7 @@ import type { SubtitleTrack } from '../../shared/api/types'
 export type SummaryButtonState = 'loading' | 'generating' | 'saved' | 'needs-generation' | 'ready'
 export type SummaryAvailability = SummaryButtonState | 'missing-input' | 'ai-not-configured' | 'busy' | 'error'
 export type SummaryControlAction = 'none' | 'generate' | 'retry' | 'settings' | 'transcribe'
+export type SummaryStatusTone = 'neutral' | 'success' | 'warning' | 'danger'
 
 export function summaryTextFallback(...texts: Array<string | undefined>): string | undefined {
   return texts.find(text => Boolean(text?.trim()))?.trim()
@@ -37,10 +38,24 @@ export function summaryControlPresentation(availability: SummaryAvailability): {
     case 'saved': return { label: 'AI 摘要 · 已保存', title: '这份摘要已经保存', disabled: true, action: 'none' }
     case 'needs-generation': return { label: 'AI 摘要 · 补生成大纲', title: '旧摘要没有大纲，点击重新生成', disabled: false, action: 'generate' }
     case 'ready': return { label: 'AI 摘要', disabled: false, action: 'generate' }
-    case 'missing-input': return { label: 'AI 摘要 · 需先转录', title: '当前没有字幕或可用文字，请先转录再摘要', disabled: true, action: 'transcribe' }
+    case 'missing-input': return { label: 'AI 摘要 · 需先转录', title: '当前没有字幕或可用文字，请先转录再摘要', disabled: false, action: 'transcribe' }
     case 'ai-not-configured': return { label: 'AI 摘要 · 去设置', title: '请去设置 AI 选择摘要模型', disabled: false, action: 'settings' }
     case 'busy': return { label: 'AI 摘要 · 其他任务占用', title: '另一个 AI 任务正在运行，请等待完成', disabled: true, action: 'none' }
     case 'error': return { label: 'AI 摘要 · 重试', title: '摘要状态读取失败，点击重试', disabled: false, action: 'retry' }
+  }
+}
+
+export function summaryStatusPresentation(availability: SummaryAvailability): { message: string; tone: SummaryStatusTone; actionLabel?: string } {
+  switch (availability) {
+    case 'loading': return { message: '正在读取摘要状态，请稍候。', tone: 'neutral' }
+    case 'generating': return { message: '摘要正在生成，请稍候。', tone: 'neutral' }
+    case 'saved': return { message: '这份摘要已经保存。', tone: 'success' }
+    case 'needs-generation': return { message: '旧摘要没有大纲，可以补生成。', tone: 'warning', actionLabel: '补生成大纲' }
+    case 'ready': return { message: '当前内容可以生成摘要。', tone: 'neutral', actionLabel: '生成摘要' }
+    case 'missing-input': return { message: '当前没有字幕或可用文字。', tone: 'warning', actionLabel: '先转录再摘要' }
+    case 'ai-not-configured': return { message: '请去设置 AI 选择摘要模型。', tone: 'warning', actionLabel: '去设置' }
+    case 'busy': return { message: '另一个 AI 任务正在运行，请等待完成。', tone: 'warning' }
+    case 'error': return { message: '摘要状态读取失败，请重试。', tone: 'danger', actionLabel: '重试' }
   }
 }
 
@@ -57,9 +72,9 @@ export function summaryAvailability({ input, inspection, loading, pending, error
   pending: boolean
   error?: string
 }): SummaryAvailability {
+  if (!input) return 'missing-input'
   if (loading) return 'loading'
   if (pending) return 'generating'
-  if (!input) return 'missing-input'
   if (!inspection && !error) return 'loading'
   if (error) return 'error'
   if (!inspection) return 'error'
