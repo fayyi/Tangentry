@@ -49,13 +49,15 @@ const douyinFeedCaptureScript = `(function(){
   window.__tangentryDouyinFeed = window.__tangentryDouyinFeed || [];
   const max = 4 * 1024 * 1024;
   const isFeed = value => /\/aweme\/(?:v1|v2)\/[^?]*feed/i.test(String(value || ''));
+  const absolute = raw => { try { return new URL(String(raw || ''), location.href).href; } catch (_) { return String(raw || ''); } };
   const push = (url, status, contentType, body) => {
-    if (!isFeed(url) || typeof body !== 'string' || !body || body.length > max) return;
-    window.__tangentryDouyinFeed.push({url:String(url), status:Number(status)||0, contentType:String(contentType || ''), body:body});
+    const resolvedURL = absolute(url);
+    if (!isFeed(resolvedURL) || typeof body !== 'string' || !body || body.length > max) return;
+    window.__tangentryDouyinFeed.push({url:resolvedURL, status:Number(status)||0, contentType:String(contentType || ''), body:body});
     if (window.__tangentryDouyinFeed.length > 32) window.__tangentryDouyinFeed.splice(0, window.__tangentryDouyinFeed.length - 32);
   };
   const originalFetch = window.fetch;
-  window.fetch = function(){
+  const fetchWrapper = function(){
     const request = arguments[0];
     const url = typeof request === 'string' ? request : request && request.url;
     return originalFetch.apply(this, arguments).then(response => {
@@ -64,20 +66,58 @@ const douyinFeedCaptureScript = `(function(){
       return response;
     });
   };
+  window.__tangentryDouyinFetchWrapper = fetchWrapper;
+  window.fetch = fetchWrapper;
   const open = XMLHttpRequest.prototype.open;
   const send = XMLHttpRequest.prototype.send;
   XMLHttpRequest.prototype.open = function(method, url){ this.__tangentryURL = url; return open.apply(this, arguments); };
-  XMLHttpRequest.prototype.send = function(){
+  const xhrSendWrapper = function(){
     this.addEventListener('load', function(){ try { const body = this.responseType === 'json' ? JSON.stringify(this.response) : this.responseText; push(this.__tangentryURL || this.responseURL, this.status, this.getResponseHeader('content-type'), body); } catch (_) {} });
     return send.apply(this, arguments);
   };
+  window.__tangentryDouyinXHRSend = xhrSendWrapper;
+  XMLHttpRequest.prototype.send = xhrSendWrapper;
 })();`
 
 const douyinFeedClearScript = `(function(){ if (window.__tangentryDouyinFeed) window.__tangentryDouyinFeed.splice(0); return true; })();`
 
 const douyinFeedScrollScript = `(function(){ window.scrollTo(0, document.body ? document.body.scrollHeight : 0); return {pageUrl: location.href, title: document.title || "", ready: document.readyState}; })();`
 
-const douyinFeedReadScript = `(function(){ return {pageUrl: location.href, title: document.title || "", ready: document.readyState, responses: (window.__tangentryDouyinFeed || []).splice(0, 32)}; })();`
+const douyinDomScrollScript = `(function(){ window.scrollBy(0, Math.max(480, Math.floor(window.innerHeight * 0.85))); return {pageUrl: location.href, title: document.title || "", ready: document.readyState}; })();`
+
+const douyinRecommendNextScript = `(function(){ const target=document.activeElement || document.body || document.documentElement; target.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowDown',code:'ArrowDown',keyCode:40,which:40,bubbles:true})); target.dispatchEvent(new WheelEvent('wheel',{deltaY:Math.max(480,Math.floor(window.innerHeight*0.85)),bubbles:true})); return {pageUrl:location.href,title:document.title||'',ready:document.readyState}; })();`
+
+const douyinFeedReadScript = `(function(){ return {pageUrl: location.href, title: document.title || "", ready: document.readyState, responses: (window.__tangentryDouyinFeed || []).splice(0, 32), fetchHookInstalled:window.fetch === window.__tangentryDouyinFetchWrapper, xhrHookInstalled:XMLHttpRequest.prototype.send === window.__tangentryDouyinXHRSend}; })();`
+
+const douyinDomReadScript = `(function(){
+  const text = node => (node && (node.innerText || node.textContent) || '').trim();
+  const absolute = raw => { try { return new URL(raw || '', location.href).href; } catch (_) { return ''; } };
+  const idFrom = raw => { const match = String(raw || '').match(/\/video\/([1-9][0-9]{15,19})/); return match ? match[1] : ''; };
+  const imageFrom = node => {
+    if (!node) return '';
+    const image = node.querySelector('img, video, [data-e2e*="cover"], [class*="cover"]');
+    const raw = image && (image.currentSrc || image.src || image.poster || image.getAttribute('data-src') || image.getAttribute('data-lazy-src') || image.getAttribute('data-url'));
+    if (raw) return absolute(raw);
+    const styled = node.querySelector('[style*="background-image"]');
+    const match = styled && String(styled.getAttribute('style') || '').match(/url\(["']?([^"')]+)["']?\)/i);
+    return absolute(match && match[1]);
+  };
+  const findText = (node, names) => { for (const name of names) { const found = node.querySelector(name); if (text(found)) return text(found); } return ''; };
+  const durationOf = value => { const match = String(value || '').match(/(?:^|\s)([0-9]{1,2}):([0-5][0-9])(?:\s|$)/); return match ? Number(match[1]) * 60 + Number(match[2]) : 0; };
+  const countOf = value => { const match = String(value || '').replace(/,/g, '').match(/([0-9]+(?:\.[0-9]+)?)\s*([万千wkKmM])?/i); if (!match) return 0; const number = Number(match[1]); const unit = String(match[2] || '').toLowerCase(); const multiplier = unit === '万' || unit === 'w' ? 10000 : unit === '千' || unit === 'k' ? 1000 : unit === 'm' ? 1000000 : 1; return Math.round(number * multiplier); };
+  const cards = []; const seen = new Set();
+  for (const link of document.querySelectorAll('a[href*="/video/"]')) {
+    const url = absolute(link.getAttribute('href') || link.href); const id = idFrom(url); if (!id || seen.has(id)) continue;
+    let node = link; for (let i = 0; i < 6 && node.parentElement; i++) { node = node.parentElement; if (node.querySelectorAll('a[href*="/video/"]').length > 1 || node.querySelector('img, video, [data-e2e*="cover"], [class*="cover"], [style*="background-image"]')) break; }
+    const rawText = text(node); const title = text(link) || findText(node, ['h1','h2','h3','[class*="title"]','[class*="desc"]']) || rawText.slice(0, 200);
+    const author = findText(node, ['[class*="author"]','[class*="user"]','[data-e2e*="user"]','a[href*="/user/"]','a[href*="/search/"]']);
+    const likeText = findText(node, ['[class*="like"]','[data-e2e*="like"]']);
+    const duration = durationOf(findText(node, ['[class*="duration"]','[class*="time"]']) || rawText);
+    cards.push({id:id, url:url.split('?')[0], thumbnailURL:imageFrom(node), title:title, author:author, likeCount:countOf(likeText), duration:duration}); seen.add(id);
+  }
+  const resources = performance.getEntriesByType('resource').filter(entry => /\/aweme\//i.test(entry.name)).map(entry => { try { return {path:new URL(entry.name).pathname, initiatorType:String(entry.initiatorType || '')}; } catch (_) { return null; } }).filter(Boolean);
+  return {pageUrl:location.href, title:document.title || '', ready:document.readyState, cards:cards, responses:(window.__tangentryDouyinFeed || []).splice(0, 32), resources:resources, fetchHookInstalled:window.fetch === window.__tangentryDouyinFetchWrapper, xhrHookInstalled:XMLHttpRequest.prototype.send === window.__tangentryDouyinXHRSend};
+})();`
 
 func newPlatformPageBridge() *platformPageBridge {
 	return &platformPageBridge{sessions: make(map[string]*platformPageSession)}
@@ -173,13 +213,23 @@ func (b *platformPageBridge) CaptureFeed(ctx context.Context, platform string, p
 		session.closeAt = nil
 	}
 	session.blockedNavigation.Store("")
+	if err := session.window.Page().LoadURL("https://www.douyin.com/jingxuan"); err != nil {
+		return platformfetch.FeedCaptureResponse{}, err
+	}
+	if err := waitForPageReady(ctx, session.window.Page(), "jingxuan"); err != nil {
+		return platformfetch.FeedCaptureResponse{}, err
+	}
 	if _, err := evalPageWithRetry(ctx, session.window.Page(), douyinFeedClearScript); err != nil && ctx.Err() != nil {
 		return platformfetch.FeedCaptureResponse{}, err
 	}
 	result := douyinCaptureResult{}
 	var lastErr error
 	for i := 0; i < pages; i++ {
-		if scroll, err := evalPageWithRetry(ctx, session.window.Page(), douyinFeedScrollScript); err == nil {
+		scrollScript := douyinDomScrollScript
+		if i == 0 {
+			scrollScript = douyinDomReadScript
+		}
+		if scroll, err := evalPageWithRetry(ctx, session.window.Page(), scrollScript); err == nil {
 			_ = decodeDouyinCaptureResult(scroll, &result)
 		} else {
 			lastErr = err
@@ -188,13 +238,14 @@ func (b *platformPageBridge) CaptureFeed(ctx context.Context, platform string, p
 			if err := waitCapturePoll(ctx); err != nil {
 				return platformfetch.FeedCaptureResponse{}, err
 			}
-			before := len(result.Responses)
-			if raw, err := evalPageWithRetry(ctx, session.window.Page(), douyinFeedReadScript); err == nil {
+			beforeResponses, beforeCards := len(result.Responses), len(result.Cards)
+			readScript := douyinDomReadScript
+			if raw, err := evalPageWithRetry(ctx, session.window.Page(), readScript); err == nil {
 				_ = decodeDouyinCaptureResult(raw, &result)
 			} else {
 				lastErr = err
 			}
-			if len(result.Responses) > before {
+			if len(result.Responses) > beforeResponses || len(result.Cards) > beforeCards {
 				break
 			}
 		}
@@ -209,6 +260,23 @@ func (b *platformPageBridge) CaptureFeed(ctx context.Context, platform string, p
 			continue
 		}
 		_ = decodeDouyinCaptureResult(raw, &result)
+	}
+	if len(result.Cards) == 0 && len(result.Responses) == 0 {
+		if err := session.window.Page().LoadURL("https://www.douyin.com/?recommend=1"); err == nil {
+			if err := waitForPageReady(ctx, session.window.Page(), "recommend=1"); err == nil {
+				for i := 0; i < pages; i++ {
+					if raw, err := evalPageWithRetry(ctx, session.window.Page(), douyinRecommendNextScript); err == nil {
+						_ = decodeDouyinCaptureResult(raw, &result)
+					}
+					if err := waitCapturePoll(ctx); err != nil {
+						return platformfetch.FeedCaptureResponse{}, err
+					}
+					if raw, err := evalPageWithRetry(ctx, session.window.Page(), douyinFeedReadScript); err == nil {
+						_ = decodeDouyinCaptureResult(raw, &result)
+					}
+				}
+			}
+		}
 	}
 	if len(result.Responses) == 0 && lastErr != nil && ctx.Err() != nil {
 		return platformfetch.FeedCaptureResponse{}, lastErr
@@ -237,7 +305,7 @@ func (b *platformPageBridge) CaptureFeed(ctx context.Context, platform string, p
 	if blocked, ok := session.blockedNavigation.Load().(string); ok && blocked != "" {
 		pageURL = blocked
 	}
-	return platformfetch.FeedCaptureResponse{Responses: responses, PageURL: pageURL, Title: result.Title, Ready: result.Ready}, nil
+	return platformfetch.FeedCaptureResponse{Responses: responses, DOMCards: result.Cards, PageURL: pageURL, Title: result.Title, Ready: result.Ready, ResourcePaths: result.ResourcePaths, InitiatorTypes: result.InitiatorTypes, FetchHookInstalled: result.FetchHookInstalled, XHRHookInstalled: result.XHRHookInstalled}, nil
 }
 
 type douyinCaptureResponse struct {
@@ -252,6 +320,15 @@ type douyinCaptureResult struct {
 	Title     string                  `json:"title"`
 	Ready     string                  `json:"ready"`
 	Responses []douyinCaptureResponse `json:"responses"`
+	Cards     []platformfetch.DOMCard `json:"cards"`
+	Resources []struct {
+		Path          string `json:"path"`
+		InitiatorType string `json:"initiatorType"`
+	} `json:"resources"`
+	ResourcePaths      []string
+	InitiatorTypes     []string
+	FetchHookInstalled bool `json:"fetchHookInstalled"`
+	XHRHookInstalled   bool `json:"xhrHookInstalled"`
 }
 
 func decodeDouyinCaptureResult(raw any, result *douyinCaptureResult) error {
@@ -272,8 +349,74 @@ func decodeDouyinCaptureResult(raw any, result *douyinCaptureResult) error {
 	if current.Ready != "" {
 		result.Ready = current.Ready
 	}
-	result.Responses = append(result.Responses, current.Responses...)
+	for _, response := range current.Responses {
+		if len(response.Body) > platformFetchMaxBody {
+			continue
+		}
+		result.Responses = append(result.Responses, response)
+	}
+	if len(result.Responses) > 128 {
+		result.Responses = result.Responses[len(result.Responses)-128:]
+	}
+	result.Cards = mergeDOMCards(result.Cards, current.Cards)
+	for _, resource := range current.Resources {
+		if len(result.ResourcePaths) >= 256 {
+			break
+		}
+		result.ResourcePaths = append(result.ResourcePaths, resource.Path)
+		result.InitiatorTypes = append(result.InitiatorTypes, resource.InitiatorType)
+	}
+	var metadata struct {
+		FetchHookInstalled *bool `json:"fetchHookInstalled"`
+		XHRHookInstalled   *bool `json:"xhrHookInstalled"`
+	}
+	if err := json.Unmarshal(encoded, &metadata); err == nil {
+		if metadata.FetchHookInstalled != nil {
+			result.FetchHookInstalled = *metadata.FetchHookInstalled
+		}
+		if metadata.XHRHookInstalled != nil {
+			result.XHRHookInstalled = *metadata.XHRHookInstalled
+		}
+	}
 	return nil
+}
+
+func mergeDOMCards(existing, incoming []platformfetch.DOMCard) []platformfetch.DOMCard {
+	merged := append([]platformfetch.DOMCard(nil), existing...)
+	indexes := make(map[string]int, len(merged)+len(incoming))
+	for index, card := range merged {
+		indexes[card.ID] = index
+	}
+	for _, card := range incoming {
+		if index, ok := indexes[card.ID]; ok {
+			current := &merged[index]
+			if current.URL == "" {
+				current.URL = card.URL
+			}
+			if current.ThumbnailURL == "" {
+				current.ThumbnailURL = card.ThumbnailURL
+			}
+			if current.Title == "" {
+				current.Title = card.Title
+			}
+			if current.Author == "" {
+				current.Author = card.Author
+			}
+			if current.LikeCount == 0 {
+				current.LikeCount = card.LikeCount
+			}
+			if current.Duration == 0 {
+				current.Duration = card.Duration
+			}
+			continue
+		}
+		if len(merged) >= 500 {
+			break
+		}
+		indexes[card.ID] = len(merged)
+		merged = append(merged, card)
+	}
+	return merged
 }
 
 func waitCapturePoll(ctx context.Context) error {
@@ -284,6 +427,43 @@ func waitCapturePoll(ctx context.Context) error {
 		return ctx.Err()
 	case <-timer.C:
 		return nil
+	}
+}
+
+func waitForPageReady(ctx context.Context, page *mygo.Page, pathHint string) error {
+	deadline := time.NewTimer(platformFetchTimeout)
+	defer deadline.Stop()
+	for {
+		result, err := evalPageWithRetry(ctx, page, `(function(){ return {url:location.href, ready:document.readyState}; })()`)
+		if err == nil {
+			encoded, marshalErr := json.Marshal(result)
+			if marshalErr == nil {
+				var state struct {
+					URL   string `json:"url"`
+					Ready string `json:"ready"`
+				}
+				if json.Unmarshal(encoded, &state) == nil && state.Ready == "complete" {
+					// A challenge can replace /jingxuan with the home page or a
+					// same-origin verification route. Return as soon as the document
+					// is complete so diagnostics can report that final location.
+					_ = pathHint
+					return nil
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			if err != nil {
+				return err
+			}
+			return context.DeadlineExceeded
+		default:
+		}
+		if err := waitCapturePoll(ctx); err != nil {
+			return err
+		}
 	}
 }
 
@@ -333,8 +513,8 @@ func (b *platformPageBridge) session(platform, origin string) (*platformPageSess
 	session := &platformPageSession{platform: platform, origin: origin, lastUsed: time.Now(), ready: make(chan struct{})}
 	session.blockedNavigation.Store("")
 	window := mygo.NewWindow(mygo.WindowOptions{
-		Title: "Tangentry 平台请求", Hidden: true,
-		Width: 800, Height: 600, MinWidth: 640, MinHeight: 480,
+		Title: "Tangentry 平台请求", X: -1200, Y: -900,
+		Width: 1024, Height: 768, MinWidth: 640, MinHeight: 480,
 		SkipTaskbar: true, Page: mygo.PageOptions{TrustedOrigins: []string{origin}, PreloadScript: func() string {
 			if platform == "douyin" {
 				return douyinFeedCaptureScript
@@ -361,6 +541,11 @@ func (b *platformPageBridge) session(platform, origin string) (*platformPageSess
 	session.window = window
 	b.sessions[platform] = session
 	b.mu.Unlock()
+	// Keep the WebView composited and timer-active without stealing focus from
+	// the Tangentry window. It is visible but positioned outside the screen;
+	// Hidden WebViews are throttled by WebKit.
+	window.ShowInactive()
+	window.Blur()
 	if err := window.Page().LoadURL(origin); err != nil {
 		b.mu.Lock()
 		if b.sessions[platform] == session {

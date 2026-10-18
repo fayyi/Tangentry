@@ -26,10 +26,27 @@ type Fetcher interface {
 // platform page's own feed requests. Responses are kept separate because the
 // page may issue several feed calls while scrolling.
 type FeedCaptureResponse struct {
-	Responses []Response
-	PageURL   string
-	Title     string
-	Ready     string
+	Responses          []Response
+	DOMCards           []DOMCard
+	PageURL            string
+	Title              string
+	Ready              string
+	ResourcePaths      []string
+	InitiatorTypes     []string
+	FetchHookInstalled bool
+	XHRHookInstalled   bool
+}
+
+// DOMCard is the credential-free projection of a recommendation card read
+// from a platform page. It intentionally contains no cookies or raw HTML.
+type DOMCard struct {
+	ID           string
+	URL          string
+	ThumbnailURL string
+	Title        string
+	Author       string
+	LikeCount    int
+	Duration     int
 }
 
 // FeedCaptureFetcher is optional. Adapters must continue to work with a

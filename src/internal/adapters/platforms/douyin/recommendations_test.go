@@ -119,6 +119,63 @@ func TestRecommendationCaptureLoginPageIncludesFinalLocation(t *testing.T) {
 	}
 }
 
+func TestMapDOMCardsDeduplicatesAndMapsSafeFields(t *testing.T) {
+	feed := mapDOMCards([]platformfetch.DOMCard{
+		{ID: "6961737553342991651", URL: "https://www.douyin.com/video/6961737553342991651", Title: "精选一", Author: "作者", ThumbnailURL: "https://p3.douyinpic.com/a.jpg", LikeCount: 12, Duration: 31},
+		{ID: "6961737553342991651", Title: "重复"},
+		{ID: "bad", Title: "无效"},
+		{ID: "6961737553342991652", Title: "精选二", ThumbnailURL: "javascript:bad", LikeCount: -1},
+	}, 1)
+	if len(feed.Items) != 2 || feed.Items[0].ID != "douyin:6961737553342991651" || feed.Items[0].LikeCount != 12 || feed.Items[0].DurationSeconds != 31 || feed.Items[1].ThumbnailURL != "" || feed.Items[1].LikeCount != 0 {
+		t.Fatalf("DOM cards not mapped safely: %+v", feed)
+	}
+}
+
+func TestCaptureDiagnosticsIncludeResourcesAndHookStateWithoutQuerySecrets(t *testing.T) {
+	diagnostic := describeCaptureResources([]string{"/aweme/v1/feed/", "/aweme/v2/module/?token=abcdefghijklmnopqrstuvwxyz0123456789"}, []string{"fetch", "xmlhttprequest"}, true, false)
+	if !strings.Contains(diagnostic, "/aweme/v1/feed/(fetch)") || !strings.Contains(diagnostic, "fetch 钩子=true") || !strings.Contains(diagnostic, "XHR 钩子=false") || strings.Contains(diagnostic, "abcdefghijklmnopqrstuvwxyz0123456789") {
+		t.Fatalf("capture diagnostic invalid or leaked token: %s", diagnostic)
+	}
+}
+
+func TestVerificationURLClassification(t *testing.T) {
+	for _, raw := range []string{
+		"https://www.douyin.com/passport/login?next=%2Fjingxuan",
+		"https://www.douyin.com/verify/slide",
+		"https://www.douyin.com/?byted_acrawler=1",
+	} {
+		if !looksLikeVerificationURL(raw) {
+			t.Fatalf("verification URL not recognized: %s", raw)
+		}
+	}
+	if looksLikeVerificationURL("https://www.douyin.com/jingxuan") {
+		t.Fatal("normal recommendation URL classified as verification")
+	}
+}
+
+func TestRecommendationCaptureResponseDiagnosticsIncludeHTTPContext(t *testing.T) {
+	c := &Client{
+		Page: captureFetcherFunc(func(context.Context, string, int) (platformfetch.FeedCaptureResponse, error) {
+			return platformfetch.FeedCaptureResponse{
+				PageURL: "https://www.douyin.com/jingxuan",
+				Title:   "精选",
+				Ready:   "complete",
+				Responses: []platformfetch.Response{{
+					Status:      http.StatusForbidden,
+					Body:        `<html>byted_acrawler token abcdefghijklmnopqrstuvwxyz0123456789</html>`,
+					URL:         "https://www.douyin.com/aweme/v1/feed/?msToken=secret",
+					ContentType: "text/html",
+				}},
+			}, nil
+		}),
+		Cookie: nil,
+	}
+	_, err := c.Recommendations(context.Background(), 1)
+	if err == nil || !strings.Contains(err.Error(), "HTTP 403") || !strings.Contains(err.Error(), "Content-Type") || !strings.Contains(err.Error(), "text/html") || strings.Contains(err.Error(), "msToken=secret") || strings.Contains(err.Error(), "abcdefghijklmnopqrstuvwxyz0123456789") {
+		t.Fatalf("capture response diagnostics incomplete or leaked: %v", err)
+	}
+}
+
 func TestRecommendationNestedPayloadAndAuthorAvatar(t *testing.T) {
 	raw, err := douyinFixtures.ReadFile("testdata/recommendations.json")
 	if err != nil {

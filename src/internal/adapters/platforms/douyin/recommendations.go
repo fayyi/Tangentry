@@ -50,15 +50,15 @@ func (c *Client) Recommendations(ctx context.Context, page int) (discovery.Feed,
 			diagnostics = append(diagnostics, "页面抓取执行失败："+err.Error())
 		} else {
 			if captured.PageURL != "" && !isDouyinPageURL(captured.PageURL) {
-				diagnostics = append(diagnostics, "隐藏页面被重定向到 "+captured.PageURL)
+				diagnostics = append(diagnostics, "页面被重定向到 "+safeDiagnosticURL(captured.PageURL))
 			}
 			if title := strings.TrimSpace(captured.Title); title != "" && looksLikeLoginOrChallenge(title) {
-				diagnostics = append(diagnostics, "隐藏页面标题显示为“"+title+"”")
+				diagnostics = append(diagnostics, "页面标题显示为“"+redactDiagnostic(title)+"”")
 			}
 			capturedFeeds := make([]discovery.Feed, 0, len(captured.Responses))
 			for _, response := range captured.Responses {
 				if response.Status != http.StatusOK || response.Body == "" {
-					diagnostics = append(diagnostics, fmt.Sprintf("页面 feed 响应为 HTTP %d 或空 body", response.Status))
+					diagnostics = append(diagnostics, "页面 feed 响应不可用："+describePageResponse(response.Status, response.Body, response.Restricted, response.ContentType, response.URL))
 					continue
 				}
 				feed, err := decodeRecommendations([]byte(response.Body), page, nil)
@@ -67,15 +67,20 @@ func (c *Client) Recommendations(ctx context.Context, page int) (discovery.Feed,
 					continue
 				}
 				if err != nil {
-					diagnostics = append(diagnostics, "页面 feed JSON 解析失败："+err.Error())
+					diagnostics = append(diagnostics, "页面 feed JSON 解析失败："+err.Error()+"；"+describePageResponse(response.Status, response.Body, response.Restricted, response.ContentType, response.URL))
 				}
 			}
 			if feed := mergeRecommendationFeeds(capturedFeeds, page, "抖音页面推荐"); len(feed.Items) > 0 {
 				return feed, nil
 			}
+			if feed := mapDOMCards(captured.DOMCards, page); len(feed.Items) > 0 {
+				feed.SourceTitle = "抖音精选"
+				return feed, nil
+			}
 			diagnostics = append(diagnostics, describeCapturePage(captured.PageURL, captured.Title, captured.Ready))
-			if (captured.PageURL != "" && !isDouyinPageURL(captured.PageURL)) || looksLikeLoginOrChallenge(captured.Title) {
-				return discovery.Feed{}, &discovery.PlatformError{Restricted: true, Message: "抖音推荐需要在应用内完成抖音验证：" + joinDiagnostics(diagnostics, "隐藏页面停留在登录或验证页，请点击重新验证后重试。")}
+			diagnostics = append(diagnostics, describeCaptureResources(captured.ResourcePaths, captured.InitiatorTypes, captured.FetchHookInstalled, captured.XHRHookInstalled))
+			if (captured.PageURL != "" && (!isDouyinPageURL(captured.PageURL) || looksLikeVerificationURL(captured.PageURL))) || looksLikeLoginOrChallenge(captured.Title) {
+				return discovery.Feed{}, &discovery.PlatformError{Restricted: true, Message: "抖音推荐需要在应用内完成抖音验证：" + joinDiagnostics(diagnostics, "页面停留在登录或验证页，请点击重新验证后重试。")}
 			}
 			if len(captured.Responses) == 0 {
 				diagnostics = append(diagnostics, "页面未捕获到推荐 feed 请求（页面状态："+captured.Ready+"）")
@@ -280,7 +285,7 @@ func describeCapturePage(pageURL, title, ready string) string {
 	if pageTitle == "" {
 		pageTitle = "(无标题)"
 	}
-	return fmt.Sprintf("隐藏页面最终 URL %s，标题 %q，ready=%s", pageURL, redactDiagnostic(pageTitle), ready)
+	return fmt.Sprintf("页面最终 URL %s，标题 %q，ready=%s", pageURL, redactDiagnostic(pageTitle), ready)
 }
 
 func diagnosticPreview(body string) string {
@@ -336,6 +341,20 @@ func isDouyinPageURL(raw string) bool {
 	}
 	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
 	return u.Scheme == "https" && (host == "www.douyin.com" || host == "douyin.com")
+}
+
+func looksLikeVerificationURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	value := strings.ToLower(u.Path + "?" + u.RawQuery)
+	for _, marker := range []string{"login", "passport", "verify", "captcha", "challenge", "acrawler", "sec_"} {
+		if strings.Contains(value, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func joinDiagnostics(diagnostics []string, fallback string) string {
@@ -409,6 +428,79 @@ func mergeRecommendationFeeds(feeds []discovery.Feed, page int, sourceTitle stri
 	}
 	merged.Total = len(merged.Items)
 	return merged
+}
+
+func mapDOMCards(cards []platformfetch.DOMCard, page int) discovery.Feed {
+	feed := discovery.Feed{Items: make([]content.Item, 0, len(cards)), Page: page, SourceTitle: "抖音精选"}
+	seen := make(map[string]struct{}, len(cards))
+	for _, card := range cards {
+		id := strings.TrimSpace(card.ID)
+		if !content.ValidID("douyin:" + id) {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		ref, err := discovery.ParseDouyin("https://www.douyin.com/video/" + id)
+		if err != nil {
+			continue
+		}
+		title := strings.TrimSpace(card.Title)
+		if title == "" {
+			title = strings.TrimSpace(card.Author) + "的视频"
+		}
+		item := content.Item{ID: "douyin:" + id, Platform: "douyin", PlatformID: id, Kind: "video", Title: title, Author: strings.TrimSpace(card.Author), URL: ref.URL, ThumbnailURL: safeHTTPSURL(card.ThumbnailURL), DurationSeconds: maxInt(card.Duration, 0), LikeCount: maxInt(card.LikeCount, 0)}
+		if content.Validate(item) != nil {
+			continue
+		}
+		feed.Items = append(feed.Items, item)
+		seen[id] = struct{}{}
+	}
+	feed.Total = len(feed.Items)
+	return feed
+}
+
+func safeHTTPSURL(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil {
+		return ""
+	}
+	return u.String()
+}
+
+func maxInt(value, floor int) int {
+	if value < floor {
+		return floor
+	}
+	return value
+}
+
+func describeCaptureResources(paths, initiators []string, fetchHook, xhrHook bool) string {
+	parts := make([]string, 0, len(paths))
+	seen := make(map[string]struct{}, len(paths))
+	for index, path := range paths {
+		path = redactDiagnostic(path)
+		if path == "" {
+			continue
+		}
+		initiator := ""
+		if index < len(initiators) {
+			initiator = strings.TrimSpace(initiators[index])
+		}
+		value := path
+		if initiator != "" {
+			value += "(" + initiator + ")"
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		parts = append(parts, value)
+	}
+	if len(parts) > 12 {
+		parts = parts[:12]
+	}
+	return fmt.Sprintf("页面 aweme 资源：%s；fetch 钩子=%t，XHR 钩子=%t", strings.Join(parts, ", "), fetchHook, xhrHook)
 }
 
 func decodeRecommendations(body []byte, page int, denied error) (discovery.Feed, error) {

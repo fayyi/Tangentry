@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"tangentry/internal/app"
+	"tangentry/internal/platformfetch"
 )
 
 func TestValidatePlatformPath(t *testing.T) {
@@ -83,6 +84,12 @@ func TestDouyinFeedCaptureScriptHooksPageRequests(t *testing.T) {
 			t.Fatalf("capture execution script does not contain %q: %s", part, code)
 		}
 	}
+	if !strings.Contains(douyinDomReadScript, "performance.getEntriesByType('resource')") || !strings.Contains(douyinDomReadScript, "fetchHookInstalled") || !strings.Contains(douyinDomReadScript, `a[href*="/video/"]`) {
+		t.Fatal("DOM capture script lacks diagnostics or card selectors")
+	}
+	if !strings.Contains(douyinRecommendNextScript, "ArrowDown") || !strings.Contains(douyinRecommendNextScript, "WheelEvent") {
+		t.Fatal("recommendation fallback does not advance the page")
+	}
 }
 
 func TestEvalWithRetryRetriesDestroyedPageContext(t *testing.T) {
@@ -107,6 +114,45 @@ func TestEvalWithRetryDoesNotRetryUnrelatedErrors(t *testing.T) {
 	}, "return true")
 	if err == nil || calls != 1 {
 		t.Fatalf("unrelated error calls=%d err=%v", calls, err)
+	}
+}
+
+func TestDecodeDouyinCaptureResultParsesDOMCardsAndResources(t *testing.T) {
+	var result douyinCaptureResult
+	raw := map[string]any{
+		"pageUrl":            "https://www.douyin.com/jingxuan",
+		"title":              "精选",
+		"ready":              "complete",
+		"cards":              []map[string]any{{"id": "6961737553342991651", "title": "测试"}},
+		"resources":          []map[string]any{{"path": "/aweme/v1/feed/", "initiatorType": "fetch"}},
+		"fetchHookInstalled": true,
+		"xhrHookInstalled":   false,
+	}
+	if err := decodeDouyinCaptureResult(raw, &result); err != nil || len(result.Cards) != 1 || len(result.ResourcePaths) != 1 || result.ResourcePaths[0] != "/aweme/v1/feed/" || !result.FetchHookInstalled || result.XHRHookInstalled {
+		t.Fatalf("decoded capture=%+v err=%v", result, err)
+	}
+}
+
+func TestDecodeDouyinCaptureResultUsesLatestHookState(t *testing.T) {
+	var result douyinCaptureResult
+	if err := decodeDouyinCaptureResult(map[string]any{"fetchHookInstalled": true, "xhrHookInstalled": true}, &result); err != nil {
+		t.Fatal(err)
+	}
+	if err := decodeDouyinCaptureResult(map[string]any{"fetchHookInstalled": false, "xhrHookInstalled": false}, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.FetchHookInstalled || result.XHRHookInstalled {
+		t.Fatalf("hook state was not refreshed: %+v", result)
+	}
+}
+
+func TestMergeDOMCardsDeduplicatesAndCompletesMissingFields(t *testing.T) {
+	merged := mergeDOMCards([]platformfetch.DOMCard{{ID: "1", Title: "保留标题"}}, []platformfetch.DOMCard{
+		{ID: "1", ThumbnailURL: "https://example.invalid/cover.jpg", Author: "作者", Duration: 10},
+		{ID: "2", Title: "新卡片"},
+	})
+	if len(merged) != 2 || merged[0].Title != "保留标题" || merged[0].Author != "作者" || merged[0].Duration != 10 || merged[1].Title != "新卡片" {
+		t.Fatalf("DOM merge failed: %+v", merged)
 	}
 }
 
