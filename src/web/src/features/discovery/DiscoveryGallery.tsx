@@ -13,6 +13,7 @@ import { SkeletonGallery } from '../../shared/ui/SkeletonLoading'
 import { openDesktopPlatformLogin, useCapabilities, type PlatformWebView } from '../../shared/api/desktop'
 import { discoveryReasonType, getDiscoverySourceLabel, readDiscoveryFilterState, updateDiscoveryFilterState, useDiscoveryBatch } from './useDiscoveryBatch'
 import { useDiscoveryTopics } from './useDiscoveryTopics'
+import { feedbackMessage, type DiscoveryFeedbackTarget, type DiscoveryFeedbackType } from './discoveryFeedback'
 
 const labels: Record<GallerySource, string> = { subscriptions: '订阅更新', bilibili: 'B站推荐', youtube: 'YouTube 推荐', xiaohongshu: '小红书推荐', linuxdo: 'Linux.do 话题', xiaoyuzhou: '小宇宙发现', douyin: '抖音推荐' }
 
@@ -30,12 +31,15 @@ export function DiscoveryGallery({ kind, onKind, query, onClearQuery, notice, no
   const [topic, setTopicState] = useState(() => readDiscoveryFilterState().topic)
   const [webViewPlatform, setWebViewPlatform] = useState<PlatformWebView | ''>('')
   const [webViewError, setWebViewError] = useState('')
+  const [feedbackHidden, setFeedbackHidden] = useState(() => new Set<string>())
+  const [undoFeedback, setUndoFeedback] = useState<{ id: string; itemID: string; message: string } | null>(null)
+  const [feedbackError, setFeedbackError] = useState('')
   const matchesKind = (mediaKind: string) => kind === 'all' || mediaKind === kind
   const sourceOptions = gallerySources.filter(source => source === 'subscriptions' || gallery.enabled?.[source] !== false)
   const sourceStatus = batchState.batch?.sourceStatus ?? {}
   const selectedEntries = (batchState.batch?.items ?? []).filter(entry => platform === 'all' || entry.source === platform)
   const search = query.trim().toLocaleLowerCase()
-  const items = selectedEntries.filter(({ item, reason }) => matchesKind(item.kind) && (!search || `${item.title} ${item.author} ${item.description} ${item.previewText || ''} ${item.platform} ${reason}`.toLocaleLowerCase().includes(search)))
+  const items = selectedEntries.filter(({ item, reason }) => !feedbackHidden.has(item.id) && matchesKind(item.kind) && (!search || `${item.title} ${item.author} ${item.description} ${item.previewText || ''} ${item.platform} ${reason}`.toLocaleLowerCase().includes(search)))
   useRecommendationExposure(true, items.map(({ item }) => item.id).join(','))
   const loading = batchState.loading
   const errorCount = Object.values(sourceStatus).filter(status => status.status !== 'ok' && status.status !== 'disabled').length
@@ -81,6 +85,26 @@ export function DiscoveryGallery({ kind, onKind, query, onClearQuery, notice, no
     if (['bilibili', 'youtube', 'xiaohongshu', 'linuxdo', 'xiaoyuzhou', 'douyin'].includes(item.platform)) void request(`/recommendations/${item.platform}/marks`, { method: 'PUT', keepalive: true, body: JSON.stringify({ contentId: item.id, opened: true }) }).catch(() => {})
     onRead(item)
   }
+  async function sendFeedback(type: DiscoveryFeedbackType, target: DiscoveryFeedbackTarget, value: string, item: ContentItem) {
+    try {
+      setFeedbackError('')
+      const saved = await request<{ id: string }>('/discovery/feedback', { method: 'POST', body: JSON.stringify({ type, target, value }) })
+      if (type === 'hide') setFeedbackHidden(current => new Set(current).add(item.id))
+      if (type === 'block_creator') setFeedbackHidden(current => new Set([...current, ...selectedEntries.filter(entry => (entry.item.authorId || entry.item.author) === value).map(entry => entry.item.id)]))
+      setUndoFeedback({ id: saved.id, itemID: item.id, message: feedbackMessage(type) })
+      if (type === 'more' || type === 'less' || type === 'block_creator') batchState.retry()
+    } catch (cause) { setFeedbackError(cause instanceof Error ? cause.message : '发现反馈未能保存，请重试。') }
+  }
+  async function undoFeedbackAction() {
+    if (!undoFeedback) return
+    const current = undoFeedback
+    try {
+      await request(`/discovery/feedback/${encodeURIComponent(current.id)}`, { method: 'DELETE' })
+      setFeedbackHidden(previous => { const next = new Set(previous); next.delete(current.itemID); return next })
+      setUndoFeedback(null)
+      batchState.retry()
+    } catch (cause) { setFeedbackError(cause instanceof Error ? cause.message : '撤销失败，请到设置中重试。') }
+  }
 
   return <>
     <div className="discovery-toolbar discovery-home-toolbar">
@@ -98,10 +122,12 @@ export function DiscoveryGallery({ kind, onKind, query, onClearQuery, notice, no
       </div>
     </div>
     {batchState.optionsStale && <p className="discovery-new-content" role="status">有新内容，点击刷新<button type="button" className="text-button" onClick={batchState.retry}>刷新</button></p>}
+    {undoFeedback && <p className="inline-feedback collection-save-feedback" role="status">{undoFeedback.message}<button type="button" className="text-button" onClick={() => void undoFeedbackAction()}>撤销</button></p>}
+    {feedbackError && <p className="inline-feedback" role="alert">{feedbackError}</p>}
     {notice && <p className="inline-feedback collection-save-feedback" role={noticeError ? 'alert' : 'status'}>{notice}</p>}
     {savingUnavailable && <p className="field-hint" role="status">资料库暂不可用，收藏操作等待重新连接。</p>}
     {search && <p className="discovery-search-result" role="status">当前已加载内容中找到 {items.length} 条结果<button type="button" className="text-button" onClick={onClearQuery}>清除搜索</button></p>}
-    {items.length > 0 ? <CardCollection masonry={!['video', 'audio'].includes(kind)} rowGap={20} data-media={kind} className="mixed-gallery" aria-label="发现内容">{items.map(({ item, source, reason, carriedOver }) => <ModernGalleryCard key={item.id} discovery item={item} origin={getDiscoverySourceLabel(source, reason, carriedOver)} discoveryReason={reason} discoveryType={discoveryReasonType(source, reason, carriedOver)} saved={savedIDs.has(item.id)} pending={savingUnavailable || pending.has(item.id)} onRead={openRecommendation} onSave={onSave} onDownload={onDownload} />)}</CardCollection> : loading ? <SkeletonGallery count={8} /> : search ? <section className="empty-state"><h2>没有找到匹配的内容</h2><p>试试其他关键词，或清除搜索查看当前内容。</p><button type="button" className="button button-secondary" onClick={onClearQuery}>查看全部内容</button></section> : <section className="empty-state"><h2>这里还没有推荐内容</h2><p>添加一个内容链接，或在设置中连接你使用的平台。</p><button className="button button-primary" onClick={onSearch}>添加内容</button><button className="text-button" onClick={onSubscriptions}>管理订阅</button></section>}
+    {items.length > 0 ? <CardCollection masonry={!['video', 'audio'].includes(kind)} rowGap={20} data-media={kind} className="mixed-gallery" aria-label="发现内容">{items.map(({ item, source, reason, carriedOver }) => <ModernGalleryCard key={item.id} discovery item={item} origin={getDiscoverySourceLabel(source, reason, carriedOver)} discoveryReason={reason} discoveryType={discoveryReasonType(source, reason, carriedOver)} saved={savedIDs.has(item.id)} pending={savingUnavailable || pending.has(item.id)} onRead={openRecommendation} onSave={onSave} onDownload={onDownload} onFeedback={(type, target, value) => void sendFeedback(type, target, value, item)} />)}</CardCollection> : loading ? <SkeletonGallery count={8} /> : search ? <section className="empty-state"><h2>没有找到匹配的内容</h2><p>试试其他关键词，或清除搜索查看当前内容。</p><button type="button" className="button button-secondary" onClick={onClearQuery}>查看全部内容</button></section> : <section className="empty-state"><h2>这里还没有推荐内容</h2><p>添加一个内容链接，或在设置中连接你使用的平台。</p><button className="button button-primary" onClick={onSearch}>添加内容</button><button className="text-button" onClick={onSubscriptions}>管理订阅</button></section>}
     <div ref={sentinel} className="gallery-load-more discovery-feed-status" aria-live="polite">{batchState.error ? <><span role="alert">{batchState.error}</span><button className="button button-secondary" onClick={batchState.retry}><RefreshCw size={15} />重试</button></> : loading ? <><LoaderCircle size={15} className="spin" />正在加载更多…</> : batchState.batch?.hasNextBatch ? <span>继续下滑加载更多</span> : items.length ? <><span>暂时没有更多了</span><button className="button button-secondary" onClick={batchState.retry}><RefreshCw size={15} />刷新</button></> : null}</div>
   </>
 }

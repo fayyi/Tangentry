@@ -69,6 +69,7 @@ type BatchService struct {
 	snapshots     BatchSnapshotRepository
 	enabled       func(context.Context, string) (bool, error)
 	topics        func(context.Context) ([]TopicRule, error)
+	feedback      func(context.Context) ([]Feedback, error)
 	clock         func() time.Time
 }
 
@@ -84,10 +85,11 @@ type batchCursor struct {
 }
 
 type batchCandidate struct {
-	Item   content.Item `json:"item"`
-	Source string       `json:"source"`
-	Fresh  bool         `json:"fresh"`
-	Key    string       `json:"key"`
+	Item           content.Item `json:"item"`
+	Source         string       `json:"source"`
+	Fresh          bool         `json:"fresh"`
+	Key            string       `json:"key"`
+	FeedbackReason string       `json:"feedbackReason,omitempty"`
 }
 
 type batchSnapshot struct {
@@ -113,6 +115,10 @@ func (s *BatchService) SetSourceEnabled(enabled func(context.Context, string) (b
 
 func (s *BatchService) SetTopicRules(topics func(context.Context) ([]TopicRule, error)) {
 	s.topics = topics
+}
+
+func (s *BatchService) SetFeedback(feedback func(context.Context) ([]Feedback, error)) {
+	s.feedback = feedback
 }
 
 func (s *BatchService) Create(ctx context.Context, request BatchRequest) (BatchResponse, error) {
@@ -144,9 +150,19 @@ func (s *BatchService) Create(ctx context.Context, request BatchRequest) (BatchR
 		if err != nil {
 			return BatchResponse{}, err
 		}
-		if unmarshalBatchSnapshot(payload, &snapshot) != nil || cursor.Offset > len(snapshot.Candidates) {
+		if unmarshalBatchSnapshot(payload, &snapshot) != nil {
 			return BatchResponse{}, ErrInvalidBatch
 		}
+		// Feedback can change after a snapshot was created. Re-check strict
+		// hide/block rules on every cursor request so a stale snapshot cannot
+		// surface content the user has explicitly removed.
+		originalCandidates := snapshot.Candidates
+		snapshot.Candidates = s.filterStrictFeedback(ctx, originalCandidates)
+		if cursor.Offset > len(originalCandidates) {
+			return BatchResponse{}, ErrInvalidBatch
+		}
+		visibleOffset := len(s.filterStrictFeedback(ctx, originalCandidates[:cursor.Offset]))
+		cursor.Offset = visibleOffset
 		if snapshot.NextPages == nil {
 			snapshot.NextPages = map[string]int{}
 		}
@@ -246,6 +262,7 @@ func (s *BatchService) Create(ctx context.Context, request BatchRequest) (BatchR
 	if request.View == "topic" {
 		all = latest
 	}
+	all = s.applyFeedback(ctx, all)
 
 	carried := make(map[string]struct{}, len(request.UnreadIDs))
 	for _, id := range request.UnreadIDs {
@@ -370,6 +387,7 @@ func (s *BatchService) extendSnapshot(ctx context.Context, request BatchRequest,
 			page++
 		}
 	}
+	newCandidates = s.applyFeedback(ctx, newCandidates)
 	offset = min(offset, len(snapshot.Candidates))
 	prefix := append([]batchCandidate(nil), snapshot.Candidates[:offset]...)
 	tail := append(append([]batchCandidate(nil), snapshot.Candidates[offset:]...), newCandidates...)
@@ -445,6 +463,9 @@ func (s *BatchService) page(request BatchRequest, requestKey string, cursor batc
 		} else if request.View == "topic" {
 			reason = "主题命中：" + request.Topic
 		}
+		if value.FeedbackReason != "" {
+			reason = value.FeedbackReason
+		}
 		carriedOver := contains(request.UnreadIDs, value.Item.ID)
 		items = append(items, BatchItem{Item: value.Item, Source: value.Source, Reason: reason, CarriedOver: carriedOver})
 	}
@@ -455,6 +476,96 @@ func (s *BatchService) page(request BatchRequest, requestKey string, cursor batc
 		response.EndReason = "暂时没有更多了"
 	}
 	return response
+}
+
+func (s *BatchService) applyFeedback(ctx context.Context, candidates []batchCandidate) []batchCandidate {
+	filtered := s.filterFeedback(ctx, candidates)
+	return interleaveBatchCandidates(filtered)
+}
+
+func (s *BatchService) filterFeedback(ctx context.Context, candidates []batchCandidate) []batchCandidate {
+	if s.feedback == nil || len(candidates) == 0 {
+		return candidates
+	}
+	values, err := s.feedback(ctx)
+	if err != nil || len(values) == 0 {
+		return candidates
+	}
+	active := make([]Feedback, 0, len(values))
+	for _, value := range values {
+		if value.ExpiresAt == 0 || value.ExpiresAt > s.clock().UnixMilli() {
+			active = append(active, value)
+		}
+	}
+	result := make([]batchCandidate, 0, len(candidates))
+	more := make([]batchCandidate, 0)
+	less := make([]batchCandidate, 0)
+	for _, candidate := range candidates {
+		var isMore, isLess bool
+		skip := false
+		for _, value := range active {
+			if !value.Matches(candidate.Item) {
+				continue
+			}
+			switch value.Type {
+			case FeedbackHide, FeedbackBlock:
+				skip = true
+			case FeedbackMore:
+				isMore = true
+			case FeedbackLess:
+				isLess = true
+			}
+		}
+		if skip {
+			continue
+		}
+		if isMore {
+			candidate.FeedbackReason = "因你选择想多看看：" + feedbackLabel(candidate.Item)
+			more = append(more, candidate)
+		} else if isLess {
+			candidate.FeedbackReason = "因你选择暂时少些：" + feedbackLabel(candidate.Item)
+			less = append(less, candidate)
+		} else {
+			result = append(result, candidate)
+		}
+	}
+	// Priority is applied inside the same source queues by applyFeedback. This
+	// helper keeps persisted cursor offsets stable while enforcing strict hide.
+	return append(append(more, result...), less...)
+}
+
+func (s *BatchService) filterStrictFeedback(ctx context.Context, candidates []batchCandidate) []batchCandidate {
+	if s.feedback == nil || len(candidates) == 0 {
+		return candidates
+	}
+	values, err := s.feedback(ctx)
+	if err != nil || len(values) == 0 {
+		return candidates
+	}
+	result := make([]batchCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		hidden := false
+		for _, value := range values {
+			if (value.Type == FeedbackHide || value.Type == FeedbackBlock) && (value.ExpiresAt == 0 || value.ExpiresAt > s.clock().UnixMilli()) && value.Matches(candidate.Item) {
+				hidden = true
+				break
+			}
+		}
+		if !hidden {
+			result = append(result, candidate)
+		}
+	}
+	return result
+}
+
+func feedbackLabel(item content.Item) string {
+	if value := strings.TrimSpace(item.Category); value != "" {
+		return value
+	}
+	if value := strings.TrimSpace(item.Author); value != "" {
+		return value
+	}
+	return item.Platform
 }
 
 func selectBatchOrder(candidates []batchCandidate, request BatchRequest, carried map[string]struct{}) []batchCandidate {

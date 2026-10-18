@@ -5,9 +5,9 @@ import { SaveCardAction } from './GalleryCardActions'
 import type { GalleryCardContentProps } from './types'
 import { AuthorName } from '../CardAuthor'
 
-export function PdfGalleryCard({ item, origin, discoveryReason, discoveryType, saved, pending, onRead, onSave, status, excerpt, discovery = false }: GalleryCardContentProps) {
+export function PdfGalleryCard({ item, origin, discoveryReason, discoveryType, saved, pending, onRead, onSave, status, excerpt, discovery = false, onFeedback }: GalleryCardContentProps) {
   return (
-    <GalleryCardFrame item={item} origin={origin} discoveryReason={discoveryReason} className="card-pdf" onRead={onRead} status={status}>
+    <GalleryCardFrame item={item} origin={origin} discoveryReason={discoveryReason} className="card-pdf" onRead={onRead} status={status} onFeedback={discovery ? onFeedback : undefined}>
       <button className="modern-card-thumbnail" onClick={() => onRead(item)} aria-label={`打开 PDF ${item.title}`}>
         <div className="thumbnail-placeholder" aria-hidden="true">PDF</div>
       </button>

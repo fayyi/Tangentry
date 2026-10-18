@@ -16,6 +16,7 @@ export interface GalleryCardProps {
   progress?: ReadingProgress | null
   status?: ReactNode
   discovery?: boolean
+  onFeedback?: (type: 'more' | 'less' | 'hide' | 'block_creator', target: 'item' | 'source' | 'creator' | 'topic', value: string) => void
 }
 
 export interface GalleryCardContentProps extends GalleryCardProps {

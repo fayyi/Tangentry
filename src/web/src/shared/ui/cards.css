@@ -76,6 +76,14 @@
 .card-platform::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--platform-color, var(--platform-neutral)); }
 .discovery-card-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 22px; margin-bottom: -2px; }
 .modern-card { position: relative; }
+.discovery-feedback-menu { position: absolute; z-index: 8; top: 8px; right: 8px; opacity: 0; transition: opacity 140ms var(--ease-out); }
+.modern-card:hover .discovery-feedback-menu, .modern-card:focus-within .discovery-feedback-menu, .discovery-feedback-menu:has(.discovery-feedback-popover) { opacity: 1; }
+.discovery-feedback-menu > .card-action-button { background: color-mix(in srgb, var(--card) 88%, transparent); backdrop-filter: blur(6px); }
+.modern-card:has(.discovery-feedback-menu) .modern-card-content { padding-right: 52px; }
+.discovery-feedback-popover { position: absolute; top: 34px; right: 0; display: grid; gap: 2px; width: 168px; padding: 8px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--card); box-shadow: var(--shadow-lg); color: var(--ink); font-size: 12px; }
+.discovery-feedback-popover strong, .discovery-feedback-popover span { padding: 4px 6px; color: var(--muted); font-size: 11px; font-weight: 600; }
+.discovery-feedback-popover button { min-height: 30px; padding: 5px 6px; border-radius: var(--radius-xs); color: var(--ink); text-align: left; }
+.discovery-feedback-popover button:hover, .discovery-feedback-popover button:focus-visible { background: var(--hover); }
 .discovery-card-labels { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
 .discovery-card-duration { color: var(--faint); font: 500 11px/1 var(--font-display); font-variant-numeric: tabular-nums; }
 .discovery-reason-badge { display: inline-flex; align-items: center; min-height: 18px; padding: 1px 6px; border: 1px solid var(--line-strong); border-radius: var(--radius-full); color: var(--faint); font-size: 10.5px; font-weight: 500; line-height: 1.25; white-space: nowrap; }

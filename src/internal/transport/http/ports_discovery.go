@@ -26,6 +26,13 @@ type DiscoveryBatchService interface {
 	Create(context.Context, discovery.BatchRequest) (discovery.BatchResponse, error)
 }
 
+type DiscoveryFeedbackService interface {
+	List(context.Context) ([]discovery.Feedback, error)
+	Save(context.Context, discovery.FeedbackInput) (discovery.Feedback, error)
+	Delete(context.Context, string) error
+	Clear(context.Context) error
+}
+
 type DiscoveryTopicService interface {
 	List(context.Context) ([]discovery.TopicRule, error)
 	Create(context.Context, discovery.TopicRuleEdit) (discovery.TopicRule, error)

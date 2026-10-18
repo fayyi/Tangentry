@@ -7,10 +7,10 @@ import type { GalleryCardContentProps } from './types'
 import { retryThroughProxy, sourceImageURL } from '../../media/sourceImage'
 import { AuthorAvatar, AuthorName, AuthorPublication } from '../CardAuthor'
 
-export function ImageGalleryCard({ item, origin, discoveryReason, discoveryType, saved, pending, onRead, onSave, status, excerpt, discovery = false }: GalleryCardContentProps) {
+export function ImageGalleryCard({ item, origin, discoveryReason, discoveryType, saved, pending, onRead, onSave, status, excerpt, discovery = false, onFeedback }: GalleryCardContentProps) {
   const { failed: coverFailed, setFailed: setCoverFailed } = useCardCover(item.thumbnailUrl)
   return (
-    <GalleryCardFrame item={item} origin={origin} discoveryReason={discoveryReason} className="card-image" onRead={onRead} status={status}>
+    <GalleryCardFrame item={item} origin={origin} discoveryReason={discoveryReason} className="card-image" onRead={onRead} status={status} onFeedback={discovery ? onFeedback : undefined}>
       <button className="modern-card-thumbnail" onClick={() => onRead(item)} aria-label={`查看图集 ${item.title}`}>
         {item.thumbnailUrl && !coverFailed ? (
           <img src={sourceImageURL(item, item.thumbnailUrl)} alt="" loading="lazy" referrerPolicy="no-referrer" onError={event => retryThroughProxy(event, item, item.thumbnailUrl) || setCoverFailed(true)} />

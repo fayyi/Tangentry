@@ -123,6 +123,7 @@ var errorResponses = []errorResponse{
 	{err: downloads.ErrTools, status: http.StatusServiceUnavailable, code: "tools_unavailable", message: "下载工具尚未准备好，请在工具设置中检查。"},
 	{err: content.ErrInvalid, status: http.StatusBadRequest, code: "invalid_input", message: "请输入正确的 UP 主 UID、B站主页地址或视频 BV 号 / 地址。"},
 	{err: discovery.ErrInvalidQuery, status: http.StatusBadRequest, code: "invalid_input", message: "请输入正确的 UP 主 UID、B站主页地址或视频 BV 号 / 地址。"},
+	{err: discovery.ErrInvalidFeedback, status: http.StatusBadRequest, code: "invalid_discovery_feedback", message: "请选择有效的发现反馈和目标。"},
 	{err: content.ErrNotFound, status: http.StatusNotFound, code: "not_found", message: "这条内容已经不在资料库中。"},
 	{err: discovery.ErrUnavailable, respond: platformUnavailable},
 }

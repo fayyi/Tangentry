@@ -121,6 +121,14 @@ export interface DiscoverySourceStatus {
   restricted?: boolean
   requiresVerification?: boolean
 }
+export interface DiscoveryFeedback {
+  id: string
+  type: 'more' | 'less' | 'hide' | 'block_creator'
+  target: 'item' | 'source' | 'creator' | 'topic'
+  value: string
+  expiresAt?: number
+  createdAt: number
+}
 export interface DiscoveryTopicRule {
   id: string
   name: string

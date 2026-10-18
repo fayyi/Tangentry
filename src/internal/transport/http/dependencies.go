@@ -36,6 +36,7 @@ type Options struct {
 	Recommendations         func(context.Context, string) (discovery.Feed, error)
 	RecommendationPage      func(context.Context, string, int) (discovery.Feed, error)
 	DiscoveryBatch          DiscoveryBatchService
+	DiscoveryFeedback       DiscoveryFeedbackService
 	DiscoveryTopics         DiscoveryTopicService
 	Documents               documents.Service
 	Imports                 func(context.Context, string, string) (discovery.Feed, error)
@@ -87,6 +88,7 @@ type DiscoveryDependencies struct {
 	Recommendations         func(context.Context, string) (discovery.Feed, error)
 	RecommendationPage      func(context.Context, string, int) (discovery.Feed, error)
 	DiscoveryBatch          DiscoveryBatchService
+	DiscoveryFeedback       DiscoveryFeedbackService
 	DiscoveryTopics         DiscoveryTopicService
 	Imports                 func(context.Context, string, string) (discovery.Feed, error)
 	LinuxdoPosts            func(context.Context, string, []int64) (content.Discussion, error)
