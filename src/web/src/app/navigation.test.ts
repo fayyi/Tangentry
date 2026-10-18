@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest'
 import type { ContentItem } from '../shared/api/types'
-import { readerPath, readerPathForItem } from './navigation'
+import { appPageLayers, readerPath, readerPathForItem, type View } from './navigation'
 
 const item = (overrides: Partial<ContentItem>): ContentItem => ({
   id: 'bilibili:dynamic:123', platform: 'bilibili', platformId: 'dynamic:123', kind: 'article',
@@ -17,4 +17,13 @@ test('B站视频使用 video 查询参数，其他动态使用 contentId', () =>
 test('动态内容的笔记链接不会被误判为视频', () => {
   expect(readerPath('bilibili:dynamic:123', '0123456789abcdef0123456789abcdef')).toBe('/reader?contentId=bilibili%3Adynamic%3A123&note=0123456789abcdef0123456789abcdef')
   expect(readerPath('bilibili:BV1abCDefgH1')).toBe('/reader?video=BV1abCDefgH1')
+})
+
+test('页面层将保活发现页与唯一活动页面分开', () => {
+  const journey: View[] = ['discovery', 'library', 'subscriptions', 'notes', 'library']
+  const actual = journey.map(view => appPageLayers(view, true))
+  expect(actual.map(layer => layer.activePage)).toEqual([null, 'library', 'subscriptions', 'notes', 'library'])
+  expect(actual.map(layer => layer.discoveryVisible)).toEqual([true, false, false, false, false])
+  expect(actual.every(layer => layer.mountDiscovery)).toBe(true)
+  expect(appPageLayers('discovery', false).mountDiscovery).toBe(true)
 })

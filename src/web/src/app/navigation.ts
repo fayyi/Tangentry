@@ -4,6 +4,16 @@ export type View = 'discovery' | 'podcasts' | 'bilibili' | 'search' | 'library' 
 export const viewPaths: Record<View, string> = { bilibili: '/bilibili', history: '/history', discovery: '/', podcasts: '/podcasts', search:'/search', library: '/library', subscriptions: '/subscriptions', downloads: '/downloads', tools: '/tools', reader: '/reader', notes: '/notes' }
 export const viewNames: Record<View, string> = { bilibili: 'B站', history: '历史', discovery: '发现', podcasts: '播客', search:'统一搜索', library: '收藏', subscriptions: '订阅', downloads: '下载', tools: '设置', reader: '阅读与播放', notes: '笔记' }
 export const viewFromURL = (): View => Object.entries(viewPaths).find(([, path]) => path === location.pathname)?.[0] as View ?? 'discovery'
+
+/** Model the cached discovery layer separately from the single active page layer. */
+export function appPageLayers(view: View, discoveryMounted: boolean) {
+  return {
+    mountDiscovery: discoveryMounted || view === 'discovery',
+    discoveryVisible: view === 'discovery',
+    activePage: view === 'discovery' ? null : view,
+  }
+}
+
 export const readerQueryFromURL = () => new URLSearchParams(location.search).get('video') ?? new URLSearchParams(location.search).get('contentId') ?? ''
 export const readerNoteFromURL = () => {
   const id = new URLSearchParams(location.search).get('note') ?? ''
