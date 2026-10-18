@@ -27,6 +27,14 @@ func TestDefaultPromptTemplatesAreRenderable(t *testing.T) {
 	}
 }
 
+func TestStatusPublishesAuthoritativeDefaultPromptTemplates(t *testing.T) {
+	defaults := DefaultPromptTemplates()
+	status := public(Config{Protocol: "openai", BaseURL: "https://example.com", Revision: 1})
+	if status.DefaultTemplates != defaults {
+		t.Fatalf("default templates drifted: got=%+v want=%+v", status.DefaultTemplates, defaults)
+	}
+}
+
 func TestChatModelRequiresExplicitConfiguration(t *testing.T) {
 	value := Config{Model: "bilibili/Index-Translate-35B-A3B", EnabledModels: []string{"bilibili/Index-Translate-35B-A3B", "general-chat"}}
 	if got := chatModel(value); got != "" {
