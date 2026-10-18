@@ -74,6 +74,7 @@ func contentIDValid(id string) bool {
 func summaryKey(in SummaryInput, segments []SummarySegment, prompts ...string) string {
 	prompt := defaultSummaryPrompt
 	budget := 28000
+	userPrompt := ""
 	if len(prompts) > 0 && strings.TrimSpace(prompts[0]) != "" {
 		prompt = strings.TrimSpace(prompts[0])
 	}
@@ -82,13 +83,17 @@ func summaryKey(in SummaryInput, segments []SummarySegment, prompts ...string) s
 			budget = value
 		}
 	}
+	if len(prompts) > 2 {
+		userPrompt = strings.TrimSpace(prompts[2])
+	}
 	return hashSource(struct {
-		Version  int
-		Source   string
-		Segments []SummarySegment
-		Prompt   string
-		Budget   int
-	}{summaryPromptVersion, in.Source, segments, prompt, budget})
+		Version    int
+		Source     string
+		Segments   []SummarySegment
+		Prompt     string
+		UserPrompt string
+		Budget     int
+	}{summaryPromptVersion, in.Source, segments, prompt, userPrompt, budget})
 }
 
 func summaryBudgetKey(budget int) string {

@@ -24,7 +24,7 @@ func New(root string, results ResultStore, provider Translator, summarizers ...S
 	path := filepath.Join(root, "settings.json")
 	data, err := os.ReadFile(path)
 	if err == nil {
-		if len(data) > 8192 || json.Unmarshal(data, &c) != nil || !validConfig(c) {
+		if len(data) > 128<<10 || json.Unmarshal(data, &c) != nil || !validConfig(c) {
 			return nil, ErrStorage
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -34,7 +34,12 @@ func New(root string, results ResultStore, provider Translator, summarizers ...S
 		c.Protocol = "openai"
 	}
 	if c.ChatModel == "" {
-		c.ChatModel = c.Model
+		c.ChatModel = chatModel(c)
+	} else if likelyTranslationModel(c.ChatModel) {
+		// Older settings used the first enabled model (often a translation-only
+		// model) as the implicit chat model. Recompute that implicit choice once.
+		c.ChatModel = ""
+		c.ChatModel = chatModel(c)
 	}
 	if len(c.EnabledModels) == 0 && c.Model != "" {
 		c.EnabledModels = []string{c.Model}

@@ -520,6 +520,18 @@ func TestSummaryKeyIncludesPromptAndBudget(t *testing.T) {
 	}
 }
 
+func TestSummaryKeyIncludesCustomUserTemplate(t *testing.T) {
+	in := SummaryInput{ContentID: "rss:key-user-template", Source: "article", Text: "正文"}
+	segments, err := normalizeSummaryInput(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := summaryKey(in, segments, "系统", "28000", "用户 {{content}}")
+	if base == summaryKey(in, segments, "系统", "28000", "另一套用户 {{content}}") {
+		t.Fatal("summary cache key ignored custom user template")
+	}
+}
+
 func TestSummaryOutlineValidationAndNormalization(t *testing.T) {
 	segments := []SummarySegment{{Index: 0, Start: 3, End: 5, Text: "段落"}}
 	draft := SummaryDraft{Overview: "概述", Points: []SummaryPoint{{Text: "要点", Indices: []int{0}}}, Outline: []SummaryOutline{{Title: "章节", Level: 0, Indices: []int{0}, Children: []SummaryOutline{{Title: "小节", Level: 1, Indices: []int{0}}}}}}

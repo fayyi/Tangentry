@@ -55,7 +55,7 @@ func (s *Service) chat(ctx context.Context, in ChatRequest, emit func(string) er
 	} else {
 		c.Model = chatModel(c)
 	}
-	if !validModel(c.Model) || (len(c.EnabledModels) > 0 && !containsModel(c.EnabledModels, c.Model)) {
+	if !ValidModelName(c.Model) || (len(c.EnabledModels) > 0 && !containsModel(c.EnabledModels, c.Model)) {
 		return ChatResult{}, ErrInvalid
 	}
 	if in.Revision != c.Revision {

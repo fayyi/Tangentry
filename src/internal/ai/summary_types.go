@@ -95,10 +95,11 @@ type SummaryInspection struct {
 }
 
 type SummaryRequest struct {
-	Mode     string
-	Prompt   string
-	Segments []SummarySegment
-	Drafts   []SummaryDraft
+	Mode       string
+	Prompt     string
+	UserPrompt string
+	Segments   []SummarySegment
+	Drafts     []SummaryDraft
 }
 
 type Summarizer interface {

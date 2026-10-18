@@ -102,7 +102,7 @@ func (c *Client) Chat(ctx context.Context, config ai.Config, source string, mess
 		return "", ai.ErrInvalid
 	}
 	chat := make([]map[string]string, 0, len(messages)+1)
-	chat = append(chat, map[string]string{"role": "system", "content": "你是 Tangentry 阅读助手。根据给定内容回答问题，无法确定时明确说明。" + source})
+	chat = append(chat, chatSystemMessage(config, source))
 	for _, message := range messages {
 		chat = append(chat, map[string]string{"role": message.Role, "content": message.Content})
 	}
@@ -118,7 +118,7 @@ func (c *Client) ChatStream(ctx context.Context, config ai.Config, source string
 		return ai.ErrInvalid
 	}
 	chat := make([]map[string]string, 0, len(messages)+1)
-	chat = append(chat, map[string]string{"role": "system", "content": "你是 Tangentry 阅读助手。根据给定内容回答问题，无法确定时明确说明。" + source})
+	chat = append(chat, chatSystemMessage(config, source))
 	for _, message := range messages {
 		chat = append(chat, map[string]string{"role": message.Role, "content": message.Content})
 	}
@@ -166,8 +166,17 @@ func (c *Client) ChatStream(ctx context.Context, config ai.Config, source string
 	return parseStream(response.Body, emit)
 }
 
+func chatSystemMessage(config ai.Config, source string) map[string]string {
+	templates := ai.PromptTemplatesFor(config)
+	content, err := ai.RenderPromptForProvider(templates.Chat.User, map[string]string{"title": "", "source_type": "当前阅读内容", "content": source, "target_language": "简体中文"})
+	if err != nil {
+		content = source
+	}
+	return map[string]string{"role": "system", "content": templates.Chat.System + "\n\n" + content}
+}
+
 func (c *Client) responsesStream(ctx context.Context, config ai.Config, chat []map[string]string, source string, emit func(string) error) error {
-	input := append([]map[string]string{{"role": "system", "content": "你是 Tangentry 阅读助手。根据给定内容回答问题，无法确定时明确说明。" + source}}, chat[1:]...)
+	input := append([]map[string]string{chatSystemMessage(config, source)}, chat[1:]...)
 	body, _ := json.Marshal(map[string]any{"model": config.Model, "stream": true, "input": input})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(config.BaseURL, "/")+"/responses", bytes.NewReader(body))
 	if err != nil {
