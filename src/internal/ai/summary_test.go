@@ -548,3 +548,30 @@ func TestSummaryOutlineValidationAndNormalization(t *testing.T) {
 		t.Fatal("invalid outline accepted")
 	}
 }
+
+func TestSummaryInputValidationBoundariesAndAutomaticCueShape(t *testing.T) {
+	automatic := make([]SummarySegment, 167)
+	for index := range automatic {
+		automatic[index] = SummarySegment{Index: index, Start: float64(index), End: float64(index + 1), Text: fmt.Sprintf("自动字幕 %d", index)}
+	}
+	segments, err := normalizeSummaryInput(SummaryInput{ContentID: "bilibili:BVfixture1234", Source: "subtitle", Segments: automatic})
+	if err != nil || len(segments) != 167 || segments[0].Index != 0 || segments[166].Index != 166 {
+		t.Fatalf("automatic subtitles rejected or reordered: %v %#v", err, segments)
+	}
+	oneMiB := strings.Repeat("a", maxSummaryTextBytes)
+	if _, err := normalizeSummaryInput(SummaryInput{ContentID: "rss:fixture", Source: "article:original", Text: oneMiB}); err != nil {
+		t.Fatalf("1 MiB text should be accepted: %v", err)
+	}
+	if _, err := normalizeSummaryInput(SummaryInput{ContentID: "rss:fixture", Source: "article:original", Text: oneMiB + "a"}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("text over 1 MiB was accepted: %v", err)
+	}
+	for _, invalid := range []SummaryInput{
+		{ContentID: "rss:fixture", Source: "article:original", Segments: []SummarySegment{{Index: 1, Text: "跳过 0"}}},
+		{ContentID: "rss:fixture", Source: "article:original", Segments: []SummarySegment{{Index: 0, Start: 2, End: 1, Text: "时间倒退"}}},
+		{ContentID: "rss:fixture", Source: "article:original", Segments: []SummarySegment{{Index: 0, Text: "   "}}},
+	} {
+		if _, err := normalizeSummaryInput(invalid); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("invalid cue accepted: %#v", invalid)
+		}
+	}
+}
