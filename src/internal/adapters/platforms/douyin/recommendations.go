@@ -73,6 +73,10 @@ func (c *Client) Recommendations(ctx context.Context, page int) (discovery.Feed,
 			if feed := mergeRecommendationFeeds(capturedFeeds, page, "抖音页面推荐"); len(feed.Items) > 0 {
 				return feed, nil
 			}
+			diagnostics = append(diagnostics, describeCapturePage(captured.PageURL, captured.Title, captured.Ready))
+			if (captured.PageURL != "" && !isDouyinPageURL(captured.PageURL)) || looksLikeLoginOrChallenge(captured.Title) {
+				return discovery.Feed{}, &discovery.PlatformError{Restricted: true, Message: "抖音推荐需要在应用内完成抖音验证：" + joinDiagnostics(diagnostics, "隐藏页面停留在登录或验证页，请点击重新验证后重试。")}
+			}
 			if len(captured.Responses) == 0 {
 				diagnostics = append(diagnostics, "页面未捕获到推荐 feed 请求（页面状态："+captured.Ready+"）")
 			}
@@ -96,10 +100,13 @@ func (c *Client) Recommendations(ctx context.Context, page int) (discovery.Feed,
 					return feed, nil
 				}
 				if decodeErr != nil {
-					diagnostics = append(diagnostics, "页面 fetch JSON 解析失败："+decodeErr.Error())
+					diagnostics = append(diagnostics, "页面 fetch JSON 解析失败："+decodeErr.Error()+"；"+describePageResponse(response.Status, response.Body, response.Restricted, response.ContentType, response.URL))
 				}
 			} else {
-				diagnostics = append(diagnostics, describePageResponse(response.Status, response.Body, response.Restricted))
+				diagnostics = append(diagnostics, describePageResponse(response.Status, response.Body, response.Restricted, response.ContentType, response.URL))
+				if response.Restricted || looksLikeChallenge([]byte(response.Body)) || looksLikeLoginOrChallenge(response.Body) {
+					return discovery.Feed{}, &discovery.PlatformError{Restricted: true, Message: "抖音推荐需要在应用内完成抖音验证：" + joinDiagnostics(diagnostics, "请点击重新验证后重试。")}
+				}
 			}
 		} else {
 			diagnostics = append(diagnostics, "页面 fetch 执行失败："+err.Error())
@@ -189,7 +196,8 @@ func (c *Client) Recommendations(ctx context.Context, page int) (discovery.Feed,
 	}
 	feed, err := decodeRecommendations(body, page, nil)
 	if err != nil {
-		return discovery.Feed{}, denied
+		diagnostics = append(diagnostics, describePageResponse(res.StatusCode, string(body), false, res.Header.Get("Content-Type"), res.Request.URL.String()))
+		return discovery.Feed{}, &discovery.PlatformError{Restricted: true, Message: "抖音推荐不可用：" + joinDiagnostics(diagnostics, "网页 Cookie 请求未返回可解析的推荐。")}
 	}
 	return feed, nil
 }
@@ -251,14 +259,74 @@ func (c *Client) mobileRecommendations(ctx context.Context, page int, cookie str
 	return discovery.Feed{}, lastErr
 }
 
-func describePageResponse(status int, body string, restricted bool) string {
-	if restricted || looksLikeChallenge([]byte(body)) {
-		return fmt.Sprintf("页面响应 HTTP %d，内容疑似登录/验证页", status)
+func describePageResponse(status int, body string, restricted bool, contentType, responseURL string) string {
+	preview := diagnosticPreview(body)
+	if restricted || looksLikeChallenge([]byte(body)) || looksLikeLoginOrChallenge(body) {
+		return fmt.Sprintf("页面响应 HTTP %d，Content-Type %q，最终 URL %s，内容疑似登录/验证页，前200字符：%s", status, contentType, safeDiagnosticURL(responseURL), preview)
 	}
 	if body == "" {
-		return fmt.Sprintf("页面响应 HTTP %d，body 为空", status)
+		return fmt.Sprintf("页面响应 HTTP %d，Content-Type %q，最终 URL %s，body 为空", status, contentType, safeDiagnosticURL(responseURL))
 	}
-	return fmt.Sprintf("页面响应 HTTP %d，未返回可解析推荐", status)
+	return fmt.Sprintf("页面响应 HTTP %d，Content-Type %q，最终 URL %s，未返回可解析推荐，前200字符：%s", status, contentType, safeDiagnosticURL(responseURL), preview)
+}
+
+func describeCapturePage(pageURL, title, ready string) string {
+	if strings.TrimSpace(pageURL) == "" {
+		pageURL = "(未知)"
+	} else {
+		pageURL = safeDiagnosticURL(pageURL)
+	}
+	pageTitle := strings.TrimSpace(title)
+	if pageTitle == "" {
+		pageTitle = "(无标题)"
+	}
+	return fmt.Sprintf("隐藏页面最终 URL %s，标题 %q，ready=%s", pageURL, redactDiagnostic(pageTitle), ready)
+}
+
+func diagnosticPreview(body string) string {
+	value := strings.TrimSpace(body)
+	if len(value) > 200 {
+		value = value[:200]
+	}
+	return redactDiagnostic(value)
+}
+
+func redactDiagnostic(value string) string {
+	var out strings.Builder
+	for i := 0; i < len(value); {
+		if i+8 <= len(value) && isDiagnosticTokenStart(value[i]) {
+			j := i + 1
+			for j < len(value) && isDiagnosticTokenChar(value[j]) {
+				j++
+			}
+			if j-i >= 32 {
+				out.WriteString("[已脱敏]")
+				i = j
+				continue
+			}
+		}
+		out.WriteByte(value[i])
+		i++
+	}
+	return out.String()
+}
+
+func isDiagnosticTokenStart(value byte) bool {
+	return (value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z') || (value >= '0' && value <= '9') || value == '_' || value == '-'
+}
+
+func isDiagnosticTokenChar(value byte) bool {
+	return isDiagnosticTokenStart(value) || value == '.' || value == '~'
+}
+
+func safeDiagnosticURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return "(未知)"
+	}
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String()
 }
 
 func isDouyinPageURL(raw string) bool {

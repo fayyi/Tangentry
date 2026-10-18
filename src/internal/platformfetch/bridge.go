@@ -11,10 +11,11 @@ type Request struct {
 }
 
 type Response struct {
-	Status     int
-	Body       string
-	Restricted bool
-	URL        string
+	Status      int
+	Body        string
+	Restricted  bool
+	URL         string
+	ContentType string
 }
 
 type Fetcher interface {

@@ -21,6 +21,8 @@ const (
 	platformFetchMaxBody = 4 << 20
 	platformFetchTimeout = 20 * time.Second
 	platformFetchIdle    = 5 * time.Minute
+	douyinCapturePoll    = 200 * time.Millisecond
+	douyinCaptureReads   = 6
 )
 
 type platformPageBridge struct {
@@ -47,9 +49,9 @@ const douyinFeedCaptureScript = `(function(){
   window.__tangentryDouyinFeed = window.__tangentryDouyinFeed || [];
   const max = 4 * 1024 * 1024;
   const isFeed = value => /\/aweme\/(?:v1|v2)\/[^?]*feed/i.test(String(value || ''));
-  const push = (url, status, body) => {
+  const push = (url, status, contentType, body) => {
     if (!isFeed(url) || typeof body !== 'string' || !body || body.length > max) return;
-    window.__tangentryDouyinFeed.push({url:String(url), status:Number(status)||0, body:body});
+    window.__tangentryDouyinFeed.push({url:String(url), status:Number(status)||0, contentType:String(contentType || ''), body:body});
     if (window.__tangentryDouyinFeed.length > 32) window.__tangentryDouyinFeed.splice(0, window.__tangentryDouyinFeed.length - 32);
   };
   const originalFetch = window.fetch;
@@ -58,7 +60,7 @@ const douyinFeedCaptureScript = `(function(){
     const url = typeof request === 'string' ? request : request && request.url;
     return originalFetch.apply(this, arguments).then(response => {
       if (!isFeed(url || response.url)) return response;
-      try { response.clone().text().then(body => push(url || response.url, response.status, body)).catch(() => {}); } catch (_) {}
+      try { const contentType = response.headers && response.headers.get ? response.headers.get('content-type') : ''; response.clone().text().then(body => push(url || response.url, response.status, contentType, body)).catch(() => {}); } catch (_) {}
       return response;
     });
   };
@@ -66,10 +68,16 @@ const douyinFeedCaptureScript = `(function(){
   const send = XMLHttpRequest.prototype.send;
   XMLHttpRequest.prototype.open = function(method, url){ this.__tangentryURL = url; return open.apply(this, arguments); };
   XMLHttpRequest.prototype.send = function(){
-    this.addEventListener('load', function(){ try { const body = this.responseType === 'json' ? JSON.stringify(this.response) : this.responseText; push(this.__tangentryURL || this.responseURL, this.status, body); } catch (_) {} });
+    this.addEventListener('load', function(){ try { const body = this.responseType === 'json' ? JSON.stringify(this.response) : this.responseText; push(this.__tangentryURL || this.responseURL, this.status, this.getResponseHeader('content-type'), body); } catch (_) {} });
     return send.apply(this, arguments);
   };
 })();`
+
+const douyinFeedClearScript = `(function(){ if (window.__tangentryDouyinFeed) window.__tangentryDouyinFeed.splice(0); return true; })();`
+
+const douyinFeedScrollScript = `(function(){ window.scrollTo(0, document.body ? document.body.scrollHeight : 0); return {pageUrl: location.href, title: document.title || "", ready: document.readyState}; })();`
+
+const douyinFeedReadScript = `(function(){ return {pageUrl: location.href, title: document.title || "", ready: document.readyState, responses: (window.__tangentryDouyinFeed || []).splice(0, 32)}; })();`
 
 func newPlatformPageBridge() *platformPageBridge {
 	return &platformPageBridge{sessions: make(map[string]*platformPageSession)}
@@ -108,7 +116,7 @@ func (b *platformPageBridge) Fetch(ctx context.Context, platform, path string, r
 	if err != nil {
 		return app.PlatformPageResponse{}, err
 	}
-	rawResult, err := session.window.Page().EvalContext(ctx, code)
+	rawResult, err := evalPageWithRetry(ctx, session.window.Page(), code)
 	if err != nil {
 		return app.PlatformPageResponse{}, err
 	}
@@ -136,7 +144,11 @@ func (b *platformPageBridge) Fetch(ctx context.Context, platform, path string, r
 			}
 		})
 	}
-	return app.PlatformPageResponse{Status: result.Status, Body: result.Body, Restricted: isCloudflarePage(result.Status, result.Body), URL: session.window.Page().URL()}, nil
+	responseURL := result.URL
+	if responseURL == "" {
+		responseURL = session.window.Page().URL()
+	}
+	return app.PlatformPageResponse{Status: result.Status, Body: result.Body, Restricted: isCloudflarePage(result.Status, result.Body), URL: responseURL, ContentType: result.ContentType}, nil
 }
 
 func (b *platformPageBridge) CaptureFeed(ctx context.Context, platform string, pages int) (platformfetch.FeedCaptureResponse, error) {
@@ -161,34 +173,52 @@ func (b *platformPageBridge) CaptureFeed(ctx context.Context, platform string, p
 		session.closeAt = nil
 	}
 	session.blockedNavigation.Store("")
-	code := feedCaptureScript(pages)
-	raw, err := session.window.Page().EvalContext(ctx, code)
-	if err != nil {
+	if _, err := evalPageWithRetry(ctx, session.window.Page(), douyinFeedClearScript); err != nil && ctx.Err() != nil {
 		return platformfetch.FeedCaptureResponse{}, err
 	}
-	encoded, err := json.Marshal(raw)
-	if err != nil {
-		return platformfetch.FeedCaptureResponse{}, err
+	result := douyinCaptureResult{}
+	var lastErr error
+	for i := 0; i < pages; i++ {
+		if scroll, err := evalPageWithRetry(ctx, session.window.Page(), douyinFeedScrollScript); err == nil {
+			_ = decodeDouyinCaptureResult(scroll, &result)
+		} else {
+			lastErr = err
+		}
+		for read := 0; read < douyinCaptureReads; read++ {
+			if err := waitCapturePoll(ctx); err != nil {
+				return platformfetch.FeedCaptureResponse{}, err
+			}
+			before := len(result.Responses)
+			if raw, err := evalPageWithRetry(ctx, session.window.Page(), douyinFeedReadScript); err == nil {
+				_ = decodeDouyinCaptureResult(raw, &result)
+			} else {
+				lastErr = err
+			}
+			if len(result.Responses) > before {
+				break
+			}
+		}
 	}
-	var result struct {
-		PageURL   string `json:"pageUrl"`
-		Title     string `json:"title"`
-		Ready     string `json:"ready"`
-		Responses []struct {
-			URL    string `json:"url"`
-			Status int    `json:"status"`
-			Body   string `json:"body"`
-		} `json:"responses"`
+	for attempts := 0; attempts < 2; attempts++ {
+		if err := waitCapturePoll(ctx); err != nil {
+			return platformfetch.FeedCaptureResponse{}, err
+		}
+		raw, err := evalPageWithRetry(ctx, session.window.Page(), douyinFeedReadScript)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		_ = decodeDouyinCaptureResult(raw, &result)
 	}
-	if err := json.Unmarshal(encoded, &result); err != nil {
-		return platformfetch.FeedCaptureResponse{}, err
+	if len(result.Responses) == 0 && lastErr != nil && ctx.Err() != nil {
+		return platformfetch.FeedCaptureResponse{}, lastErr
 	}
 	responses := make([]platformfetch.Response, 0, len(result.Responses))
 	for _, response := range result.Responses {
 		if len(response.Body) > platformFetchMaxBody {
 			continue
 		}
-		responses = append(responses, platformfetch.Response{Status: response.Status, Body: response.Body, URL: response.URL, Restricted: isCloudflarePage(response.Status, response.Body)})
+		responses = append(responses, platformfetch.Response{Status: response.Status, Body: response.Body, URL: response.URL, ContentType: response.ContentType, Restricted: isCloudflarePage(response.Status, response.Body)})
 	}
 	if session.closeAt == nil {
 		session.closeAt = time.AfterFunc(platformFetchIdle, func() {
@@ -208,6 +238,86 @@ func (b *platformPageBridge) CaptureFeed(ctx context.Context, platform string, p
 		pageURL = blocked
 	}
 	return platformfetch.FeedCaptureResponse{Responses: responses, PageURL: pageURL, Title: result.Title, Ready: result.Ready}, nil
+}
+
+type douyinCaptureResponse struct {
+	URL         string `json:"url"`
+	Status      int    `json:"status"`
+	ContentType string `json:"contentType"`
+	Body        string `json:"body"`
+}
+
+type douyinCaptureResult struct {
+	PageURL   string                  `json:"pageUrl"`
+	Title     string                  `json:"title"`
+	Ready     string                  `json:"ready"`
+	Responses []douyinCaptureResponse `json:"responses"`
+}
+
+func decodeDouyinCaptureResult(raw any, result *douyinCaptureResult) error {
+	encoded, err := json.Marshal(raw)
+	if err != nil {
+		return err
+	}
+	var current douyinCaptureResult
+	if err := json.Unmarshal(encoded, &current); err != nil {
+		return err
+	}
+	if current.PageURL != "" {
+		result.PageURL = current.PageURL
+	}
+	if current.Title != "" {
+		result.Title = current.Title
+	}
+	if current.Ready != "" {
+		result.Ready = current.Ready
+	}
+	result.Responses = append(result.Responses, current.Responses...)
+	return nil
+}
+
+func waitCapturePoll(ctx context.Context) error {
+	timer := time.NewTimer(douyinCapturePoll)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func evalPageWithRetry(ctx context.Context, page *mygo.Page, code string) (any, error) {
+	return evalWithRetry(ctx, page.EvalContext, code)
+}
+
+func evalWithRetry(ctx context.Context, eval func(context.Context, string) (any, error), code string) (any, error) {
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		result, err := eval(ctx, code)
+		if err == nil {
+			return result, nil
+		}
+		lastErr = err
+		if !isPageContextGoneError(err) {
+			return nil, err
+		}
+		if err := waitCapturePoll(ctx); err != nil {
+			return nil, err
+		}
+	}
+	return nil, lastErr
+}
+
+func isPageContextGoneError(err error) bool {
+	if err == nil {
+		return false
+	}
+	value := strings.ToLower(err.Error())
+	return strings.Contains(value, "completion handler") || strings.Contains(value, "context") && (strings.Contains(value, "destroy") || strings.Contains(value, "navigation") || strings.Contains(value, "reachable"))
 }
 
 func (b *platformPageBridge) session(platform, origin string) (*platformPageSession, error) {
@@ -366,9 +476,11 @@ func validatePlatformFetchResponse(result platformFetchResult) error {
 }
 
 type platformFetchResult struct {
-	Status   int    `json:"status"`
-	Body     string `json:"body"`
-	TooLarge bool   `json:"tooLarge"`
+	Status      int    `json:"status"`
+	Body        string `json:"body"`
+	TooLarge    bool   `json:"tooLarge"`
+	URL         string `json:"url"`
+	ContentType string `json:"contentType"`
 }
 
 func platformFetchScript(path string, request app.PlatformPageRequest) (string, error) {
@@ -389,11 +501,7 @@ func platformFetchScript(path string, request app.PlatformPageRequest) (string, 
 	if request.Method != "GET" && request.Method != "HEAD" {
 		bodyOption = ", body:" + string(body)
 	}
-	return fmt.Sprintf(`const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), %d); try { return await fetch(location.origin + %s, {method:%s, headers:%s, credentials:"include"%s, signal:controller.signal}).then(async response => { const max=%d; if (!response.body) { const body=await response.text(); return {status:response.status, body:body.length>max?"":body, tooLarge:body.length>max}; } const reader=response.body.getReader(); const decoder=new TextDecoder(); let body="", bytes=0; try { for (;;) { const part=await reader.read(); if (part.done) break; bytes+=part.value.byteLength; if (bytes>max) { await reader.cancel(); return {status:response.status, body:"", tooLarge:true}; } body+=decoder.decode(part.value,{stream:true}); } body+=decoder.decode(); return {status:response.status, body:body, tooLarge:false}; } finally { reader.releaseLock(); } }); } finally { clearTimeout(timer); }`, platformFetchTimeout.Milliseconds(), pathJSON, method, headers, bodyOption, platformFetchMaxBody), nil
-}
-
-func feedCaptureScript(pages int) string {
-	return fmt.Sprintf(`const wait = ms => new Promise(resolve => setTimeout(resolve, ms)); const count = %d; if (window.__tangentryDouyinFeed) window.__tangentryDouyinFeed.splice(0); for (let i=0; i<count; i++) { window.scrollTo(0, document.body ? document.body.scrollHeight : 0); await wait(1200); } await wait(800); return {pageUrl: location.href, title: document.title || "", ready: document.readyState, responses: (window.__tangentryDouyinFeed || []).splice(0, 32)};`, pages)
+	return fmt.Sprintf(`const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), %d); try { return await fetch(location.origin + %s, {method:%s, headers:%s, credentials:"include"%s, signal:controller.signal}).then(async response => { const max=%d; const meta={status:response.status, url:response.url || "", contentType:response.headers.get("content-type") || ""}; if (!response.body) { const body=await response.text(); return {...meta, body:body.length>max?"":body, tooLarge:body.length>max}; } const reader=response.body.getReader(); const decoder=new TextDecoder(); let body="", bytes=0; try { for (;;) { const part=await reader.read(); if (part.done) break; bytes+=part.value.byteLength; if (bytes>max) { await reader.cancel(); return {...meta, body:"", tooLarge:true}; } body+=decoder.decode(part.value,{stream:true}); } body+=decoder.decode(); return {...meta, body:body, tooLarge:false}; } finally { reader.releaseLock(); } }); } finally { clearTimeout(timer); }`, platformFetchTimeout.Milliseconds(), pathJSON, method, headers, bodyOption, platformFetchMaxBody), nil
 }
 
 func isCloudflarePage(status int, body string) bool {

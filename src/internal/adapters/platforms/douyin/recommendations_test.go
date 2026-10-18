@@ -80,6 +80,45 @@ func TestRecommendationCloudflareChallengeRequestsRevalidation(t *testing.T) {
 	}
 }
 
+func TestRecommendationDiagnosticsRedactTokensAndDescribeResponse(t *testing.T) {
+	body := `{"message":"captcha token abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"}`
+	diagnostic := describePageResponse(http.StatusOK, body, false, "text/html", "https://www.douyin.com/aweme/v2/web/module/feed/?msToken=secret")
+	if !strings.Contains(diagnostic, "HTTP 200") || !strings.Contains(diagnostic, "text/html") || !strings.Contains(diagnostic, "https://www.douyin.com/aweme/v2/web/module/feed/") {
+		t.Fatalf("diagnostic missing context: %s", diagnostic)
+	}
+	if strings.Contains(diagnostic, "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ") || strings.Contains(diagnostic, "msToken=secret") {
+		t.Fatalf("diagnostic leaked token: %s", diagnostic)
+	}
+}
+
+func TestRecommendationVerificationResponseIsRestricted(t *testing.T) {
+	c := &Client{Page: pageFetcherFunc(func(context.Context, string, string, platformfetch.Request) (platformfetch.Response, error) {
+		return platformfetch.Response{Status: http.StatusOK, Body: `<html><title>登录</title><body>captcha verify</body></html>`, ContentType: "text/html", URL: "https://passport.douyin.com/login"}, nil
+	}), Cookie: func(string) string { return "sessionid=fixture" }, HTTP: &http.Client{Transport: trip(func(*http.Request) (*http.Response, error) {
+		t.Fatal("restricted page response should stop before cookie fallback")
+		return nil, nil
+	})}}
+	_, err := c.Recommendations(context.Background(), 1)
+	var platform *discovery.PlatformError
+	if !errors.As(err, &platform) || !platform.Restricted || !strings.Contains(platform.Message, "需要在应用内完成抖音验证") {
+		t.Fatalf("verification response was not mapped to restricted: %v", err)
+	}
+}
+
+func TestRecommendationCaptureLoginPageIncludesFinalLocation(t *testing.T) {
+	c := &Client{
+		Page: captureFetcherFunc(func(context.Context, string, int) (platformfetch.FeedCaptureResponse, error) {
+			return platformfetch.FeedCaptureResponse{PageURL: "https://passport.douyin.com/login?next=feed", Title: "登录抖音", Ready: "complete"}, nil
+		}),
+		Cookie: func(string) string { t.Fatal("login page should stop before cookie fallback"); return "" },
+	}
+	_, err := c.Recommendations(context.Background(), 1)
+	var platform *discovery.PlatformError
+	if !errors.As(err, &platform) || !platform.Restricted || !strings.Contains(platform.Message, "passport.douyin.com/login") || !strings.Contains(platform.Message, "登录抖音") || !strings.Contains(platform.Message, "需要在应用内完成抖音验证") {
+		t.Fatalf("login page diagnostics missing: %v", err)
+	}
+}
+
 func TestRecommendationNestedPayloadAndAuthorAvatar(t *testing.T) {
 	raw, err := douyinFixtures.ReadFile("testdata/recommendations.json")
 	if err != nil {
