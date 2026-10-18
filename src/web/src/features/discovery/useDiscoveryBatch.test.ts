@@ -83,6 +83,9 @@ test('keeps a refreshed batch pageable only when both continuation fields exist'
 test('maps discovery load-more states and preserves backend end reasons', () => {
   const batch = { batchId: 'batch', items: [entry('a')], hasNextBatch: false, endReason: '部分来源暂不可用（youtube），暂时没有更多了', reason: 'x', sourceStatus: {} }
   expect(discoveryBottomState('', false, batch, 1)).toEqual({ kind: 'ended', message: batch.endReason })
+  expect(discoveryBottomState('', false, { ...batch, items: [] }, 0)).toEqual({ kind: 'ended', message: batch.endReason })
+  expect(discoveryBottomState('', false, batch, 0)).toEqual({ kind: 'filtered', message: '当前筛选没有匹配的内容，请调整筛选条件。' })
+  expect(discoveryBottomState('', false, { ...batch, hasNextBatch: true, nextCursor: 'next' }, 0)).toEqual({ kind: 'filtered', message: '当前筛选没有匹配的内容，请调整筛选条件。' })
   expect(discoveryBottomState('请求失败', false, batch, 1)).toEqual({ kind: 'error', message: '请求失败' })
   expect(discoveryBottomState('', true, batch, 1)).toEqual({ kind: 'loading' })
   expect(discoveryBottomState('', false, { ...batch, hasNextBatch: true, nextCursor: 'next' }, 1)).toEqual({ kind: 'more' })

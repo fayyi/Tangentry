@@ -1,4 +1,4 @@
-import { ArrowLeft, BookOpen, Download, ExternalLink, PanelRightClose, PanelRightOpen, RotateCw, StickyNote } from 'lucide-react'
+import { ArrowLeft, BookOpen, Download, ExternalLink, PanelRightClose, PanelRightOpen, RotateCw, StickyNote, UserRound } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode, RefObject } from 'react'
 import type { ContentItem, Discussion, DownloadJob, ReadingNote, TextAnchor, PDFAnchor } from '../../shared/api/types'
@@ -25,7 +25,6 @@ import { ReaderPublication } from './ReaderPublication'
 import { PaperInfoCard } from '../documents/PaperInfoCard'
 import { DiscussionReader } from './DiscussionReader'
 import { DiscussionFallback } from './DiscussionFallback'
-import { creatorViewSupported } from '../../shared/ui/cardHelpers'
 import { useReaderContent } from './useReaderContent'
 import { openDesktopPlatformLogin, useCapabilities } from '../../shared/api/desktop'
 import './reader.css'
@@ -196,7 +195,7 @@ export function MediaReader({ id, initialItem, jobs, jobsLoading = false, video,
     : null
   const videoLayout = Boolean(video || item?.kind === 'video')
   const audioLayout = item?.kind === 'audio'
-  const heading = <>{item ? <BilingualTitle heading contentId={item.id} text={item.title}/> : <h1>内容阅读</h1>}{item && <p className="reading-meta">{item.authorId && onCreator && creatorViewSupported(item.platform) ? <button type="button" className="reader-author-link" aria-label={`查看 ${item.author || '未知作者'} 的最近内容`} title={`查看 ${item.author || '未知作者'} 的最近内容`} onClick={() => onCreator(item.platform, item.authorId)}>{item.author || '未知作者'}</button> : item.author || '未知作者'} · <ReaderPublication key={item.id} item={item}/></p>}</>
+  const heading = <>{item ? <BilingualTitle heading contentId={item.id} text={item.title}/> : <h1>内容阅读</h1>}{item && <p className="reading-meta">{item.author||'未知作者'} {item.authorId && onCreator && <button type="button" className="creator-link" onClick={() => onCreator(item.platform, item.authorId)}><UserRound size={13}/>看看 TA 最近</button>} · <ReaderPublication key={item.id} item={item}/></p>}</>
   const player = video ? <ResizableReaderPlayer>{video}</ResizableReaderPlayer> : null
   const videoDetails = <div className="watch-details">{heading}{description}</div>
   const onlineVideoRequired = Boolean(item?.kind === 'video' && !video && !local && ((item.platform === 'rss' || item.platform === 'xiaohongshu') && item.mediaUrl || item.platform === 'douyin'))

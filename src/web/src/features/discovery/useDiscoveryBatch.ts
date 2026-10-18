@@ -54,6 +54,7 @@ export type DiscoveryBottomState =
   | { kind: 'loading' }
   | { kind: 'more' }
   | { kind: 'ended'; message: string }
+  | { kind: 'filtered'; message: string }
   | { kind: 'empty' }
 
 /** A batch is pageable only when the server supplied both continuation signals. */
@@ -76,7 +77,11 @@ export function shouldRequestDiscoveryNextBatch(active: boolean, session: Pick<D
 export function discoveryBottomState(error: string, loading: boolean, batch: DiscoveryBatchResponse | null, itemCount: number): DiscoveryBottomState {
   if (error) return { kind: 'error', message: error }
   if (loading) return { kind: 'loading' }
+  // A populated batch with no visible items means the active filters hid it;
+  // do not present that as an exhausted feed.
+  if (itemCount === 0 && (batch?.items.length ?? 0) > 0) return { kind: 'filtered', message: '当前筛选没有匹配的内容，请调整筛选条件。' }
   if (hasDiscoveryContinuation(batch)) return { kind: 'more' }
+  if (batch?.endReason?.trim()) return { kind: 'ended', message: batch.endReason.trim() }
   if (itemCount > 0) return { kind: 'ended', message: batch?.endReason?.trim() || '暂时没有更多了' }
   return { kind: 'empty' }
 }

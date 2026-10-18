@@ -86,6 +86,8 @@
 .unified-search-group { margin-top: 28px; }
 .unified-search-group .results-heading { margin-bottom: 12px; }
 .unified-search-card { min-width: 0; }
+.creator-link { display: inline-flex; align-items: center; gap: 5px; margin-top: 6px; color: var(--muted); font-size: 12px; }
+.creator-link:disabled { opacity: .45; }
 .search-mixed-summary { margin-top: 24px; color: var(--faint); font-size: 12px; }
 .creator-temporary-view { display: grid; gap: 18px; }
 .creator-temporary-view > .results-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
