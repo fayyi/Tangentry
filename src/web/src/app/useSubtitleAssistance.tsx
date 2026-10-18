@@ -7,7 +7,8 @@ import type { SubtitleTrack } from '../shared/api/types'
 import type { SubtitleAssistance } from '../shared/ui/subtitleAssistance'
 import { ReaderActions } from '../shared/reader/ReaderActions'
 export function useSubtitleAssistance(contentId: string, track: SubtitleTrack | null, onSeek?: (seconds: number) => void, source?: SummarySource, showSummary = true): SubtitleAssistance | undefined {
-  const translation = useSubtitleTranslation(contentId, track ?? undefined)
-  const summary = useSummary(contentId, 'subtitle', track ?? undefined, onSeek)
-  return track ? { track, controls: <><SubtitleTranslation translation={translation} />{showSummary && <ReaderActions><SummaryControl summary={summary} source={source}/></ReaderActions>}</>, texts: translation.show ? translation.inspection?.result.texts : undefined, summary } : undefined
+  const usableTrack = track?.cues.length ? track : null
+  const translation = useSubtitleTranslation(contentId, usableTrack ?? undefined)
+  const summary = useSummary(contentId, 'subtitle', usableTrack ?? undefined, onSeek)
+  return usableTrack ? { track: usableTrack, controls: <><SubtitleTranslation translation={translation} />{showSummary && <ReaderActions><SummaryControl summary={summary} source={source}/></ReaderActions>}</>, texts: translation.show ? translation.inspection?.result.texts : undefined, summary } : undefined
 }

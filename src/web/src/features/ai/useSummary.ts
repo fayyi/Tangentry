@@ -2,18 +2,28 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { request } from '../../shared/api/client'
 import type { SubtitleTrack } from '../../shared/api/types'
 import type { SummaryInspection, SummaryResult } from './summaryTypes'
+import { summaryGenerationBlockedReason } from './summaryPresentation'
 import { usePageVisibility } from '../../shared/hooks/usePageVisibility'
 import { notifyNotesChanged } from '../notes/changes'
 
 export interface SummarySegmentInput { index: number; start?: number; end?: number; page?: number; text: string }
+export interface SummaryInput { contentId: string; source: string; revision: number; text?: string; segments?: SummarySegmentInput[] }
 
-export function summaryInputFromTrack(contentId: string, source: string, track: SubtitleTrack): { contentId: string; source: string; segments: SummarySegmentInput[]; revision: number } {
+export function summaryInputFromTrack(contentId: string, source: string, track: SubtitleTrack): SummaryInput | null {
+  if (!track.cues.length) return null
   return { contentId, source, segments: track.cues.map((cue, index) => ({ index, start: cue.start, end: cue.end, text: cue.text })), revision: 0 }
+}
+
+export function summaryInputFromText(contentId: string, source: string, text?: string): SummaryInput | null {
+  return text?.trim() ? { contentId, source, text, revision: 0 } : null
 }
 
 export function useSummary(contentId: string, source: string, track?: SubtitleTrack, onSeek?: (seconds: number) => void, text?: string, segments?: SummarySegmentInput[]) {
   const visible = usePageVisibility()
-  const input = useMemo(() => track ? summaryInputFromTrack(contentId, source, track) : segments?.length ? { contentId, source, segments, revision: 0 } : text?.trim() ? { contentId, source, text, revision: 0 } : null, [contentId, source, track, text, segments])
+  const input = useMemo(() => {
+    const trackInput = track ? summaryInputFromTrack(contentId, source, track) : null
+    return trackInput ?? (segments?.length ? { contentId, source, segments, revision: 0 } : summaryInputFromText(contentId, source, text))
+  }, [contentId, source, track, text, segments])
   const scope = useMemo(() => input ? JSON.stringify(input) : '', [input])
   const liveScope = useRef(scope); liveScope.current = scope
   const [inspection, setInspection] = useState<SummaryInspection | null>(null)
@@ -74,7 +84,17 @@ export function useSummary(contentId: string, source: string, track?: SubtitleTr
   }, [visible, pending, loading, error, dataScope, scope, inspection])
   // regenerate replaces the stored summary with one from the current model.
   async function generate(regenerate = false) {
-    if (!input || !inspection || dataScope !== scope || loading || pending || mutation.current || inspection.active || inspection.settings.translating || !(inspection.settings.summaryReady ?? inspection.settings.ready)) return
+    const blockReason = summaryGenerationBlockedReason({
+      hasInput: Boolean(input), hasInspection: Boolean(inspection), scopeCurrent: dataScope === scope,
+      loading, pending, mutationPending: Boolean(mutation.current), active: Boolean(inspection?.active),
+      translating: Boolean(inspection?.settings.translating), ready: Boolean(inspection && (inspection.settings.summaryReady ?? inspection.settings.ready)),
+    })
+    if (blockReason) {
+      setNotice(blockReason)
+      if (input && !loading && !pending && !mutation.current && (!inspection || dataScope !== scope || inspection.active || inspection.settings.translating || !(inspection.settings.summaryReady ?? inspection.settings.ready))) void reload()
+      return
+    }
+    if (!input || !inspection) return
     const controller = new AbortController(); mutation.current = controller; const requestedScope = scope; const snapshot = inspection
     setPending(true); setError(''); setNotice('')
     if (regenerate) setInspection({ ...snapshot, result: { ...snapshot.result, complete: false, completedCalls: 0, overview: undefined, points: undefined, citations: undefined } })

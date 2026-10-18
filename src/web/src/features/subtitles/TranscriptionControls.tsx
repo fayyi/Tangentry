@@ -54,7 +54,7 @@ export function TranscriptionControls({ contentId, onComplete, video = false }: 
   const cloud = activeBackend === 'groq' || activeBackend === 'cloudflare' || activeBackend === 'siliconflow' || activeBackend === 'mai'
   const provider = activeBackend === 'groq' ? 'Groq' : activeBackend === 'siliconflow' ? '硅基流动' : activeBackend === 'mai' ? 'Microsoft Playground' : 'Cloudflare'
   const allowed = ready && (!cloud || uploadConsent)
-  return <div className="transcription-controls">
+  return <div className="transcription-controls" data-transcription-control>
     <div className="podcast-transcription-tools"><span><Mic size={14}/>{cloud ? `${provider} 转录` : '本机转录'}</span>{busy ? <><p role="status"><LoaderCircle className="spin" size={14}/>{stageText(job!)}</p><button className="button button-secondary" disabled={pending} onClick={() => void cancel()}><X size={14}/>取消转写</button></> : <><button className="button button-secondary" disabled={!allowed || pending} onClick={() => void start(true)}>转写前 1 分钟</button><button className="button button-secondary" disabled={!allowed || pending} onClick={() => void start(false)}>{video || contentId.startsWith('bilibili:') || contentId.startsWith('youtube:') || contentId.startsWith('douyin:') || contentId.startsWith('xiaohongshu:') ? '开始转录视频' : '生成整集字幕'}</button></>}</div>
     {cloud && !busy && <label className="field-hint transcription-upload-consent"><input type="checkbox" checked={uploadConsent} onChange={event=>setUploadConsent(event.target.checked)}/>允许将本次音频上传至 {provider} 转录；长音频逐段处理，可能消耗额度。</label>}
     {cloud && <p className="field-hint">已完成片段保存在本机，再次启动时优先复用。</p>}

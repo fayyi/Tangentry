@@ -35,7 +35,7 @@ export function ReadingWorkspace({ query, linkedNoteId, initialItem, onReturn, s
   const [captions, setCaptions] = useState<SubtitleTrack | null>(null)
   const seek = useCallback((seconds: number) => player.current?.seek(seconds) ?? false, [])
   const assistance = useSubtitleAssistance(`bilibili:${query}`, captions, ready ? seek : undefined, { contentId: `bilibili:${query}`, title: initialItem?.title, url: initialItem?.url ?? `https://www.bilibili.com/video/${query}/` })
-  const noSubtitleSummary = useSummary(`bilibili:${query}`, 'subtitle', undefined, ready ? seek : undefined)
+  const noSubtitleSummary = useSummary(`bilibili:${query}`, 'subtitle', undefined, ready ? seek : undefined, initialItem?.description)
   const getPosition = useCallback(() => player.current?.getPosition() ?? null, [])
   const getDownloadID = useCallback(() => player.current?.getSourceID?.() ?? null, [])
   const capture = useCallback(() => player.current?.captureFrame?.(), [])
