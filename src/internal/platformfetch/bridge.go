@@ -20,6 +20,17 @@ type Response struct {
 	ContentType string
 }
 
+// FeedResponse is the metadata-only projection of a captured feed request.
+// Response bodies never cross the native capture bridge.
+type FeedResponse struct {
+	Status      int
+	APIStatus   int
+	Parsed      bool
+	HasMore     bool
+	URL         string
+	ContentType string
+}
+
 type Fetcher interface {
 	Fetch(context.Context, string, string, Request) (Response, error)
 }
@@ -28,7 +39,7 @@ type Fetcher interface {
 // platform page's own feed requests. Responses are kept separate because the
 // page may issue several feed calls while scrolling.
 type FeedCaptureResponse struct {
-	Responses          []Response
+	Responses          []FeedResponse
 	FeedCards          []DOMCard
 	FeedHasMore        bool
 	FeedParsed         bool

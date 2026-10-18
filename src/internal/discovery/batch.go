@@ -63,21 +63,23 @@ type BatchCandidateProvider interface {
 }
 
 type BatchService struct {
-	provider             BatchCandidateProvider
-	subscriptions        func(context.Context) (Feed, error)
-	sources              []string
-	snapshots            BatchSnapshotRepository
-	enabled              func(context.Context, string) (bool, error)
-	topics               func(context.Context) ([]TopicRule, error)
-	feedback             func(context.Context) ([]Feedback, error)
-	clock                func() time.Time
-	initialSourceTimeout time.Duration
+	provider                    BatchCandidateProvider
+	subscriptions               func(context.Context) (Feed, error)
+	sources                     []string
+	snapshots                   BatchSnapshotRepository
+	enabled                     func(context.Context, string) (bool, error)
+	topics                      func(context.Context) ([]TopicRule, error)
+	feedback                    func(context.Context) ([]Feedback, error)
+	clock                       func() time.Time
+	initialSourceTimeout        time.Duration
+	continuationTimeoutOverride time.Duration
 }
 
 const defaultInitialSourceTimeout = 4 * time.Second
 const backgroundSourceTimeout = 30 * time.Second
 const douyinInitialSourceTimeout = 20 * time.Second
 const douyinBackgroundSourceTimeout = 75 * time.Second
+const douyinContinuationTimeout = 20 * time.Second
 
 type initialSourceResult struct {
 	source   string
@@ -413,7 +415,7 @@ func (s *BatchService) extendSnapshot(ctx context.Context, request BatchRequest,
 		for attempts := 0; attempts < 100 && !snapshot.Exhausted[source]; attempts++ {
 			fetchCtx := ctx
 			cancel := func() {}
-			if timeout := s.sourceTimeout(source); timeout > 0 {
+			if timeout := s.continuationTimeout(source); timeout > 0 {
 				fetchCtx, cancel = context.WithTimeout(ctx, timeout)
 			}
 			feed, err := s.provider.Fetch(fetchCtx, source, page)
@@ -461,6 +463,16 @@ func (s *BatchService) sourceTimeout(source string) time.Duration {
 		return defaultInitialSourceTimeout
 	}
 	return s.initialSourceTimeout
+}
+
+func (s *BatchService) continuationTimeout(source string) time.Duration {
+	if s.continuationTimeoutOverride > 0 {
+		return s.continuationTimeoutOverride
+	}
+	if source == "douyin" {
+		return douyinContinuationTimeout
+	}
+	return s.sourceTimeout(source)
 }
 
 func (s *BatchService) fetchInitial(ctx context.Context, source string, fetch func(context.Context) (Feed, error)) initialSourceResult {

@@ -418,9 +418,9 @@ func (b *platformPageBridge) CaptureFeed(ctx context.Context, platform string, p
 	if len(result.Responses) == 0 && len(result.FeedCards) == 0 && lastErr != nil && captureCtx.Err() != nil {
 		return platformfetch.FeedCaptureResponse{}, lastErr
 	}
-	responses := make([]platformfetch.Response, 0, len(result.Responses))
+	responses := make([]platformfetch.FeedResponse, 0, len(result.Responses))
 	for _, response := range result.Responses {
-		responses = append(responses, platformfetch.Response{Status: response.Status, APIStatus: response.APIStatus, Parsed: response.Parsed, URL: response.URL, ContentType: response.ContentType})
+		responses = append(responses, sanitizeDouyinCaptureResponse(response))
 	}
 	if session.closeAt == nil {
 		session.closeAt = time.AfterFunc(platformFetchIdle, func() {
@@ -565,16 +565,69 @@ func searchPageURL(platform, query, cursor string) (string, error) {
 }
 
 type douyinCaptureResponse struct {
-	URL         string `json:"url"`
-	Status      int    `json:"status"`
-	APIStatus   int    `json:"apiStatus"`
-	Parsed      bool   `json:"parsed"`
-	HasMore     bool   `json:"hasMore"`
-	ContentType string `json:"contentType"`
-	// Body is accepted only for backwards-compatible test/bridge payloads. The
-	// native hook no longer exports response text; it exports Cards instead.
-	Body  string                  `json:"body,omitempty"`
-	Cards []platformfetch.DOMCard `json:"cards"`
+	URL         string                  `json:"url"`
+	Status      int                     `json:"status"`
+	APIStatus   int                     `json:"apiStatus"`
+	Parsed      bool                    `json:"parsed"`
+	HasMore     bool                    `json:"hasMore"`
+	ContentType string                  `json:"contentType"`
+	Cards       []platformfetch.DOMCard `json:"cards"`
+}
+
+func sanitizeDouyinCaptureResponse(response douyinCaptureResponse) platformfetch.FeedResponse {
+	return platformfetch.FeedResponse{
+		Status: response.Status, APIStatus: response.APIStatus, Parsed: response.Parsed,
+		HasMore: response.HasMore, URL: safeCaptureURL(response.URL), ContentType: truncateCaptureContentType(response.ContentType),
+	}
+}
+
+func sanitizeDouyinCard(card platformfetch.DOMCard) platformfetch.DOMCard {
+	return platformfetch.DOMCard{
+		ID:           truncateCaptureField(card.ID, 64),
+		URL:          safeCaptureURL(card.URL),
+		ThumbnailURL: safeCaptureURL(card.ThumbnailURL),
+		Title:        truncateCaptureField(card.Title, 1000),
+		Author:       truncateCaptureField(card.Author, 200),
+		AuthorID:     truncateCaptureField(card.AuthorID, 200),
+		LikeCount:    clampCaptureNumber(card.LikeCount),
+		Duration:     clampCaptureNumber(card.Duration),
+	}
+}
+
+func truncateCaptureField(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	if len(value) > limit {
+		return value[:limit]
+	}
+	return value
+}
+
+func clampCaptureNumber(value int) int {
+	if value < 0 {
+		return 0
+	}
+	if value > 2147483647 {
+		return 2147483647
+	}
+	return value
+}
+
+func safeCaptureURL(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Scheme == "" || u.Host == "" || u.User != nil {
+		return ""
+	}
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String()
+}
+
+func truncateCaptureContentType(raw string) string {
+	value := strings.TrimSpace(raw)
+	if len(value) > 256 {
+		return value[:256]
+	}
+	return value
 }
 
 type douyinCaptureResult struct {
@@ -616,12 +669,13 @@ func decodeDouyinCaptureResult(raw any, result *douyinCaptureResult) error {
 		result.Ready = current.Ready
 	}
 	for _, response := range current.Responses {
-		if len(response.Body) > platformFetchMaxBody {
-			continue
-		}
 		result.Responses = append(result.Responses, response)
 		result.FeedParsed = result.FeedParsed || response.Parsed
-		result.FeedCards = mergeDOMCards(result.FeedCards, response.Cards)
+		cards := make([]platformfetch.DOMCard, 0, len(response.Cards))
+		for _, card := range response.Cards {
+			cards = append(cards, sanitizeDouyinCard(card))
+		}
+		result.FeedCards = mergeDOMCards(result.FeedCards, cards)
 		if response.HasMore {
 			result.FeedHasMore = true
 		}
@@ -629,7 +683,11 @@ func decodeDouyinCaptureResult(raw any, result *douyinCaptureResult) error {
 	if len(result.Responses) > 128 {
 		result.Responses = result.Responses[len(result.Responses)-128:]
 	}
-	result.Cards = mergeDOMCards(result.Cards, current.Cards)
+	cards := make([]platformfetch.DOMCard, 0, len(current.Cards))
+	for _, card := range current.Cards {
+		cards = append(cards, sanitizeDouyinCard(card))
+	}
+	result.Cards = mergeDOMCards(result.Cards, cards)
 	if current.DOM.URL != "" {
 		result.DOM = current.DOM
 		result.DOM.CardsRead = len(result.Cards)

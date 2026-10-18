@@ -214,6 +214,13 @@ func TestDecodeDouyinCaptureResultKeepsSafeFeedProjectionMetadata(t *testing.T) 
 	}
 }
 
+func TestSanitizeDouyinCaptureResponseDropsQueryAndLimitsMetadata(t *testing.T) {
+	response := sanitizeDouyinCaptureResponse(douyinCaptureResponse{Status: 200, APIStatus: 2154, Parsed: true, HasMore: true, URL: "https://www.douyin.com/aweme/v2/web/module/feed/?msToken=fixture", ContentType: strings.Repeat("x", 300)})
+	if strings.Contains(response.URL, "msToken") || len(response.ContentType) > 256 || response.APIStatus != 2154 || !response.Parsed || !response.HasMore {
+		t.Fatalf("capture metadata was not sanitized: %+v", response)
+	}
+}
+
 func TestDecodeDouyinCaptureResultUsesLatestHookState(t *testing.T) {
 	var result douyinCaptureResult
 	if err := decodeDouyinCaptureResult(map[string]any{"fetchHookInstalled": true, "xhrHookInstalled": true}, &result); err != nil {

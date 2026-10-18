@@ -72,16 +72,10 @@ func (c *Client) Recommendations(ctx context.Context, page int) (discovery.Feed,
 				}
 				return discovery.Feed{}, &discovery.PlatformError{Message: "抖音当前暂无推荐，请稍后重试。"}
 			}
-			capturedFeeds := make([]discovery.Feed, 0, len(captured.Responses))
-			capturedValidFeed := false
 			captureRestricted := false
 			for _, response := range captured.Responses {
 				if response.Status != http.StatusOK {
-					body := response.Body
-					if !isJSONContentType(response.ContentType) {
-						body = ""
-					}
-					diagnostics = append(diagnostics, "页面 feed 响应不可用："+describePageResponse(response.Status, body, response.Restricted, response.ContentType, response.URL))
+					diagnostics = append(diagnostics, "页面 feed 响应不可用："+describeNonJSONPageResponse(response.Status, false, response.ContentType, response.URL))
 					captureRestricted = captureRestricted || response.Status == http.StatusForbidden || response.Status == http.StatusTooManyRequests
 					continue
 				}
@@ -92,38 +86,16 @@ func (c *Client) Recommendations(ctx context.Context, page int) (discovery.Feed,
 						diagnostics = append(diagnostics, fmt.Sprintf("页面 feed 返回业务状态 %d，可能需要登录或验证", response.APIStatus))
 					}
 				}
+				if response.HasMore {
+					captured.FeedHasMore = true
+				}
 				if !isJSONContentType(response.ContentType) {
-					diagnostics = append(diagnostics, "页面 feed 响应不是 JSON（已安全跳过 protobuf/二进制内容）："+describeNonJSONPageResponse(response.Status, response.Restricted, response.ContentType, response.URL))
+					diagnostics = append(diagnostics, "页面 feed 响应不是 JSON（已安全跳过 protobuf/二进制内容）："+describeNonJSONPageResponse(response.Status, false, response.ContentType, response.URL))
 					continue
 				}
-				if status := recommendationAPIStatus([]byte(response.Body)); status == 2154 {
-					return discovery.Feed{}, &discovery.PlatformError{Message: "抖音当前暂无推荐（业务状态 2154），请稍后重试。"}
+				if response.Parsed {
+					diagnostics = append(diagnostics, "页面 feed 已解析但未形成字段投影")
 				}
-				if response.Body == "" {
-					capturedValidFeed = capturedValidFeed || response.Parsed
-					continue
-				}
-				feed, err := decodeRecommendations([]byte(response.Body), page, nil)
-				if err == nil {
-					capturedValidFeed = true
-					if len(feed.Items) == 0 {
-						if status := recommendationAPIStatus([]byte(response.Body)); status == 2154 {
-							return discovery.Feed{}, &discovery.PlatformError{Message: "抖音当前暂无推荐（业务状态 2154），请稍后重试。"}
-						}
-						diagnostics = append(diagnostics, "页面 feed JSON 有效，但推荐列表为空")
-					}
-					capturedFeeds = append(capturedFeeds, feed)
-					continue
-				}
-				if err != nil {
-					diagnostics = append(diagnostics, "页面 feed JSON 解析失败："+err.Error()+"；"+describePageResponse(response.Status, response.Body, response.Restricted, response.ContentType, response.URL))
-				}
-			}
-			if feed := mergeRecommendationFeeds(capturedFeeds, page, "抖音页面推荐"); len(feed.Items) > 0 {
-				return feed, nil
-			}
-			if capturedValidFeed {
-				return discovery.Feed{}, &discovery.PlatformError{Message: "抖音当前暂无推荐，请稍后重试。"}
 			}
 			if captureRestricted {
 				return discovery.Feed{}, &discovery.PlatformError{Restricted: true, Message: "抖音推荐需要在应用内完成抖音验证或稍后重试：" + joinDiagnostics(diagnostics, "请在应用内打开抖音完成验证，点击重新验证后重试；无 WebView 时请重新导入浏览器 Cookie。")}
@@ -138,6 +110,9 @@ func (c *Client) Recommendations(ctx context.Context, page int) (discovery.Feed,
 				diagnostics = append(diagnostics, "页面未捕获到推荐 feed 请求（页面状态："+captured.Ready+"）")
 			}
 		}
+	}
+	if len(diagnostics) > 0 && hasUnsupportedCapture(diagnostics) {
+		return discovery.Feed{}, &discovery.PlatformError{Message: "抖音页面返回了暂不支持的格式或页面尚未加载出推荐：" + joinDiagnostics(diagnostics, "请稍后重试；若页面持续为空，请在应用内打开抖音完成验证后重试。")}
 	}
 	if c.Page != nil {
 		response, err := c.Page.Fetch(ctx, "douyin", "/aweme/v2/web/module/feed/?"+query.Encode(), platformfetch.Request{
@@ -184,6 +159,9 @@ func (c *Client) Recommendations(ctx context.Context, page int) (discovery.Feed,
 		} else {
 			diagnostics = append(diagnostics, "页面 fetch 执行失败："+err.Error())
 		}
+	}
+	if hasUnsupportedCapture(diagnostics) {
+		return discovery.Feed{}, &discovery.PlatformError{Message: "抖音页面返回了暂不支持的格式或页面尚未加载出推荐：" + joinDiagnostics(diagnostics, "请稍后重试；若页面持续为空，请在应用内打开抖音完成验证后重试。")}
 	}
 	cookie := ""
 	if c.Cookie != nil {
@@ -285,13 +263,22 @@ func (c *Client) Recommendations(ctx context.Context, page int) (discovery.Feed,
 	return feed, nil
 }
 
-func captureAPIStatus(responses []platformfetch.Response) int {
+func captureAPIStatus(responses []platformfetch.FeedResponse) int {
 	for _, response := range responses {
 		if response.APIStatus != 0 {
 			return response.APIStatus
 		}
 	}
 	return 0
+}
+
+func hasUnsupportedCapture(diagnostics []string) bool {
+	for _, diagnostic := range diagnostics {
+		if strings.Contains(diagnostic, "不是 JSON") || strings.Contains(diagnostic, "未形成字段投影") || strings.Contains(diagnostic, "未捕获到推荐 feed") || strings.Contains(diagnostic, "页面 fetch 响应为空") {
+			return true
+		}
+	}
+	return false
 }
 
 func recommendationAPIStatus(body []byte) int {

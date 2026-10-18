@@ -145,7 +145,7 @@ func TestMapDOMCardsDeduplicatesAndMapsSafeFields(t *testing.T) {
 func TestRecommendationCaptureUsesPageDecodedFeedProjection(t *testing.T) {
 	c := &Client{Page: captureFetcherFunc(func(context.Context, string, int) (platformfetch.FeedCaptureResponse, error) {
 		return platformfetch.FeedCaptureResponse{
-			Responses:   []platformfetch.Response{{Status: http.StatusOK, ContentType: "application/x-protobuf; charset=utf-8", URL: "https://www.douyin.com/aweme/v2/web/module/feed/"}},
+			Responses:   []platformfetch.FeedResponse{{Status: http.StatusOK, ContentType: "application/x-protobuf; charset=utf-8", URL: "https://www.douyin.com/aweme/v2/web/module/feed/"}},
 			FeedCards:   []platformfetch.DOMCard{{ID: "6961737553342991651", Title: "页面已解码", Author: "作者", Duration: 12}},
 			FeedHasMore: true,
 		}, nil
@@ -158,20 +158,30 @@ func TestRecommendationCaptureUsesPageDecodedFeedProjection(t *testing.T) {
 
 func TestBinaryCaptureDiagnosticsDoNotIncludeBody(t *testing.T) {
 	c := &Client{Page: captureFetcherFunc(func(context.Context, string, int) (platformfetch.FeedCaptureResponse, error) {
-		return platformfetch.FeedCaptureResponse{Responses: []platformfetch.Response{{Status: http.StatusOK, Body: "R$binary-secret-token", ContentType: "application/x-protobuf", URL: "https://www.douyin.com/aweme/v2/web/module/feed/"}}}, nil
+		return platformfetch.FeedCaptureResponse{Responses: []platformfetch.FeedResponse{{Status: http.StatusOK, ContentType: "application/x-protobuf", URL: "https://www.douyin.com/aweme/v2/web/module/feed/"}}}, nil
 	}), Cookie: func(string) string { return "sessionid=fixture" }, HTTP: &http.Client{Transport: trip(func(r *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusOK, Request: r, Body: io.NopCloser(strings.NewReader(`{"status_code":2154,"aweme_list":[],"has_more":1}`))}, nil
 	})}}
 	_, err := c.Recommendations(context.Background(), 1)
-	if err == nil || strings.Contains(err.Error(), "binary-secret-token") || strings.Contains(err.Error(), "R$") {
+	if err == nil || !strings.Contains(err.Error(), "暂不支持的格式") || strings.Contains(err.Error(), "binary-secret-token") || strings.Contains(err.Error(), "R$") || strings.Contains(err.Error(), "未找到抖音登录 Cookie") {
 		t.Fatalf("binary body leaked in diagnostics: %v", err)
+	}
+}
+
+func TestBinaryCaptureWithoutCookieReportsUnsupportedFormat(t *testing.T) {
+	c := &Client{Page: captureFetcherFunc(func(context.Context, string, int) (platformfetch.FeedCaptureResponse, error) {
+		return platformfetch.FeedCaptureResponse{Responses: []platformfetch.FeedResponse{{Status: http.StatusOK, ContentType: "application/x-protobuf", URL: "https://www.douyin.com/aweme/v2/web/module/feed/"}}}, nil
+	})}
+	_, err := c.Recommendations(context.Background(), 1)
+	if err == nil || !strings.Contains(err.Error(), "暂不支持的格式") || strings.Contains(err.Error(), "未找到抖音登录 Cookie") {
+		t.Fatalf("binary page was misclassified without cookie: %v", err)
 	}
 }
 
 func TestPageDecodedEmptyFeedExplainsNoRecommendations(t *testing.T) {
 	c := &Client{Page: captureFetcherFunc(func(context.Context, string, int) (platformfetch.FeedCaptureResponse, error) {
 		return platformfetch.FeedCaptureResponse{
-			Responses:  []platformfetch.Response{{Status: http.StatusOK, APIStatus: 2154, Parsed: true, ContentType: "application/json", URL: "https://www.douyin.com/aweme/v2/web/module/feed/"}},
+			Responses:  []platformfetch.FeedResponse{{Status: http.StatusOK, APIStatus: 2154, Parsed: true, ContentType: "application/json", URL: "https://www.douyin.com/aweme/v2/web/module/feed/"}},
 			FeedParsed: true,
 		}, nil
 	}), Cookie: func(string) string { t.Fatal("cookie fallback should not run"); return "" }}
@@ -220,9 +230,8 @@ func TestRecommendationCaptureResponseDiagnosticsIncludeHTTPContext(t *testing.T
 				PageURL: "https://www.douyin.com/jingxuan",
 				Title:   "精选",
 				Ready:   "complete",
-				Responses: []platformfetch.Response{{
+				Responses: []platformfetch.FeedResponse{{
 					Status:      http.StatusForbidden,
-					Body:        `<html>byted_acrawler token abcdefghijklmnopqrstuvwxyz0123456789</html>`,
 					URL:         "https://www.douyin.com/aweme/v1/feed/?msToken=secret",
 					ContentType: "text/html",
 				}},
@@ -278,11 +287,12 @@ func TestRecommendationCaptureUsesPageOwnedFeedAndReportsRedirect(t *testing.T) 
 			return platformfetch.FeedCaptureResponse{
 				PageURL: "https://passport.douyin.com/login",
 				Ready:   "complete",
-				Responses: []platformfetch.Response{{
+				Responses: []platformfetch.FeedResponse{{
 					Status: http.StatusOK,
 					URL:    "https://www.douyin.com/aweme/v1/web/tab/feed/",
-					Body:   `{"status_code":0,"has_more":0,"aweme_list":[{"aweme_id":"6961737553342991651","desc":"页面自带推荐","video":{"duration":2100}}]}`,
+					Parsed: true,
 				}},
+				FeedCards: []platformfetch.DOMCard{{ID: "6961737553342991651", Title: "页面自带推荐", Duration: 2}},
 			}, nil
 		}),
 		Cookie: func(string) string { t.Fatal("cookie fallback should not run"); return "" },
@@ -298,10 +308,10 @@ func TestRecommendationCaptureMergesResponsesAndCapsBridgePages(t *testing.T) {
 	c := &Client{
 		Page: captureFetcherFunc(func(_ context.Context, _ string, pages int) (platformfetch.FeedCaptureResponse, error) {
 			capturedPages = pages
-			return platformfetch.FeedCaptureResponse{Responses: []platformfetch.Response{
-				{Status: http.StatusOK, Body: `{"status_code":0,"has_more":1,"aweme_list":[{"aweme_id":"6961737553342991651","desc":"第一条","video":{"duration":1000}}]}`},
-				{Status: http.StatusOK, Body: `{"status_code":0,"has_more":0,"aweme_list":[{"aweme_id":"6961737553342991651","desc":"重复","video":{"duration":2000}},{"aweme_id":"6961737553342991652","desc":"第二条","video":{"duration":3000}}]}`},
-			}}, nil
+			return platformfetch.FeedCaptureResponse{Responses: []platformfetch.FeedResponse{
+				{Status: http.StatusOK, Parsed: true},
+				{Status: http.StatusOK, Parsed: true},
+			}, FeedCards: []platformfetch.DOMCard{{ID: "6961737553342991651", Title: "第一条"}, {ID: "6961737553342991651", Title: "重复"}, {ID: "6961737553342991652", Title: "第二条"}}, FeedHasMore: true}, nil
 		}),
 		Cookie: func(string) string { t.Fatal("cookie fallback should not run"); return "" },
 	}
