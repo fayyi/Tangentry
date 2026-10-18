@@ -70,8 +70,11 @@ func ParseYouTubeChannelFeed(data []byte, channelID string) (discovery.Feed, err
 	if err := json.Unmarshal(data, &payload); err != nil {
 		return discovery.Feed{}, &discovery.PlatformError{Message: "YouTube yt-dlp 返回了无法识别的数据。"}
 	}
-	if payload.ChannelID != "" && payload.ChannelID != channelID {
+	if payload.ChannelID != channelID {
 		return discovery.Feed{}, &discovery.PlatformError{Message: "YouTube yt-dlp 返回的频道身份不一致。"}
+	}
+	if payload.Entries == nil {
+		return discovery.Feed{}, &discovery.PlatformError{Message: "YouTube yt-dlp 未返回频道视频列表。"}
 	}
 	author := strings.TrimSpace(payload.Channel)
 	if author == "" {
@@ -136,6 +139,9 @@ func ParseYouTubeChannelFeed(data []byte, channelID string) (discovery.Feed, err
 		feed.Items = append(feed.Items, item)
 	}
 	feed.Total = len(feed.Items)
+	if len(payload.Entries) > 0 && feed.Total == 0 {
+		return discovery.Feed{}, &discovery.PlatformError{Message: "YouTube yt-dlp 未返回有效的视频条目。"}
+	}
 	return feed, nil
 }
 

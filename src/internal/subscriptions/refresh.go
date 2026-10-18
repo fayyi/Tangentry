@@ -143,6 +143,9 @@ func ApplyHealth(source *Source, now int64) {
 	NormalizeRefreshState(&source.Refresh)
 	source.Refresh.Status = StatusFor(source.Refresh, source.LastUpdatedAt, now)
 	source.Refresh.SuggestedAction = suggestedAction(source.Refresh.Status)
+	if strings.HasPrefix(source.ID, "youtube:") && source.Refresh.Status != StatusHealthy && source.Refresh.Status != StatusPaused {
+		source.Refresh.SuggestedAction = "检查 YouTube 频道与网络后重试。"
+	}
 }
 
 type ConditionalResult struct {
@@ -268,8 +271,11 @@ func (s *Service) updateFeed(ctx context.Context, detail Detail) (Detail, error)
 		record.State.SuggestedAction = suggestedAction(StatusUpstreamErr)
 		record.State.Message = "订阅源更新失败，保留上次内容；请检查地址与网络。"
 		youtubeDiagnostic := ""
+		youtubeSuggestedAction := ""
 		if strings.HasPrefix(id, "youtube:") {
 			record.State.Message = "YouTube 频道更新失败，保留上次内容；请检查频道与网络。"
+			youtubeSuggestedAction = "检查 YouTube 频道与网络后重试。"
+			record.State.SuggestedAction = youtubeSuggestedAction
 			// The YouTube adapter combines the RSS status/content type and the
 			// yt-dlp stderr tail when both paths fail. Preserve that concrete,
 			// already-redacted diagnostic for subscription refresh callers.
@@ -312,6 +318,7 @@ func (s *Service) updateFeed(ctx context.Context, detail Detail) (Detail, error)
 		}
 		if youtubeDiagnostic != "" {
 			record.State.Message = youtubeDiagnostic
+			record.State.SuggestedAction = youtubeSuggestedAction
 		}
 		delay := backoff(record)
 		var retry RetryDelay

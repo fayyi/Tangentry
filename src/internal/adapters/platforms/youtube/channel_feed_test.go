@@ -2,8 +2,10 @@ package youtube
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -134,6 +136,32 @@ func TestChannelConditionalUsesFallbackAfterRSSFailure(t *testing.T) {
 	_, err = fail.FetchConditional(context.Background(), channelID, feeds.Validators{})
 	if err == nil || !strings.Contains(err.Error(), "YouTube") || !strings.Contains(err.Error(), "HTTP 404") || !strings.Contains(err.Error(), "text/html") || !strings.Contains(err.Error(), "网络不可用") || strings.Contains(err.Error(), "RSSHub") {
 		t.Fatalf("combined failure missing safe causes: %v", err)
+	}
+	malformed := server(http.StatusOK, "<html>not feed</html>", "text/html")
+	malformed.SetChannelFallback(func(context.Context, string) (discovery.Feed, error) {
+		return discovery.Feed{}, errors.New("工具退出码 2")
+	})
+	_, err = malformed.FetchConditional(context.Background(), channelID, feeds.Validators{})
+	if err == nil || !strings.Contains(err.Error(), "HTTP 200") || !strings.Contains(err.Error(), "text/html") || !strings.Contains(err.Error(), "工具退出码 2") {
+		t.Fatalf("invalid feed cause missing response details: %v", err)
+	}
+	network := New(&http.Client{Transport: trip(func(*http.Request) (*http.Response, error) { return nil, errors.New("连接被拒绝") })})
+	network.SetChannelFallback(func(context.Context, string) (discovery.Feed, error) {
+		return discovery.Feed{}, errors.New("退出码 3")
+	})
+	_, err = network.FetchConditional(context.Background(), channelID, feeds.Validators{})
+	if err == nil || !strings.Contains(err.Error(), "网络错误") || !strings.Contains(err.Error(), "连接被拒绝") {
+		t.Fatalf("network cause missing: %v", err)
+	}
+	timedOut := New(&http.Client{Transport: trip(func(*http.Request) (*http.Response, error) {
+		return nil, &net.DNSError{Err: "i/o timeout", Name: "fixture.youtube", IsTimeout: true}
+	})})
+	timedOut.SetChannelFallback(func(context.Context, string) (discovery.Feed, error) {
+		return discovery.Feed{}, errors.New("退出码 4")
+	})
+	_, err = timedOut.FetchConditional(context.Background(), channelID, feeds.Validators{})
+	if err == nil || !strings.Contains(err.Error(), "请求超时") || !strings.Contains(err.Error(), "i/o timeout") || !strings.Contains(err.Error(), "退出码 4") {
+		t.Fatalf("timeout cause missing: %v", err)
 	}
 }
 

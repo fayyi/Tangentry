@@ -64,7 +64,11 @@ type channelFetchError struct {
 
 func (e *channelFetchError) Error() string       { return e.message }
 func (e *channelFetchError) HTTPStatusCode() int { return e.status }
-func (e *channelFetchError) Unwrap() error       { return &discovery.PlatformError{Message: e.message} }
+
+// Unwrap exposes only the YouTube-specific platform error. Returning the RSS
+// cause here would let generic RSSHub wording win errors.As in the transport
+// layer, even though this error belongs to a YouTube URL.
+func (e *channelFetchError) Unwrap() error { return &discovery.PlatformError{Message: e.message} }
 
 func New(httpClient *http.Client) *Client {
 	return &Client{feeds: &feeds.Client{HTTP: httpClient, Parser: Parse}, http: httpClient, durations: make(map[string]int)}
@@ -126,6 +130,15 @@ func rssCause(err error) string {
 			contentType = "未知类型"
 		}
 		if fetchErr.StatusCode == 0 {
+			if fetchErr.TimedOut {
+				if fetchErr.Cause != nil {
+					return "请求超时（" + sanitizeCause(fetchErr.Cause.Error()) + "）"
+				}
+				return "请求超时"
+			}
+			if fetchErr.Cause != nil {
+				return "网络错误（" + sanitizeCause(fetchErr.Cause.Error()) + "；Content-Type: " + sanitizeCause(contentType) + "）"
+			}
 			return "内容无效（Content-Type: " + sanitizeCause(contentType) + "）"
 		}
 		status := strconv.Itoa(fetchErr.StatusCode)

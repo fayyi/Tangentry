@@ -3,8 +3,12 @@ package subscriptions_test
 import (
 	"context"
 	"errors"
+	"io"
+	"net/http"
 	"path/filepath"
 	"strings"
+	"tangentry/internal/adapters/feeds"
+	youtubeadapter "tangentry/internal/adapters/platforms/youtube"
 	"tangentry/internal/adapters/sqlite"
 	"tangentry/internal/content"
 	"tangentry/internal/discovery"
@@ -166,6 +170,66 @@ func TestYouTubeChannelRefreshSharesCacheAndScheduleWithoutSideEffects(t *testin
 		t.Fatal("channel delete reset state")
 	}
 }
+
+func TestYouTubeRefreshUsesRSSFallbackAndStableIDs(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(filepath.Join(t.TempDir(), "fallback.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	const rssFeed = `<feed xmlns="http://www.w3.org/2005/Atom" xmlns:yt="http://www.youtube.com/xml/schemas/2015"><yt:channelId>aaaaaaaaaaaaaaaaaaaaaa</yt:channelId><title>fixture channel</title><author><name>fixture</name><uri>https://www.youtube.com/channel/UCaaaaaaaaaaaaaaaaaaaaaa</uri></author><entry><id>yt:video:abcdefghijk</id><yt:videoId>abcdefghijk</yt:videoId><yt:channelId>UCaaaaaaaaaaaaaaaaaaaaaa</yt:channelId><title>first</title><link rel="alternate" href="https://www.youtube.com/watch?v=abcdefghijk"/><author><name>fixture</name><uri>https://www.youtube.com/channel/UCaaaaaaaaaaaaaaaaaaaaaa</uri></author><published>2026-10-01T12:00:00Z</published></entry></feed>`
+	feed := discovery.Feed{Page: 1, Query: channelID, SourceTitle: "fixture channel", Total: 2, Items: []content.Item{
+		{ID: "youtube:abcdefghijk", Platform: "youtube", PlatformID: "abcdefghijk", Kind: "video", AuthorID: channelID, Author: "fixture", Title: "first", URL: "https://www.youtube.com/watch?v=abcdefghijk", PublishedAt: 1},
+		{ID: "youtube:lmnopqrstuv", Platform: "youtube", PlatformID: "lmnopqrstuv", Kind: "video", AuthorID: channelID, Author: "fixture", Title: "second", URL: "https://www.youtube.com/watch?v=lmnopqrstuv", PublishedAt: 2},
+	}}
+	rssCalls := 0
+	client := youtubeadapter.New(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		rssCalls++
+		if rssCalls == 1 {
+			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/atom+xml"}}, Body: io.NopCloser(strings.NewReader(rssFeed)), Request: r}, nil
+		}
+		return &http.Response{StatusCode: http.StatusNotFound, Header: http.Header{"Content-Type": {"text/html"}}, Body: io.NopCloser(strings.NewReader("404")), Request: r}, nil
+	})})
+	var fallbackErr error
+	fallbackCalls := 0
+	client.SetChannelFallback(func(context.Context, string) (discovery.Feed, error) {
+		fallbackCalls++
+		if fallbackErr != nil {
+			return discovery.Feed{}, fallbackErr
+		}
+		return feed, nil
+	})
+	service := subscriptions.NewService(store, nil, subscriptions.WithConditionalFeeds(func(ctx context.Context, id string, v subscriptions.Validators) (subscriptions.ConditionalResult, error) {
+		result, err := client.FetchConditional(ctx, id, feeds.Validators{ETag: v.ETag, LastModified: v.LastModified, ResourceURL: v.ResourceURL})
+		return subscriptions.ConditionalResult{Snapshot: subscriptions.Snapshot{Items: result.Feed.Items, Title: result.Feed.SourceTitle, Total: result.Feed.Total}, NotModified: result.NotModified}, err
+	}))
+	defer service.Close()
+	source, _, err := service.Create(ctx, subscriptions.Input{Type: "youtube", Query: channelID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := service.Update(ctx, source.ID)
+	if err != nil || len(updated.Items) != 1 || updated.Items[0].ID != "youtube:abcdefghijk" || fallbackCalls != 0 {
+		t.Fatalf("initial RSS snapshot not saved: %+v fallbackCalls=%d err=%v", updated, fallbackCalls, err)
+	}
+	updated, err = service.Update(ctx, source.ID)
+	if err != nil || len(updated.Items) != 2 || updated.Items[0].ID != "youtube:abcdefghijk" || updated.Items[1].ID != "youtube:lmnopqrstuv" || updated.Items[0].ID == updated.Items[1].ID || fallbackCalls != 1 {
+		t.Fatalf("fallback snapshot lost stable IDs or duplicated RSS content: %+v fallbackCalls=%d err=%v", updated, fallbackCalls, err)
+	}
+	fallbackErr = errors.New("yt-dlp 退出码 1")
+	if _, err = service.Update(ctx, source.ID); err == nil {
+		t.Fatal("double failure hidden")
+	}
+	failed, err := service.Get(ctx, source.ID)
+	if err != nil || strings.Contains(failed.Source.Refresh.SuggestedAction, "RSSHub") || !strings.Contains(failed.Source.Refresh.SuggestedAction, "YouTube") {
+		t.Fatalf("YouTube failure suggested RSSHub or lost platform guidance: %+v err=%v", failed.Source.Refresh, err)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 func TestChannelResolverSharesLimitsAndShutdown(t *testing.T) {
 	store, _ := sqlite.Open(filepath.Join(t.TempDir(), "limits.db"))
 	defer store.Close()
