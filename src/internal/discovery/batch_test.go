@@ -211,3 +211,31 @@ func TestBatchContinuesRoundRobinAfterSourcesNeedNextPage(t *testing.T) {
 		t.Fatalf("extended page should continue interleaving sources: %#v cursor=%q hasNext=%v", second.Items, second.NextCursor, second.HasNextBatch)
 	}
 }
+
+func TestBatchAppliesFeedbackWithoutBreakingSourceRotation(t *testing.T) {
+	service := NewBatchService(batchProvider{feeds: map[string]Feed{
+		"bilibili": {Items: []content.Item{batchItem("bilibili", "b1", "一", "creator", 3), batchItem("bilibili", "b2", "二", "other", 2)}},
+		"youtube":  {Items: []content.Item{batchItem("youtube", "y1", "三", "creator", 3), batchItem("youtube", "y2", "四", "other", 2)}},
+	}}, nil, []string{"bilibili", "youtube"})
+	service.SetFeedback(func(context.Context) ([]Feedback, error) {
+		return []Feedback{
+			{Type: FeedbackHide, Target: TargetItem, Value: "youtube:y2"},
+			{Type: FeedbackMore, Target: TargetCreator, Value: "creator"},
+		}, nil
+	})
+	response, err := service.Create(context.Background(), BatchRequest{Size: 10, Seed: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Items) != 3 || response.Items[0].Item.Author != "creator" || response.Items[0].Reason != "因你选择想多看看：creator" {
+		t.Fatalf("feedback ordering/reason: %#v", response.Items)
+	}
+	for _, item := range response.Items {
+		if item.Item.ID == "youtube:y2" {
+			t.Fatal("hidden item leaked")
+		}
+	}
+	if response.Items[0].Source == response.Items[1].Source {
+		t.Fatalf("source rotation broken: %#v", response.Items)
+	}
+}

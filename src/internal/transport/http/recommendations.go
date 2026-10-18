@@ -57,6 +57,69 @@ func (h *discoveryHandler) batch(w http.ResponseWriter, r *http.Request) {
 	write(w, http.StatusOK, response)
 }
 
+func (h *discoveryHandler) feedbackList(w http.ResponseWriter, r *http.Request) {
+	if h.browse.DiscoveryFeedback == nil {
+		fail(w, discovery.ErrUnavailable)
+		return
+	}
+	values, err := h.browse.DiscoveryFeedback.List(r.Context())
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	write(w, http.StatusOK, map[string]any{"feedback": values})
+}
+
+func (h *discoveryHandler) feedbackSave(w http.ResponseWriter, r *http.Request) {
+	if h.browse.DiscoveryFeedback == nil {
+		fail(w, discovery.ErrUnavailable)
+		return
+	}
+	kind, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || kind != "application/json" {
+		write(w, http.StatusUnsupportedMediaType, apiError{"invalid_input", "请使用 JSON 提交发现反馈。"})
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	var input discovery.FeedbackInput
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&input) != nil || decoder.Decode(new(any)) != io.EOF {
+		fail(w, discovery.ErrInvalidFeedback)
+		return
+	}
+	value, err := h.browse.DiscoveryFeedback.Save(r.Context(), input)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	write(w, http.StatusOK, value)
+}
+
+func (h *discoveryHandler) feedbackDelete(w http.ResponseWriter, r *http.Request) {
+	if h.browse.DiscoveryFeedback == nil {
+		fail(w, discovery.ErrUnavailable)
+		return
+	}
+	if err := h.browse.DiscoveryFeedback.Delete(r.Context(), r.PathValue("id")); err != nil {
+		fail(w, err)
+		return
+	}
+	write(w, http.StatusOK, map[string]bool{"deleted": true})
+}
+
+func (h *discoveryHandler) feedbackClear(w http.ResponseWriter, r *http.Request) {
+	if h.browse.DiscoveryFeedback == nil {
+		fail(w, discovery.ErrUnavailable)
+		return
+	}
+	if err := h.browse.DiscoveryFeedback.Clear(r.Context()); err != nil {
+		fail(w, err)
+		return
+	}
+	write(w, http.StatusOK, map[string]bool{"cleared": true})
+}
+
 func (h *discoveryHandler) recommendationSettingsSave(w http.ResponseWriter, r *http.Request) {
 	if h.browse.RecommendationConfig == nil {
 		fail(w, discovery.ErrUnavailable)

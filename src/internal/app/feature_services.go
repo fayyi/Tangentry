@@ -26,16 +26,17 @@ import (
 
 // apiBundle contains long-lived domain services, separate from external clients.
 type apiBundle struct {
-	content         *content.Service
-	articles        *articles.Service
-	recommendations *recommender
-	discoveryBatch  *discovery.BatchService
-	sources         *subscriptions.Service
-	downloads       *downloads.Service
-	transcription   *transcription.Service
-	modelDownloads  *transcription.ModelDownloads
-	modelDir        string
-	api             apiServices
+	content           *content.Service
+	articles          *articles.Service
+	recommendations   *recommender
+	discoveryBatch    *discovery.BatchService
+	discoveryFeedback *discovery.FeedbackService
+	sources           *subscriptions.Service
+	downloads         *downloads.Service
+	transcription     *transcription.Service
+	modelDownloads    *transcription.ModelDownloads
+	modelDir          string
+	api               apiServices
 }
 
 type apiServices struct {
@@ -82,6 +83,8 @@ func wireFeatures(dataDir string, configuration config.Config, option Options, r
 		return discovery.NewPreferences(store).Enabled(ctx, source)
 	})
 	discoveryBatch.SetTopicRules(discovery.NewTopicRules(store).List)
+	discoveryFeedback := discovery.NewFeedbackService(store)
+	discoveryBatch.SetFeedback(discoveryFeedback.List)
 
 	resolvePlayback := p.media.bilibili.Playback
 	if option.Playback != nil {
@@ -138,7 +141,7 @@ func wireFeatures(dataDir string, configuration config.Config, option Options, r
 
 	return &apiBundle{
 		content: contentService, articles: articles.New(store, &articleadapter.Extractor{HTTP: p.network.public}), sources: sources,
-		recommendations: recommendations, discoveryBatch: discoveryBatch, downloads: processing, transcription: speech, modelDownloads: modelDownloads, modelDir: modelDir,
+		recommendations: recommendations, discoveryBatch: discoveryBatch, discoveryFeedback: discoveryFeedback, downloads: processing, transcription: speech, modelDownloads: modelDownloads, modelDir: modelDir,
 		api: apiServices{
 			ai: languageAI, compatibility: compatibility, favorites: favorites,
 			groupService: subscriptions.NewGroupService(store), inbox: inboxService,

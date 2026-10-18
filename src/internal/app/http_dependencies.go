@@ -25,6 +25,7 @@ func httpDiscoveryDependencies(s *services, adapters httpAdapterBundle) httptran
 			return s.adapters.discovery.forum.TopicPosts(ctx, id, postIDs)
 		},
 		DiscoveryBatch:        s.features.discoveryBatch,
+		DiscoveryFeedback:     s.features.discoveryFeedback,
 		DiscoveryTopics:       discovery.NewTopicRules(s.runtime.store),
 		XiaohongshuDetail:     s.runtime.repositories.xiaohongshu.XiaohongshuDetail,
 		XiaohongshuImageItems: s.runtime.repositories.xiaohongshu.XiaohongshuImageCandidates,

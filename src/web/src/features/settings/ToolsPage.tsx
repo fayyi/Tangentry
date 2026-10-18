@@ -12,11 +12,12 @@ import { FontSettings } from './FontSettings'
 import type { GalleryColumns } from './useGalleryLayout'
 import type { Feed } from '../../shared/api/types'
 import { StorageSettings } from './StorageSettings'
+import { DiscoveryFeedback } from './DiscoveryFeedback'
 
-type SettingsSection = 'display' | 'accounts' | 'translation' | 'transcription' | 'storage'
+type SettingsSection = 'display' | 'accounts' | 'discovery' | 'translation' | 'transcription' | 'storage'
 function sectionFromURL(): SettingsSection {
   const hash = window.location.hash.slice(1)
-  return ['display', 'accounts', 'translation', 'transcription', 'storage'].includes(hash) ? hash as SettingsSection : 'display'
+  return ['display', 'accounts', 'discovery', 'translation', 'transcription', 'storage'].includes(hash) ? hash as SettingsSection : 'display'
 }
 
 export function ToolsPage({ downloads, onCookieChanged, onYouTubeFeed, onDiscover }: {
@@ -66,6 +67,7 @@ export function ToolsPage({ downloads, onCookieChanged, onYouTubeFeed, onDiscove
   const sections = [
     { id: 'display' as const, label: '外观', hint: '布局、字体与字号', Icon: Eye },
     { id: 'accounts' as const, label: '账号与来源', hint: '登录与内容推荐', Icon: UserRound },
+    { id: 'discovery' as const, label: '发现偏好', hint: '管理轻量反馈', Icon: UserRound },
     { id: 'translation' as const, label: '翻译与摘要', hint: 'AI 翻译与文章摘要', Icon: Languages },
     { id: 'transcription' as const, label: '字幕转录', hint: '本机或云端识别', Icon: Mic },
     { id: 'storage' as const, label: '下载与存储', hint: '工具与文件位置', Icon: HardDrive },
@@ -79,6 +81,7 @@ export function ToolsPage({ downloads, onCookieChanged, onYouTubeFeed, onDiscove
       <div id="settings-display" className="settings-block" hidden={section !== 'display'}>{visited.has('display') && <><GalleryLayoutSettings/><FontSettings/></>}</div>
       <div id="settings-storage" className="settings-block" hidden={section !== 'storage'}>{visited.has('storage') && <StorageSettings downloads={downloads} onModelDirectoryChanged={() => setModelRevision(value => value + 1)}/>}</div>
       <div id="settings-accounts" className="settings-block settings-block-wide" hidden={section !== 'accounts'}>{visited.has('accounts') && <><PlatformCookies onChanged={cookiesChanged} /><YouTubeRecommendations key={youtubeCookieRevision} tools={downloads.tools} onFeed={onYouTubeFeed} onDiscover={onDiscover}/></>}</div>
+      <div id="settings-discovery" className="settings-block settings-block-wide" hidden={section !== 'discovery'}>{visited.has('discovery') && <DiscoveryFeedback/>}</div>
       <div id="settings-translation" className="settings-block settings-block-wide" hidden={section !== 'translation'}>{visited.has('translation') && <AISettings/>}</div>
       <div id="settings-transcription" className="settings-block settings-block-wide" hidden={section !== 'transcription'}>{visited.has('transcription') && <TranscriptionSettings key={modelRevision}/>}</div>
       </div>

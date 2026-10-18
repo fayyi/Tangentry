@@ -10,7 +10,7 @@ import { HoverVideoPreview } from '../../media/HoverVideoPreview'
 import { retryThroughProxy, sourceImageURL } from '../../media/sourceImage'
 import { AuthorAvatar, AuthorName, AuthorPublication } from '../CardAuthor'
 
-export function VideoGalleryCard({ item, origin, discoveryReason, discoveryType, saved, pending, onRead, onSave, onDownload, progress, status, discovery = false, excerpt }: GalleryCardContentProps) {
+export function VideoGalleryCard({ item, origin, discoveryReason, discoveryType, saved, pending, onRead, onSave, onDownload, progress, status, discovery = false, excerpt, onFeedback }: GalleryCardContentProps) {
   const { failed: coverFailed, setFailed: setCoverFailed } = useCardCover(item.thumbnailUrl)
   const [hoverPreview, setHoverPreview] = useState(false)
   const [previewVisit, setPreviewVisit] = useState(0)
@@ -20,7 +20,7 @@ export function VideoGalleryCard({ item, origin, discoveryReason, discoveryType,
   const actions = <VideoCardActions item={item} saved={saved} pending={pending} onSave={onSave} onDownload={onDownload} />
 
   return (
-    <GalleryCardFrame item={item} origin={origin} discoveryReason={discoveryReason} className="card-video" onRead={onRead} status={status} dataPlatform>
+    <GalleryCardFrame item={item} origin={origin} discoveryReason={discoveryReason} className="card-video" onRead={onRead} status={status} dataPlatform onFeedback={discovery ? onFeedback : undefined}>
       <div
         className="modern-card-thumbnail"
         onPointerEnter={event => {

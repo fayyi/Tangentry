@@ -24,6 +24,7 @@ func New(library *content.Service, discover *discovery.Service, assets fs.FS, op
 			RecommendationConfig: optionsValue.RecommendationConfig, Recommendations: optionsValue.Recommendations,
 			RecommendationPage: optionsValue.RecommendationPage, Imports: optionsValue.Imports,
 			DiscoveryBatch:    optionsValue.DiscoveryBatch,
+			DiscoveryFeedback: optionsValue.DiscoveryFeedback,
 			DiscoveryTopics:   optionsValue.DiscoveryTopics,
 			XiaohongshuDetail: optionsValue.XiaohongshuDetail, XiaohongshuRefresh: optionsValue.XiaohongshuRefresh,
 			XiaohongshuImages: optionsValue.XiaohongshuImages, XiaohongshuImageVersion: optionsValue.XiaohongshuImageVersion,

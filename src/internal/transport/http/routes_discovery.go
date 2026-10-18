@@ -4,6 +4,10 @@ import "net/http"
 
 func (h *Handler) registerDiscoveryRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/discovery/batch", h.discovery.batch)
+	mux.HandleFunc("GET /api/discovery/feedback", h.discovery.feedbackList)
+	mux.HandleFunc("POST /api/discovery/feedback", h.discovery.feedbackSave)
+	mux.HandleFunc("DELETE /api/discovery/feedback/{id}", h.discovery.feedbackDelete)
+	mux.HandleFunc("DELETE /api/discovery/feedback", h.discovery.feedbackClear)
 	mux.HandleFunc("GET /api/discovery/topics", h.discovery.topicList)
 	mux.HandleFunc("POST /api/discovery/topics", h.discovery.topicCreate)
 	mux.HandleFunc("PATCH /api/discovery/topics/{id}", h.discovery.topicUpdate)
