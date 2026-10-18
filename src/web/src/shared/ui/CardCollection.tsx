@@ -16,6 +16,19 @@ export function masonryNeedsMeasurement(cardCount: number, measuredCount: number
   return spacingChanged || measuredCount < cardCount
 }
 
+type BorderBoxSize = { inlineSize: number; blockSize: number }
+type ResizeBoxEntry = { target?: Element; borderBoxSize?: ReadonlyArray<BorderBoxSize> }
+
+/** Read border-box dimensions consistently for initial and observer measurements. */
+export function borderBoxDimensions(entry: ResizeBoxEntry, fallback: () => { width: number; height: number }) {
+  const border = entry.borderBoxSize?.[0]
+  return border ? { width: border.inlineSize, height: border.blockSize } : fallback()
+}
+
+export function masonrySpan(height: number, spacing: number) {
+  return Math.ceil(height + spacing)
+}
+
 export function CardCollection({ children, masonry = true, rowGap = 16, ...props }: HTMLAttributes<HTMLDivElement> & { masonry?: boolean; rowGap?: number }) {
   const collection = useRef<HTMLDivElement>(null)
   const measurements = useRef(new WeakMap<HTMLElement, CardSize>())
@@ -46,18 +59,22 @@ export function CardCollection({ children, masonry = true, rowGap = 16, ...props
     const hasMeasurements = !spacingChanged && cards.length > 0 && cards.every(card => measurements.current.has(card))
     const measuredCount = cards.filter(card => measurements.current.has(card) && card.style.gridRowEnd).length
     const shouldMeasure = masonryNeedsMeasurement(cards.length, measuredCount, spacingChanged)
-    const resize = (entries: Array<{ target: Element; contentRect?: Pick<DOMRectReadOnly, 'width' | 'height'> }>) => {
+    const resize = (entries: ResizeBoxEntry[]) => {
       const updates: Array<{ card: HTMLElement; width: number; height: number }> = []
-      for (const { target, contentRect } of entries) {
+      for (const entry of entries) {
+        const target = entry.target
         const card = target as HTMLElement
-        const box = contentRect ?? card.getBoundingClientRect()
+        const box = borderBoxDimensions(entry, () => {
+          const rect = card.getBoundingClientRect()
+          return { width: rect.width, height: rect.height }
+        })
         if (cardSizeChanged(measurements.current.get(card), box.width, box.height)) {
           updates.push({ card, width: box.width, height: box.height })
         }
       }
       for (const { card, width, height } of updates) {
         measurements.current.set(card, { width, height })
-        card.style.gridRowEnd = `span ${Math.ceil(height + spacing)}`
+        card.style.gridRowEnd = `span ${masonrySpan(height, spacing)}`
         if (hasMeasurements) {
           card.style.contentVisibility = 'auto'
           card.style.containIntrinsicSize = masonryIntrinsicSize(height)
