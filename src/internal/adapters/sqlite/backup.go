@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -17,10 +18,10 @@ import (
 // Snapshot writes a consistent SQLite backup using VACUUM INTO. It never
 // copies the live WAL-mode database file directly.
 func (s *Store) Snapshot(ctx context.Context, staging string, includeDownloads bool) ([]backup.File, error) {
-	dbPath := filepath.Join(staging, "tangentry.db")
 	if err := os.MkdirAll(staging, 0700); err != nil {
 		return nil, err
 	}
+	dbPath := filepath.Join(staging, "tangentry.db")
 	if _, err := s.db.ExecContext(ctx, `VACUUM INTO ?`, dbPath); err != nil {
 		return nil, fmt.Errorf("sqlite consistency snapshot: %w", err)
 	}
@@ -59,59 +60,80 @@ func collectTree(root, name, staging string, kind backup.FileType) ([]backup.Fil
 	if excludedBackupComponent(name) {
 		return nil, nil
 	}
-	source := filepath.Join(root, name)
-	info, err := os.Lstat(source)
+	sourceRoot, err := os.OpenRoot(root)
+	if err != nil {
+		return nil, err
+	}
+	defer sourceRoot.Close()
+	info, err := sourceRoot.Lstat(filepath.ToSlash(name))
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return nil, nil
 	}
+	stageRoot, err := os.OpenRoot(staging)
+	if err != nil {
+		return nil, err
+	}
+	defer stageRoot.Close()
 	var out []backup.File
-	err = filepath.Walk(source, func(p string, i os.FileInfo, e error) error {
+	err = fs.WalkDir(sourceRoot.FS(), filepath.ToSlash(name), func(p string, entry fs.DirEntry, e error) error {
 		if e != nil {
 			return e
 		}
-		rel, relErr := filepath.Rel(source, p)
-		if relErr != nil {
-			return relErr
-		}
-		if excludedBackupPath(rel) {
-			if i.IsDir() {
+		base := filepath.Base(p)
+		if excludedBackupComponent(base) {
+			if entry.IsDir() {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if i.IsDir() {
+		if entry.IsDir() {
 			return nil
 		}
-		if i.Mode()&os.ModeSymlink != 0 || !i.Mode().IsRegular() {
-			return filepath.SkipDir
+		if entry.Type()&os.ModeSymlink != 0 {
+			return nil
 		}
-		relRoot, _ := filepath.Rel(root, p)
-		target := filepath.Join(staging, relRoot)
-		if err := os.MkdirAll(filepath.Dir(target), 0700); err != nil {
+		before, err := sourceRoot.Lstat(filepath.ToSlash(p))
+		if err != nil || !before.Mode().IsRegular() {
+			return nil
+		}
+		in, err := sourceRoot.Open(filepath.ToSlash(p))
+		if err != nil {
 			return err
 		}
-		in, e := os.Open(p)
-		if e != nil {
-			return e
+		opened, err := in.Stat()
+		if err != nil || !opened.Mode().IsRegular() || !os.SameFile(before, opened) {
+			in.Close()
+			return backup.ErrInvalidPackage
 		}
-		outFile, e := os.Create(target)
-		if e == nil {
-			_, e = io.Copy(outFile, in)
-			outFile.Close()
+		if err := stageRoot.MkdirAll(filepath.ToSlash(filepath.Dir(p)), 0700); err != nil {
+			in.Close()
+			return err
 		}
-		in.Close()
-		if e != nil {
-			return e
+		outFile, err := stageRoot.OpenFile(filepath.ToSlash(p), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		if err != nil {
+			in.Close()
+			return err
 		}
-		data, e := os.ReadFile(p)
-		if e != nil {
-			return e
+		hash := sha256.New()
+		size, copyErr := io.Copy(io.MultiWriter(outFile, hash), io.LimitReader(in, backup.MaxFileSize+1))
+		inErr := in.Close()
+		outErr := outFile.Close()
+		if copyErr != nil {
+			return copyErr
 		}
-		sum := sha256.Sum256(data)
-		out = append(out, backup.File{Path: filepath.ToSlash(relRoot), Type: kind, Size: int64(len(data)), SHA256: fmt.Sprintf("%x", sum)})
+		if inErr != nil {
+			return inErr
+		}
+		if outErr != nil {
+			return outErr
+		}
+		if size > backup.MaxFileSize {
+			return backup.ErrInvalidPackage
+		}
+		out = append(out, backup.File{Path: filepath.ToSlash(p), Type: kind, Size: size, SHA256: fmt.Sprintf("%x", hash.Sum(nil))})
 		return nil
 	})
 	return out, err
@@ -119,7 +141,7 @@ func collectTree(root, name, staging string, kind backup.FileType) ([]backup.Fil
 
 func excludedBackupComponent(name string) bool {
 	switch strings.ToLower(filepath.Base(filepath.Clean(name))) {
-	case "credentials", "credential", "cookies", "cookie", "models", "model", "tools", "tool", "cache", "caches", "runtime", "keychain", "keychains":
+	case ".tangentry-restore", "credentials", "credential", "cookies", "cookie", "models", "model", "tools", "tool", "cache", "caches", "runtime", "keychain", "keychains":
 		return true
 	default:
 		return false
@@ -136,12 +158,20 @@ func excludedBackupPath(rel string) bool {
 }
 
 func describeFiles(root, dbPath string) ([]backup.File, error) {
-	data, err := os.ReadFile(dbPath)
+	file, err := os.Open(dbPath)
 	if err != nil {
 		return nil, err
 	}
-	sum := fmt.Sprintf("%x", sha256Sum(data))
-	return []backup.File{{Path: "tangentry.db", Type: backup.FileDatabase, Size: int64(len(data)), SHA256: sum}}, nil
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Size() > backup.MaxFileSize {
+		return nil, backup.ErrInvalidPackage
+	}
+	hash := sha256.New()
+	if _, err := io.Copy(hash, io.LimitReader(file, backup.MaxFileSize+1)); err != nil {
+		return nil, err
+	}
+	return []backup.File{{Path: "tangentry.db", Type: backup.FileDatabase, Size: info.Size(), SHA256: fmt.Sprintf("%x", hash.Sum(nil))}}, nil
 }
 
 func (s *Store) BackupTargets(ctx context.Context) ([]backup.Target, error) {

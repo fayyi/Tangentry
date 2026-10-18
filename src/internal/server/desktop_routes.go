@@ -18,5 +18,5 @@ func (b *Backend) route(w http.ResponseWriter, r *http.Request) {
 	if b.routePathSelection(w, r) {
 		return
 	}
-	b.handler.ServeHTTP(w, r)
+	b.applicationHandler().ServeHTTP(w, r)
 }

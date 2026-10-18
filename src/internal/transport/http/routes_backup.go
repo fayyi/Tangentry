@@ -14,4 +14,5 @@ func (h *Handler) registerBackupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/backup/validate", h.backup.validate)
 	mux.HandleFunc("POST /api/backup/restore", h.backup.restore)
 	mux.HandleFunc("POST /api/backup/restore/{id}/confirm", h.backup.confirmRestore)
+	mux.HandleFunc("DELETE /api/backup/restore/{id}", h.backup.cancelRestore)
 }

@@ -4,16 +4,13 @@ package app
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io/fs"
 	"net/http"
 	"os"
-	"path/filepath"
-	"strings"
 	"sync"
-	"time"
 
 	"tangentry/internal/ai"
+	"tangentry/internal/backup"
 	"tangentry/internal/config"
 	"tangentry/internal/credentials"
 	"tangentry/internal/discovery"
@@ -90,6 +87,9 @@ func New(dataDir string, assets fs.FS, options ...Options) (application *Applica
 	if err := os.MkdirAll(dataDir, 0700); err != nil {
 		return nil, err
 	}
+	if err := backup.ApplyPendingRestore(dataDir); err != nil {
+		return nil, err
+	}
 	services, started, err := newServices(dataDir, configuration, option)
 	if err != nil {
 		return nil, err
@@ -115,7 +115,6 @@ func New(dataDir string, assets fs.FS, options ...Options) (application *Applica
 		subscriptions: services.features.sources,
 		dataDir:       dataDir, assets: assets, option: option,
 	}
-	services.runtime.backup.SetRestoreSwitcher(application.switchRestoredData)
 	return application, nil
 }
 
@@ -144,48 +143,3 @@ func (a *Application) HTTPHandler() http.Handler {
 }
 
 func (a *Application) Close() error { return a.runtime.Close() }
-
-func (a *Application) switchRestoredData(ctx context.Context, destination string) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	current, _ := filepath.Abs(a.dataDir)
-	destination, _ = filepath.Abs(destination)
-	if current == destination || strings.HasPrefix(destination, current+string(filepath.Separator)) {
-		return errors.New("restore destination must be outside current data directory")
-	}
-	info, err := os.Lstat(destination)
-	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return errors.New("restore destination is not a safe directory")
-	}
-	if err := a.runtime.Close(); err != nil {
-		return err
-	}
-	rollback := current + ".before-restore-" + time.Now().UTC().Format("20060102T150405.000000000Z")
-	if err := os.Rename(current, rollback); err != nil {
-		return fmt.Errorf("preserve current data directory: %w", err)
-	}
-	if err := os.Rename(destination, current); err != nil {
-		_ = os.Rename(rollback, current)
-		return fmt.Errorf("activate restored data directory: %w", err)
-	}
-	configuration, err := config.Load(current)
-	if err != nil {
-		_ = os.Rename(current, destination)
-		_ = os.Rename(rollback, current)
-		return err
-	}
-	services, started, err := newServices(current, configuration, a.option)
-	if err != nil {
-		_ = os.Rename(current, destination)
-		_ = os.Rename(rollback, current)
-		return err
-	}
-	a.runtime = &runtimeState{handler: newHTTPHandler(newHTTPWiring(services), a.assets), downloads: services.features.downloads, transcription: services.features.transcription, cookies: services.runtime.cookies, closers: started}
-	a.shell = &shellState{downloads: services.features.downloads, models: &modelDirectoryState{modelDownloads: services.features.modelDownloads, transcription: services.features.transcription, modelDir: services.features.modelDir}}
-	a.subscriptions = services.features.sources
-	services.runtime.backup.SetRestoreSwitcher(a.switchRestoredData)
-	return nil
-}

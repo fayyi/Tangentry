@@ -28,11 +28,12 @@ func (backupHTTPFixture) Validate(context.Context, string, string, string) (back
 	return backup.Validation{SnapshotID: "snapshot-1"}, nil
 }
 func (backupHTTPFixture) Restore(context.Context, string, string, string, string) (backup.RestoreResult, error) {
-	return backup.RestoreResult{PlanID: "plan-1", Status: "pending_confirmation", PreRestoreSnapshot: "/tmp/protected"}, nil
+	return backup.RestoreResult{PlanID: "plan-1", Status: "pending_confirmation", StagedID: "stage-1", PreRestoreSnapshotID: "pre-1"}, nil
 }
 func (backupHTTPFixture) ConfirmRestore(context.Context, string) (backup.RestoreResult, error) {
 	return backup.RestoreResult{PlanID: "plan-1", Status: "switched"}, nil
 }
+func (backupHTTPFixture) CancelRestore(context.Context, string) error { return nil }
 
 func TestBackupRestoreRoutesRequireSameOriginAndDoNotEchoPassword(t *testing.T) {
 	h := NewWithDependencies(Dependencies{Backup: backupHTTPFixture{}}, nil)
@@ -48,7 +49,7 @@ func TestBackupRestoreRoutesRequireSameOriginAndDoNotEchoPassword(t *testing.T) 
 	if w := request(http.MethodPost, "/api/backup/validate", `{"targetId":"target-1","snapshotId":"snapshot-1","password":"`+password+`"}`); w.Code != http.StatusOK || strings.Contains(w.Body.String(), password) {
 		t.Fatalf("validate response leaked password or failed: %d %s", w.Code, w.Body.String())
 	}
-	if w := request(http.MethodPost, "/api/backup/restore", `{"targetId":"target-1","snapshotId":"snapshot-1","password":"`+password+`","destination":"/tmp/restore"}`); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "pending_confirmation") || strings.Contains(w.Body.String(), password) {
+	if w := request(http.MethodPost, "/api/backup/restore", `{"targetId":"target-1","snapshotId":"snapshot-1","password":"`+password+`"}`); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "pending_confirmation") || strings.Contains(w.Body.String(), password) {
 		t.Fatalf("restore response: %d %s", w.Code, w.Body.String())
 	}
 	if w := request(http.MethodPost, "/api/backup/restore/plan-1/confirm", "{}"); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "switched") {

@@ -19,7 +19,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -39,9 +39,12 @@ const (
 	KDFKeyLen           = 32
 	SchemaVersion       = 69
 	MaxArchiveSize      = 1 << 30
+	MaxPackageSize      = MaxArchiveSize + (MaxArchiveSize/ChunkSize+2)*64 + headerSize
 	MaxEntries          = 10000
 	MaxFileSize         = 256 << 20
 	MaxCompressionRatio = 1000
+	MaxRestorePlans     = 3
+	RestorePlanTTL      = 24 * time.Hour
 	headerSize          = 46
 )
 
@@ -141,18 +144,167 @@ type Validation struct {
 }
 
 type RestoreResult struct {
-	PlanID             string `json:"planId"`
-	SnapshotID         string `json:"snapshotId"`
-	Destination        string `json:"destination"`
-	PreRestoreSnapshot string `json:"preRestoreSnapshot"`
-	Status             string `json:"status"`
+	PlanID               string `json:"planId"`
+	SnapshotID           string `json:"snapshotId"`
+	StagedID             string `json:"stagedId"`
+	PreRestoreSnapshotID string `json:"preRestoreSnapshotId"`
+	Status               string `json:"status"`
+	RestartRequired      bool   `json:"restartRequired"`
 }
 
 type restorePlan struct {
 	RestoreResult
-	TargetID    string
-	ArchivePath string
-	StagePath   string
+	TargetID      string
+	StagePath     string
+	PreflightPath string
+	CreatedAt     time.Time
+	Manifest      Manifest
+}
+
+func manifestDatabase(files []File) (File, bool) {
+	for _, file := range files {
+		if file.Path == "tangentry.db" && file.Type == FileDatabase {
+			return file, true
+		}
+	}
+	return File{}, false
+}
+
+func validateManifestFiles(files []File) error {
+	if len(files) == 0 || len(files)+1 > MaxEntries {
+		return ErrInvalidPackage
+	}
+	var total int64
+	seen := make(map[string]bool, len(files))
+	for _, file := range files {
+		clean, err := cleanRelative(file.Path)
+		if err != nil || clean != file.Path || seen[clean] || file.Size < 0 || file.Size > MaxFileSize {
+			return ErrInvalidPackage
+		}
+		if file.Path == "tangentry.db" {
+			if file.Type != FileDatabase {
+				return ErrInvalidPackage
+			}
+		} else if file.Type != FileData {
+			return ErrInvalidPackage
+		}
+		seen[clean] = true
+		total += file.Size
+		if total > MaxArchiveSize {
+			return ErrInvalidPackage
+		}
+	}
+	if _, ok := manifestDatabase(files); !ok {
+		return ErrInvalidPackage
+	}
+	return nil
+}
+
+func readLimited(r io.Reader, limit int64) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(r, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, ErrInvalidPackage
+	}
+	return data, nil
+}
+
+func ensurePrivateDir(dir string) error {
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return err
+	}
+	return os.Chmod(dir, 0700)
+}
+
+func chmodTree(root string, fileMode, dirMode os.FileMode) error {
+	return filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return os.Chmod(path, dirMode)
+		}
+		return os.Chmod(path, fileMode)
+	})
+}
+
+func validateStaged(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return ErrInvalidPackage
+	}
+	dbInfo, err := os.Lstat(filepath.Join(path, "tangentry.db"))
+	if err != nil || !dbInfo.Mode().IsRegular() || dbInfo.Mode()&os.ModeSymlink != 0 {
+		return ErrInvalidPackage
+	}
+	return nil
+}
+
+func planPath(workDir, id string) string { return filepath.Join(workDir, "plan-"+id+".json") }
+
+func (s *Service) savePlan(plan restorePlan) error {
+	data, err := json.Marshal(plan)
+	if err != nil {
+		return err
+	}
+	file, err := os.OpenFile(planPath(s.workDir, plan.PlanID), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return err
+	}
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
+	return file.Close()
+}
+
+func (s *Service) cleanExpiredPlans(now time.Time) error {
+	entries, err := os.ReadDir(s.workDir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	type pending struct {
+		path string
+		plan restorePlan
+	}
+	var pendingPlans []pending
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), "plan-") || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		path := filepath.Join(s.workDir, entry.Name())
+		var plan restorePlan
+		data, readErr := os.ReadFile(path)
+		if readErr != nil || json.Unmarshal(data, &plan) != nil || now.Sub(plan.CreatedAt) > RestorePlanTTL {
+			removeAll(path)
+			if plan.StagePath != "" {
+				removeAll(plan.StagePath)
+			}
+			if plan.PreflightPath != "" {
+				removeAll(plan.PreflightPath)
+			}
+			continue
+		}
+		pendingPlans = append(pendingPlans, pending{path: path, plan: plan})
+	}
+	sort.Slice(pendingPlans, func(i, j int) bool { return pendingPlans[i].plan.CreatedAt.Before(pendingPlans[j].plan.CreatedAt) })
+	for len(pendingPlans) > MaxRestorePlans {
+		oldest := pendingPlans[0]
+		pendingPlans = pendingPlans[1:]
+		removeAll(oldest.path)
+		removeAll(oldest.plan.StagePath)
+		removeAll(oldest.plan.PreflightPath)
+	}
+	return nil
 }
 
 type Repository interface {
@@ -171,21 +323,17 @@ type Repository interface {
 type StoreFactory func(Target) (ObjectStore, error)
 
 type Service struct {
-	repo          Repository
-	source        Source
-	stores        StoreFactory
-	workDir       string
-	version       string
-	mu            sync.Mutex
-	plans         map[string]restorePlan
-	switchRestore func(context.Context, string) error
-}
-
-func (s *Service) SetRestoreSwitcher(switcher func(context.Context, string) error) {
-	s.switchRestore = switcher
+	repo    Repository
+	source  Source
+	stores  StoreFactory
+	workDir string
+	version string
+	mu      sync.Mutex
+	plans   map[string]restorePlan
 }
 
 func NewService(repo Repository, source Source, stores StoreFactory, workDir, version string) *Service {
+	_ = cleanupRestoreWorkDir(workDir)
 	return &Service{repo: repo, source: source, stores: stores, workDir: workDir, version: version, plans: make(map[string]restorePlan)}
 }
 
@@ -224,6 +372,9 @@ func (s *Service) create(ctx context.Context, task Task, password string) (Snaps
 		return Snapshot{}, errors.New("backup password is required")
 	}
 	id := randomID()
+	if err := ensurePrivateDir(s.workDir); err != nil {
+		return Snapshot{}, err
+	}
 	stage, err := filepath.Abs(filepath.Join(s.workDir, "backup", id))
 	if err != nil {
 		return Snapshot{}, err
@@ -241,12 +392,56 @@ func (s *Service) create(ctx context.Context, task Task, password string) (Snaps
 		return Snapshot{}, err
 	}
 	manifest := Manifest{FormatVersion: FormatVersion, TangentryVersion: s.version, SchemaVersion: SchemaVersion, SnapshotID: id, CreatedAt: time.Now().UTC(), TaskID: task.ID, IncludeDownloads: task.IncludeDownloads, Files: files, KDF: KDFParams{Name: "Argon2id", Version: 1, Salt: hex.EncodeToString(salt), Time: KDFTime, Memory: KDFMemory, Threads: KDFThreads, KeyLen: KDFKeyLen}, AEAD: AEADParams{Name: "AES-256-GCM", Version: 1, ChunkSize: ChunkSize, NonceSize: NonceSize}}
-	archive, err := archiveFiles(stage, &manifest)
+	if err := validateManifestFiles(manifest.Files); err != nil {
+		return Snapshot{}, fmt.Errorf("backup source omitted tangentry.db")
+	}
+	archivePath := filepath.Join(s.workDir, "archive-"+id+".zip")
+	archive, err := os.OpenFile(archivePath, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return Snapshot{}, err
 	}
-	encoded, err := Encrypt(archive, password, &manifest)
+	defer removeAll(archivePath)
+	if err := archiveFilesTo(stage, &manifest, archive); err != nil {
+		archive.Close()
+		return Snapshot{}, err
+	}
+	archiveInfo, err := archive.Stat()
+	if err != nil || archiveInfo.Size() > MaxArchiveSize {
+		archive.Close()
+		return Snapshot{}, ErrInvalidPackage
+	}
+	if _, err := archive.Seek(0, io.SeekStart); err != nil {
+		archive.Close()
+		return Snapshot{}, err
+	}
+	packagePath := filepath.Join(s.workDir, "package-"+id+".tgb")
+	packageFile, err := os.OpenFile(packagePath, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
+		archive.Close()
+		return Snapshot{}, err
+	}
+	defer removeAll(packagePath)
+	defer packageFile.Close()
+	if err := EncryptReader(archive, archiveInfo.Size(), password, &manifest, packageFile); err != nil {
+		archive.Close()
+		packageFile.Close()
+		return Snapshot{}, err
+	}
+	if err := archive.Close(); err != nil {
+		packageFile.Close()
+		return Snapshot{}, err
+	}
+	if err := packageFile.Sync(); err != nil {
+		packageFile.Close()
+		return Snapshot{}, err
+	}
+	packageInfo, err := packageFile.Stat()
+	if err != nil || packageInfo.Size() > MaxPackageSize {
+		packageFile.Close()
+		return Snapshot{}, ErrInvalidPackage
+	}
+	if _, err := packageFile.Seek(0, io.SeekStart); err != nil {
+		packageFile.Close()
 		return Snapshot{}, err
 	}
 	name := "tangentry/v1/snapshots/" + id + ".tgb"
@@ -260,13 +455,23 @@ func (s *Service) create(ctx context.Context, task Task, password string) (Snaps
 		}
 		store, e := s.stores(target)
 		if e != nil {
+			packageFile.Close()
 			return Snapshot{}, e
 		}
-		if e = store.Upload(ctx, name, bytes.NewReader(encoded)); e != nil {
+		defer closeStore(store)
+		if _, e = packageFile.Seek(0, io.SeekStart); e != nil {
+			packageFile.Close()
+			return Snapshot{}, e
+		}
+		if e = store.Upload(ctx, name, packageFile); e != nil {
+			packageFile.Close()
 			return Snapshot{}, e
 		}
 	}
-	snap := Snapshot{ID: id, TaskID: task.ID, CreatedAt: manifest.CreatedAt, Size: int64(len(encoded)), Status: "succeeded"}
+	if err := packageFile.Close(); err != nil {
+		return Snapshot{}, err
+	}
+	snap := Snapshot{ID: id, TaskID: task.ID, CreatedAt: manifest.CreatedAt, Size: packageInfo.Size(), Status: "succeeded"}
 	if err = s.repo.SaveSnapshot(ctx, snap); err != nil {
 		return Snapshot{}, err
 	}
@@ -274,6 +479,12 @@ func (s *Service) create(ctx context.Context, task Task, password string) (Snaps
 }
 
 func (s *Service) Validate(ctx context.Context, targetID, snapshotID, password string) (Validation, error) {
+	if !validSnapshotID(snapshotID) {
+		return Validation{}, ErrInvalidPackage
+	}
+	if err := ensurePrivateDir(s.workDir); err != nil {
+		return Validation{}, err
+	}
 	target, err := s.repo.GetTarget(ctx, targetID)
 	if err != nil {
 		return Validation{}, err
@@ -282,29 +493,54 @@ func (s *Service) Validate(ctx context.Context, targetID, snapshotID, password s
 	if err != nil {
 		return Validation{}, err
 	}
+	defer closeStore(store)
 	r, err := store.Read(ctx, "tangentry/v1/snapshots/"+snapshotID+".tgb")
 	if err != nil {
 		return Validation{}, err
 	}
 	defer r.Close()
-	b, err := io.ReadAll(r)
+	plainPath := filepath.Join(s.workDir, "validate-"+randomID()+".zip")
+	plainFile, err := os.OpenFile(plainPath, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return Validation{}, err
 	}
-	plain, err := Decrypt(b, password)
+	defer removeAll(plainPath)
+	defer plainFile.Close()
+	packageSize, err := DecryptReader(r, password, plainFile)
 	if err != nil {
 		return Validation{}, err
 	}
-	manifest, err := validateArchive(plain, snapshotID)
+	if _, err := plainFile.Seek(0, io.SeekStart); err != nil {
+		return Validation{}, err
+	}
+	plainInfo, err := plainFile.Stat()
 	if err != nil {
 		return Validation{}, err
 	}
-	return Validation{SnapshotID: snapshotID, Manifest: manifest, Size: int64(len(b))}, nil
+	manifest, err := validateArchiveReader(plainFile, plainInfo.Size(), snapshotID)
+	if err != nil {
+		return Validation{}, err
+	}
+	return Validation{SnapshotID: snapshotID, Manifest: manifest, Size: packageSize}, nil
 }
 
 func (s *Service) Restore(ctx context.Context, targetID, snapshotID, password, destination string) (RestoreResult, error) {
-	if !filepath.IsAbs(destination) {
-		return RestoreResult{}, errors.New("restore destination must be an absolute directory")
+	if !validSnapshotID(snapshotID) {
+		return RestoreResult{}, ErrInvalidPackage
+	}
+	_ = destination // retained for wire compatibility; restart applies to the active data directory.
+	if err := s.cleanExpiredPlans(time.Now()); err != nil {
+		return RestoreResult{}, err
+	}
+	pending, err := pendingPlanCount(s.workDir)
+	if err != nil {
+		return RestoreResult{}, err
+	}
+	if pending >= MaxRestorePlans {
+		return RestoreResult{}, errors.New("too many pending restore plans")
+	}
+	if err := ensurePrivateDir(s.workDir); err != nil {
+		return RestoreResult{}, err
 	}
 	target, err := s.repo.GetTarget(ctx, targetID)
 	if err != nil {
@@ -314,154 +550,333 @@ func (s *Service) Restore(ctx context.Context, targetID, snapshotID, password, d
 	if err != nil {
 		return RestoreResult{}, err
 	}
+	defer closeStore(store)
 	r, err := store.Read(ctx, "tangentry/v1/snapshots/"+snapshotID+".tgb")
 	if err != nil {
 		return RestoreResult{}, err
 	}
 	defer r.Close()
-	b, err := io.ReadAll(r)
+	if err := ensurePrivateDir(s.workDir); err != nil {
+		return RestoreResult{}, err
+	}
+	plainPath := filepath.Join(s.workDir, "restore-"+randomID()+".zip")
+	plainFile, err := os.OpenFile(plainPath, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return RestoreResult{}, err
 	}
-	plain, err := Decrypt(b, password)
+	defer removeAll(plainPath)
+	defer plainFile.Close()
+	_, err = DecryptReader(r, password, plainFile)
 	if err != nil {
 		return RestoreResult{}, err
 	}
-	if _, err := validateArchive(plain, snapshotID); err != nil {
+	if _, err := plainFile.Seek(0, io.SeekStart); err != nil {
+		return RestoreResult{}, err
+	}
+	plainInfo, err := plainFile.Stat()
+	if err != nil {
+		return RestoreResult{}, err
+	}
+	validatedManifest, err := validateArchiveReader(plainFile, plainInfo.Size(), snapshotID)
+	if err != nil {
 		return RestoreResult{}, err
 	}
 	if s.source == nil {
 		return RestoreResult{}, errors.New("restore source unavailable")
 	}
-	if _, statErr := os.Stat(destination); statErr == nil {
-		return RestoreResult{}, errors.New("restore destination must not already exist")
-	} else if !os.IsNotExist(statErr) {
-		return RestoreResult{}, statErr
+	if err := ensurePrivateDir(s.workDir); err != nil {
+		return RestoreResult{}, err
 	}
-	preflight := filepath.Join(s.workDir, "restore", randomID())
-	if err := ensureDir(preflight); err != nil {
+	id := randomID()
+	preflightID := randomID()
+	preflight := filepath.Join(s.workDir, "pre-"+preflightID)
+	if err := ensurePrivateDir(preflight); err != nil {
 		return RestoreResult{}, err
 	}
 	if _, err := s.source.Snapshot(ctx, preflight, false); err != nil {
+		removeAll(preflight)
 		return RestoreResult{}, fmt.Errorf("create pre-restore snapshot: %w", err)
 	}
-	archivePath := filepath.Join(s.workDir, "restore", "plan-"+randomID()+".zip")
-	if err := os.WriteFile(archivePath, plain, 0600); err != nil {
+	if err := chmodTree(preflight, 0600, 0700); err != nil {
+		removeAll(preflight)
 		return RestoreResult{}, err
 	}
-	stagePath := filepath.Join(s.workDir, "restore", "stage-"+randomID())
-	if err := extractArchive(plain, stagePath); err != nil {
-		removeAll(archivePath)
+	stagePath := filepath.Join(s.workDir, "staged-"+id)
+	if _, err := plainFile.Seek(0, io.SeekStart); err != nil {
+		removeAll(preflight)
+		return RestoreResult{}, err
+	}
+	if err := extractArchiveReader(plainFile, plainInfo.Size(), stagePath); err != nil {
+		removeAll(preflight)
 		removeAll(stagePath)
 		return RestoreResult{}, fmt.Errorf("stage restored data: %w", err)
 	}
-	result := RestoreResult{PlanID: randomID(), SnapshotID: snapshotID, Destination: destination, PreRestoreSnapshot: preflight, Status: "pending_confirmation"}
+	if err := chmodTree(stagePath, 0600, 0700); err != nil {
+		removeAll(preflight)
+		removeAll(stagePath)
+		return RestoreResult{}, err
+	}
+	result := RestoreResult{PlanID: id, SnapshotID: snapshotID, StagedID: id, PreRestoreSnapshotID: preflightID, Status: "pending_confirmation"}
+	plan := restorePlan{RestoreResult: result, TargetID: targetID, StagePath: stagePath, PreflightPath: preflight, CreatedAt: time.Now().UTC(), Manifest: validatedManifest}
+	if err := s.savePlan(plan); err != nil {
+		removeAll(preflight)
+		removeAll(stagePath)
+		return RestoreResult{}, err
+	}
 	s.mu.Lock()
-	s.plans[result.PlanID] = restorePlan{RestoreResult: result, TargetID: targetID, ArchivePath: archivePath, StagePath: stagePath}
+	s.plans[result.PlanID] = plan
 	s.mu.Unlock()
 	return result, nil
+}
+
+func pendingPlanCount(workDir string) (int, error) {
+	entries, err := os.ReadDir(workDir)
+	if os.IsNotExist(err) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "plan-") && strings.HasSuffix(entry.Name(), ".json") {
+			count++
+		}
+	}
+	return count, nil
 }
 
 func (s *Service) ConfirmRestore(ctx context.Context, planID string) (RestoreResult, error) {
 	if err := ctx.Err(); err != nil {
 		return RestoreResult{}, err
 	}
+	if !validRestoreID(planID) {
+		return RestoreResult{}, errors.New("restore plan not found")
+	}
 	s.mu.Lock()
 	plan, ok := s.plans[planID]
 	s.mu.Unlock()
 	if !ok {
-		return RestoreResult{}, errors.New("restore plan not found")
+		data, err := os.ReadFile(planPath(s.workDir, planID))
+		if err != nil {
+			return RestoreResult{}, errors.New("restore plan not found")
+		}
+		if err := json.Unmarshal(data, &plan); err != nil || plan.PlanID != planID {
+			return RestoreResult{}, errors.New("restore plan not found")
+		}
 	}
-	data, err := os.ReadFile(plan.ArchivePath)
+	if plan.Status == "restart_required" {
+		return plan.RestoreResult, nil
+	}
+	if time.Since(plan.CreatedAt) > RestorePlanTTL {
+		_ = s.CancelRestore(ctx, planID)
+		return RestoreResult{}, errors.New("restore plan expired")
+	}
+	if err := validateStaged(plan.StagePath); err != nil {
+		return RestoreResult{}, err
+	}
+	if err := validateStagedManifest(plan.StagePath, plan.Manifest); err != nil {
+		return RestoreResult{}, err
+	}
+	rollbackID := randomID()
+	entries, err := stagedEntries(plan.StagePath)
 	if err != nil {
 		return RestoreResult{}, err
 	}
-	if _, err = validateArchive(data, plan.SnapshotID); err != nil {
+	current, err := currentEntries(filepath.Dir(s.workDir))
+	if err != nil {
 		return RestoreResult{}, err
 	}
-	if info, statErr := os.Lstat(plan.Destination); statErr == nil {
-		if info.Mode()&os.ModeSymlink != 0 || info.IsDir() || info.Mode().IsRegular() {
-			return RestoreResult{}, errors.New("restore destination must not already exist")
-		}
-		return RestoreResult{}, ErrInvalidPackage
-	} else if !os.IsNotExist(statErr) {
-		return RestoreResult{}, statErr
-	}
-	// Rebuild the staged directory after the second validation, so any
-	// tampering with the preflight staging tree is discarded before activation.
-	removeAll(plan.StagePath)
-	if err = extractArchive(data, plan.StagePath); err != nil {
-		removeAll(plan.StagePath)
+	if err := writeRestoreJournal(s.workDir, RestoreJournal{StagedID: plan.StagedID, RollbackID: rollbackID, PreflightID: plan.PreRestoreSnapshotID, Entries: entries, CurrentEntries: current, Manifest: plan.Manifest, Step: "confirmed"}); err != nil {
 		return RestoreResult{}, err
 	}
-	if err = os.Rename(plan.StagePath, plan.Destination); err != nil {
-		removeAll(plan.StagePath)
-		return RestoreResult{}, err
-	}
-	if s.switchRestore != nil {
-		if err := s.switchRestore(ctx, plan.Destination); err != nil {
-			return RestoreResult{}, err
-		}
-		plan.Status = "switched"
-	} else {
-		plan.Status = "restored_new_location"
-	}
-	// Keep the encrypted plan until switching succeeds so a transient runtime
-	// failure can be retried without asking for the password again.
-	removeAll(plan.ArchivePath)
+	plan.Status = "restart_required"
+	plan.RestartRequired = true
 	s.mu.Lock()
 	s.plans[planID] = plan
 	s.mu.Unlock()
+	_ = os.Remove(planPath(s.workDir, planID))
 	return plan.RestoreResult, nil
 }
 
+func (s *Service) CancelRestore(ctx context.Context, planID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	plan, ok := s.plans[planID]
+	if ok {
+		delete(s.plans, planID)
+	}
+	s.mu.Unlock()
+	if !ok {
+		if !validRestoreID(planID) {
+			return os.ErrNotExist
+		}
+		data, err := os.ReadFile(planPath(s.workDir, planID))
+		if err != nil || json.Unmarshal(data, &plan) != nil || plan.PlanID != planID {
+			return os.ErrNotExist
+		}
+	}
+	return errors.Join(removeAllErr(plan.StagePath), removeAllErr(plan.PreflightPath), os.Remove(planPath(s.workDir, planID)))
+}
+
+func validSnapshotID(id string) bool {
+	if len(id) == 0 || len(id) > 128 {
+		return false
+	}
+	for _, char := range id {
+		if !(char >= 'a' && char <= 'z') && !(char >= 'A' && char <= 'Z') && !(char >= '0' && char <= '9') && char != '-' && char != '_' {
+			return false
+		}
+	}
+	return true
+}
+
+func validateStagedManifest(stage string, manifest Manifest) error {
+	if err := validateManifestFiles(manifest.Files); err != nil {
+		return err
+	}
+	root, err := os.OpenRoot(stage)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	for _, expected := range manifest.Files {
+		before, err := root.Lstat(expected.Path)
+		if err != nil || !before.Mode().IsRegular() || before.Mode()&os.ModeSymlink != 0 {
+			return ErrInvalidPackage
+		}
+		file, err := root.Open(expected.Path)
+		if err != nil {
+			return ErrInvalidPackage
+		}
+		info, err := file.Stat()
+		if err != nil || !info.Mode().IsRegular() || !os.SameFile(before, info) || info.Size() != expected.Size {
+			file.Close()
+			return ErrInvalidPackage
+		}
+		hash := sha256.New()
+		n, copyErr := io.Copy(hash, io.LimitReader(file, MaxFileSize+1))
+		closeErr := file.Close()
+		if copyErr != nil || closeErr != nil || n != expected.Size || fmt.Sprintf("%x", hash.Sum(nil)) != strings.ToLower(expected.SHA256) {
+			return ErrInvalidPackage
+		}
+	}
+	return nil
+}
+
+func closeStore(store ObjectStore) {
+	if closer, ok := store.(interface{ Close() error }); ok {
+		_ = closer.Close()
+	}
+}
+
 func Encrypt(archive []byte, password string, manifest *Manifest) ([]byte, error) {
+	if int64(len(archive)) > MaxArchiveSize {
+		return nil, ErrInvalidPackage
+	}
+	var out bytes.Buffer
+	if err := EncryptReader(bytes.NewReader(archive), int64(len(archive)), password, manifest, &out); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
+}
+
+func EncryptReader(archive io.Reader, original int64, password string, manifest *Manifest, out io.Writer) error {
+	if original < 0 || original > MaxArchiveSize {
+		return ErrInvalidPackage
+	}
 	salt, err := hex.DecodeString(manifest.KDF.Salt)
 	if len(salt) != SaltSize {
 		salt = make([]byte, SaltSize)
 		if _, err := rand.Read(salt); err != nil {
-			return nil, err
+			return err
 		}
 		manifest.KDF.Salt = hex.EncodeToString(salt)
 	}
 	key := argon2.IDKey([]byte(password), salt, KDFTime, KDFMemory, KDFThreads, KDFKeyLen)
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	aead, err := cipher.NewGCMWithNonceSize(block, NonceSize)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	var out bytes.Buffer
-	out.WriteString(Magic)
-	out.WriteByte(byte(FormatVersion))
-	out.Write(salt)
-	binary.Write(&out, binary.BigEndian, uint32(KDFTime))
-	binary.Write(&out, binary.BigEndian, uint32(KDFMemory))
-	out.WriteByte(byte(KDFThreads))
-	binary.Write(&out, binary.BigEndian, uint32(KDFKeyLen))
-	binary.Write(&out, binary.BigEndian, uint32(ChunkSize))
-	binary.Write(&out, binary.BigEndian, uint64(len(archive)))
-	header := append([]byte(nil), out.Bytes()...)
-	chunks := (len(archive) + ChunkSize - 1) / ChunkSize
+	header := make([]byte, headerSize)
+	copy(header[:4], Magic)
+	header[4] = byte(FormatVersion)
+	copy(header[5:21], salt)
+	binary.BigEndian.PutUint32(header[21:25], KDFTime)
+	binary.BigEndian.PutUint32(header[25:29], KDFMemory)
+	header[29] = byte(KDFThreads)
+	binary.BigEndian.PutUint32(header[30:34], KDFKeyLen)
+	binary.BigEndian.PutUint32(header[34:38], ChunkSize)
+	binary.BigEndian.PutUint64(header[38:46], uint64(original))
+	if _, err := out.Write(header); err != nil {
+		return err
+	}
+	chunks := (original + ChunkSize - 1) / ChunkSize
 	if chunks == 0 {
 		chunks = 1
 	}
-	for offset, index := 0, uint64(0); index < uint64(chunks); offset, index = offset+ChunkSize, index+1 {
-		end := min(offset+ChunkSize, len(archive))
+	buf := make([]byte, ChunkSize)
+	for index := int64(0); index < chunks; index++ {
+		want := ChunkSize
+		if remaining := original - index*ChunkSize; remaining < int64(want) {
+			want = int(remaining)
+		}
+		read := 0
+		for read < want {
+			n, readErr := archive.Read(buf[read:want])
+			read += n
+			if readErr != nil {
+				if readErr == io.EOF && read == want {
+					break
+				}
+				return ErrInvalidPackage
+			}
+			if n == 0 {
+				return ErrInvalidPackage
+			}
+		}
 		nonce := make([]byte, NonceSize)
-		binary.BigEndian.PutUint64(nonce[4:], index)
-		sealed := aead.Seal(nil, nonce, archive[offset:end], header)
-		binary.Write(&out, binary.BigEndian, uint32(len(sealed)))
-		out.Write(sealed)
+		binary.BigEndian.PutUint64(nonce[4:], uint64(index))
+		sealed := aead.Seal(nil, nonce, buf[:want], header)
+		var length [4]byte
+		binary.BigEndian.PutUint32(length[:], uint32(len(sealed)))
+		if _, err := out.Write(length[:]); err != nil {
+			return err
+		}
+		if _, err := out.Write(sealed); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func Decrypt(data []byte, password string) ([]byte, error) {
+	var out bytes.Buffer
+	if _, err := DecryptReader(bytes.NewReader(data), password, &out); err != nil {
+		return nil, err
 	}
 	return out.Bytes(), nil
 }
 
-func Decrypt(data []byte, password string) ([]byte, error) {
-	if len(data) < headerSize || string(data[:4]) != Magic || int(data[4]) != FormatVersion {
-		return nil, ErrInvalidPackage
+func DecryptReader(input io.Reader, password string, output io.Writer) (int64, error) {
+	var header [headerSize]byte
+	read, err := io.ReadFull(input, header[:])
+	if err != nil || read != headerSize || string(header[:4]) != Magic || int(header[4]) != FormatVersion {
+		return int64(read), ErrInvalidPackage
+	}
+	consumed := int64(headerSize)
+	if consumed > MaxPackageSize {
+		return consumed, ErrInvalidPackage
+	}
+	data := header[:]
+	if len(data) < headerSize {
+		return consumed, ErrInvalidPackage
 	}
 	salt := data[5 : 5+SaltSize]
 	timeParam := binary.BigEndian.Uint32(data[21:25])
@@ -470,115 +885,169 @@ func Decrypt(data []byte, password string) ([]byte, error) {
 	keyLenParam := binary.BigEndian.Uint32(data[30:34])
 	chunk := binary.BigEndian.Uint32(data[34:38])
 	original := binary.BigEndian.Uint64(data[38:46])
-	if original > MaxArchiveSize {
-		return nil, ErrInvalidPackage
+	if original > MaxArchiveSize || chunk != ChunkSize {
+		return consumed, ErrInvalidPackage
 	}
 	if timeParam != KDFTime || memoryParam != KDFMemory || threadsParam != KDFThreads || keyLenParam != KDFKeyLen {
-		return nil, ErrInvalidPackage
-	}
-	if chunk == 0 || chunk > 64*1024*1024 {
-		return nil, ErrInvalidPackage
+		return consumed, ErrInvalidPackage
 	}
 	key := argon2.IDKey([]byte(password), salt, KDFTime, KDFMemory, KDFThreads, KDFKeyLen)
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, err
+		return consumed, err
 	}
 	aead, err := cipher.NewGCMWithNonceSize(block, NonceSize)
 	if err != nil {
-		return nil, err
+		return consumed, err
 	}
-	var out bytes.Buffer
-	header := append([]byte(nil), data[:headerSize]...)
-	pos := headerSize
+	headerBytes := append([]byte(nil), header[:]...)
 	var index uint64
 	expectedChunks := (original + uint64(chunk) - 1) / uint64(chunk)
 	if expectedChunks == 0 {
 		expectedChunks = 1
 	}
 	for index < expectedChunks {
-		if pos+4 > len(data) {
-			return nil, ErrInvalidPackage
+		var length [4]byte
+		if _, err := io.ReadFull(input, length[:]); err != nil {
+			return consumed, ErrInvalidPackage
 		}
-		size := int(binary.BigEndian.Uint32(data[pos:]))
-		pos += 4
-		if size < aead.Overhead() || pos+size > len(data) {
-			return nil, ErrInvalidPackage
+		consumed += 4
+		size := int(binary.BigEndian.Uint32(length[:]))
+		plainSize := int64(chunk)
+		if remain := int64(original) - int64(index)*int64(chunk); remain < plainSize {
+			plainSize = remain
 		}
+		if size != int(plainSize)+aead.Overhead() || consumed+int64(size) > MaxPackageSize {
+			return consumed, ErrInvalidPackage
+		}
+		sealed := make([]byte, size)
+		if _, err := io.ReadFull(input, sealed); err != nil {
+			return consumed, ErrInvalidPackage
+		}
+		consumed += int64(size)
 		nonce := make([]byte, NonceSize)
 		binary.BigEndian.PutUint64(nonce[4:], index)
-		plain, e := aead.Open(nil, nonce, data[pos:pos+size], header)
+		plain, e := aead.Open(nil, nonce, sealed, headerBytes)
 		if e != nil {
-			return nil, ErrBadPassword
+			return consumed, ErrBadPassword
 		}
-		out.Write(plain)
-		if len(plain) > int(chunk) || out.Len() > int(original) {
-			return nil, ErrInvalidPackage
+		if int64(len(plain)) != plainSize {
+			return consumed, ErrInvalidPackage
 		}
-		pos += size
+		if _, err := output.Write(plain); err != nil {
+			return consumed, err
+		}
 		index++
 	}
-	if out.Len() != int(original) || pos != len(data) {
-		return nil, ErrInvalidPackage
+	var trailing [1]byte
+	if n, err := input.Read(trailing[:]); n != 0 || err == nil {
+		return consumed + int64(n), ErrInvalidPackage
+	} else if err != io.EOF {
+		return consumed, err
 	}
-	return out.Bytes(), nil
+	if consumed > MaxPackageSize {
+		return consumed, ErrInvalidPackage
+	}
+	return consumed, nil
 }
 
 func archiveFiles(stage string, manifest *Manifest) ([]byte, error) {
-	var out bytes.Buffer
-	zw := zip.NewWriter(&out)
-	raw, err := json.Marshal(manifest)
-	if err != nil {
-		return nil, err
-	}
-	w, err := zw.Create("manifest.json")
-	if err != nil {
-		return nil, err
-	}
-	if _, err = w.Write(raw); err != nil {
-		return nil, err
-	}
-	for _, file := range manifest.Files {
-		clean, err := cleanRelative(file.Path)
-		if err != nil {
-			return nil, err
-		}
-		src := filepath.Join(stage, filepath.FromSlash(clean))
-		info, err := os.Lstat(src)
-		if err != nil || !info.Mode().IsRegular() || hasMultipleLinks(info) {
-			return nil, ErrInvalidPackage
-		}
-		inFile, err := open(src)
-		if err != nil {
-			return nil, err
-		}
-		in, err := io.ReadAll(inFile)
-		inFile.Close()
-		if err != nil {
-			return nil, err
-		}
-		w, err := zw.Create(clean)
-		if err != nil {
-			return nil, err
-		}
-		if _, err = w.Write(in); err != nil {
-			return nil, err
-		}
-	}
-	if err = zw.Close(); err != nil {
+	var out limitedBuffer
+	if err := archiveFilesTo(stage, manifest, &out); err != nil {
 		return nil, err
 	}
 	return out.Bytes(), nil
 }
 
+func archiveFilesTo(stage string, manifest *Manifest, output io.Writer) error {
+	limited := &countingLimitWriter{writer: output}
+	zw := zip.NewWriter(limited)
+	raw, err := json.Marshal(manifest)
+	if err != nil {
+		return err
+	}
+	w, err := zw.Create("manifest.json")
+	if err != nil {
+		return err
+	}
+	if _, err = w.Write(raw); err != nil {
+		return err
+	}
+	root, err := os.OpenRoot(stage)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	for _, file := range manifest.Files {
+		clean, err := cleanRelative(file.Path)
+		if err != nil {
+			return err
+		}
+		info, err := root.Lstat(filepath.ToSlash(clean))
+		if err != nil || !info.Mode().IsRegular() {
+			return ErrInvalidPackage
+		}
+		inFile, err := root.Open(filepath.ToSlash(clean))
+		if err != nil {
+			return err
+		}
+		w, err := zw.Create(clean)
+		if err != nil {
+			inFile.Close()
+			return err
+		}
+		written, copyErr := io.Copy(w, io.LimitReader(inFile, MaxFileSize+1))
+		closeErr := inFile.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		if closeErr != nil || written > MaxFileSize || written != file.Size {
+			return ErrInvalidPackage
+		}
+	}
+	if err = zw.Close(); err != nil {
+		return err
+	}
+	return nil
+}
+
+type limitedBuffer struct {
+	bytes.Buffer
+}
+
+func (b *limitedBuffer) Write(p []byte) (int, error) {
+	if int64(b.Len()+len(p)) > MaxArchiveSize {
+		return 0, ErrInvalidPackage
+	}
+	return b.Buffer.Write(p)
+}
+
+type countingLimitWriter struct {
+	writer io.Writer
+	total  int64
+}
+
+func (w *countingLimitWriter) Write(p []byte) (int, error) {
+	if w.total+int64(len(p)) > MaxArchiveSize {
+		return 0, ErrInvalidPackage
+	}
+	n, err := w.writer.Write(p)
+	w.total += int64(n)
+	return n, err
+}
+
 func extractArchive(data []byte, destination string) error {
-	if len(data) > MaxArchiveSize {
+	return extractArchiveReader(bytes.NewReader(data), int64(len(data)), destination)
+}
+
+func extractArchiveReader(source io.ReaderAt, size int64, destination string) error {
+	if size > MaxArchiveSize {
 		return fmt.Errorf("archive exceeds limit: %w", ErrInvalidPackage)
 	}
 	if err := safeDestinationDir(destination); err != nil {
 		return fmt.Errorf("restore destination: %w", err)
 	}
-	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	zr, err := zip.NewReader(source, size)
 	if err != nil {
 		return err
 	}
@@ -611,14 +1080,20 @@ func extractArchive(data []byte, destination string) error {
 		if err = safeRestoreParents(destination, filepath.Dir(target)); err != nil {
 			return fmt.Errorf("restore parent %q: %w", filepath.Dir(target), err)
 		}
+		root, rootErr := os.OpenRoot(destination)
+		if rootErr != nil {
+			return rootErr
+		}
 		r, e := f.Open()
 		if e != nil {
+			root.Close()
 			return e
 		}
-		if existing, statErr := os.Lstat(target); statErr == nil && existing.Mode()&os.ModeSymlink != 0 {
+		if existing, statErr := root.Lstat(filepath.ToSlash(clean)); statErr == nil && existing.Mode()&os.ModeSymlink != 0 {
+			root.Close()
 			return fmt.Errorf("target symlink: %w", ErrInvalidPackage)
 		}
-		out, e := create(target)
+		out, e := root.OpenFile(filepath.ToSlash(clean), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 		if e == nil {
 			written, copyErr := io.Copy(out, io.LimitReader(r, MaxFileSize+1))
 			if copyErr != nil {
@@ -626,9 +1101,10 @@ func extractArchive(data []byte, destination string) error {
 			} else if written > MaxFileSize || written != int64(f.UncompressedSize64) {
 				e = ErrInvalidPackage
 			}
-			out.Close()
+			_ = out.Close()
 		}
 		r.Close()
+		root.Close()
 		if e != nil {
 			if errors.Is(e, os.ErrExist) {
 				return fmt.Errorf("restore target already exists: %w", e)
@@ -640,10 +1116,14 @@ func extractArchive(data []byte, destination string) error {
 }
 
 func validateArchive(data []byte, snapshotID string) (Manifest, error) {
-	if len(data) > MaxArchiveSize {
+	return validateArchiveReader(bytes.NewReader(data), int64(len(data)), snapshotID)
+}
+
+func validateArchiveReader(source io.ReaderAt, size int64, snapshotID string) (Manifest, error) {
+	if size > MaxArchiveSize {
 		return Manifest{}, ErrInvalidPackage
 	}
-	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	zr, err := zip.NewReader(source, size)
 	if err != nil {
 		return Manifest{}, err
 	}
@@ -692,6 +1172,9 @@ func validateArchive(data []byte, snapshotID string) (Manifest, error) {
 		return Manifest{}, ErrInvalidPackage
 	}
 	if len(manifest.Files) == 0 || len(manifest.Files)+1 != len(zr.File) {
+		return Manifest{}, ErrInvalidPackage
+	}
+	if err := validateManifestFiles(manifest.Files); err != nil {
 		return Manifest{}, ErrInvalidPackage
 	}
 	expected := map[string]bool{"manifest.json": true}
@@ -743,28 +1226,6 @@ func max64(a, b uint64) uint64 {
 		return a
 	}
 	return b
-}
-
-func hasMultipleLinks(info os.FileInfo) bool {
-	sys := info.Sys()
-	if sys == nil {
-		return false
-	}
-	v := reflect.ValueOf(sys)
-	if v.Kind() == reflect.Pointer {
-		if v.IsNil() {
-			return false
-		}
-		v = v.Elem()
-	}
-	if v.Kind() != reflect.Struct {
-		return false
-	}
-	links := v.FieldByName("Nlink")
-	if !links.IsValid() || !links.CanUint() {
-		return false
-	}
-	return links.Uint() > 1
 }
 
 func safeMkdirParents(dir string) error {

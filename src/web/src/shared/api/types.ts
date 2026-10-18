@@ -248,7 +248,7 @@ export interface BackupTarget { id: string; name: string; type: 'local'; path?: 
 export interface BackupTask { id: string; name: string; targetIds: string[]; includeDownloads: boolean; retention: number; enabled: boolean }
 export interface BackupSnapshot { id: string; taskId?: string; createdAt: string; size: number; status: string }
 export interface BackupValidation { snapshotId: string; size: number; manifest: { formatVersion: number; schemaVersion: number; snapshotID: string; includeDownloads: boolean; files: Array<{ path: string; type: string; size: number; sha256: string }> } }
-export interface BackupRestoreResult { planId: string; snapshotId: string; destination: string; preRestoreSnapshot: string; status: string }
+export interface BackupRestoreResult { planId: string; snapshotId: string; stagedId: string; preRestoreSnapshotId: string; status: string; restartRequired: boolean }
 
 export interface SubtitleCue {
   start: number

@@ -63,10 +63,7 @@ func openRuntimeResources(dataDir string, configuration config.Config, option Op
 		return nil, err
 	}
 	records := repositories{xiaohongshu: store, subscription: store}
-	// Keep restore plans and the pre-restore snapshot outside dataDir. The
-	// application may atomically rename dataDir during confirmation; sibling
-	// staging keeps the returned protection path valid for rollback afterwards.
-	backupWorkDir := filepath.Join(filepath.Dir(dataDir), ".tangentry-backup-work")
+	backupWorkDir := filepath.Join(dataDir, ".tangentry-restore")
 	backupService := backup.NewService(store, store, func(target backup.Target) (backup.ObjectStore, error) {
 		if target.Type != "local" {
 			return nil, fmt.Errorf("unsupported backup target type")

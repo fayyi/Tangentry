@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strings"
 	"tangentry/internal/backup"
 )
 
@@ -75,19 +74,14 @@ func (h *backupHandler) run(w http.ResponseWriter, r *http.Request) {
 }
 func (h *backupHandler) restore(w http.ResponseWriter, r *http.Request) {
 	var v struct {
-		TargetID    string `json:"targetId"`
-		SnapshotID  string `json:"snapshotId"`
-		Password    string `json:"password"`
-		Destination string `json:"destination"`
+		TargetID   string `json:"targetId"`
+		SnapshotID string `json:"snapshotId"`
+		Password   string `json:"password"`
 	}
 	if !decodeJSON(w, r, &v) {
 		return
 	}
-	if strings.TrimSpace(v.Destination) == "" {
-		h.error(w, errors.New("恢复目录不能为空"))
-		return
-	}
-	result, err := h.service.Restore(r.Context(), v.TargetID, v.SnapshotID, v.Password, v.Destination)
+	result, err := h.service.Restore(r.Context(), v.TargetID, v.SnapshotID, v.Password, "")
 	if err != nil {
 		h.error(w, err)
 		return
@@ -117,6 +111,13 @@ func (h *backupHandler) confirmRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	write(w, http.StatusOK, result)
+}
+func (h *backupHandler) cancelRestore(w http.ResponseWriter, r *http.Request) {
+	if err := h.service.CancelRestore(r.Context(), r.PathValue("id")); err != nil {
+		h.error(w, err)
+		return
+	}
+	write(w, http.StatusNoContent, nil)
 }
 func (h *backupHandler) respond(w http.ResponseWriter, v any, err error) {
 	if err != nil {

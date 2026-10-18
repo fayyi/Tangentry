@@ -2,7 +2,10 @@ package local
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,7 +13,10 @@ import (
 	"tangentry/internal/backup"
 )
 
-type Store struct{ root string }
+type Store struct {
+	rootPath string
+	root     *os.Root
+}
 
 func New(root string) (*Store, error) {
 	info, err := os.Lstat(root)
@@ -26,122 +32,165 @@ func New(root string) (*Store, error) {
 		}
 		return nil, err
 	}
-	return &Store{root: root}, nil
+	absolute, err := filepath.Abs(root)
+	if err != nil {
+		return nil, err
+	}
+	opened, err := os.OpenRoot(absolute)
+	if err != nil {
+		return nil, err
+	}
+	return &Store{rootPath: absolute, root: opened}, nil
 }
 
+func (s *Store) Close() error { return s.root.Close() }
+
 func (s *Store) Upload(ctx context.Context, name string, r io.Reader) error {
-	path, err := s.object(name)
+	clean, err := cleanObject(name)
 	if err != nil {
 		return err
 	}
-	if err = s.safeParents(filepath.Dir(path)); err != nil {
+	parent := filepath.ToSlash(filepath.Dir(clean))
+	if parent == "." {
+		parent = ""
+	}
+	if err := s.mkdirParents(parent); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".upload-")
+	var random [12]byte
+	if _, err := rand.Read(random[:]); err != nil {
+		return err
+	}
+	temporary := filepath.ToSlash(filepath.Join(parent, ".upload-"+hex.EncodeToString(random[:])))
+	file, err := s.root.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmp.Name())
-	if err = ctx.Err(); err != nil {
-		tmp.Close()
+	defer s.root.Remove(temporary)
+	if err := ctx.Err(); err != nil {
+		file.Close()
 		return err
 	}
-	if _, err = io.Copy(tmp, r); err != nil {
-		tmp.Close()
+	if _, err := io.Copy(file, r); err != nil {
+		file.Close()
 		return err
 	}
-	if err = tmp.Close(); err != nil {
+	if err := file.Sync(); err != nil {
+		file.Close()
 		return err
 	}
-	return os.Rename(tmp.Name(), path)
+	if err := file.Close(); err != nil {
+		return err
+	}
+	return s.root.Rename(temporary, filepath.ToSlash(clean))
 }
+
 func (s *Store) Read(ctx context.Context, name string) (io.ReadCloser, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	path, err := s.object(name)
+	clean, err := cleanObject(name)
 	if err != nil {
 		return nil, err
 	}
-	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() {
+	if err := s.checkParents(filepath.ToSlash(filepath.Dir(clean))); err != nil {
+		return nil, err
+	}
+	info, err := s.root.Lstat(filepath.ToSlash(clean))
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
 		if err == nil {
-			err = os.ErrInvalid
+			err = backup.ErrInvalidPackage
 		}
 		return nil, err
 	}
-	return os.Open(path)
+	file, err := s.root.Open(filepath.ToSlash(clean))
+	if err != nil {
+		return nil, err
+	}
+	openedInfo, err := file.Stat()
+	if err != nil || !openedInfo.Mode().IsRegular() || !os.SameFile(info, openedInfo) {
+		file.Close()
+		return nil, backup.ErrInvalidPackage
+	}
+	return file, nil
 }
+
 func (s *Store) List(ctx context.Context, prefix string) ([]string, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	clean, err := cleanObject(prefix)
+	if err != nil {
+		return nil, err
+	}
+	fsys := s.root.FS()
+	if _, err := fs.Stat(fsys, clean); os.IsNotExist(err) {
+		return []string{}, nil
+	} else if err != nil {
+		return nil, err
+	}
 	var out []string
-	root, err := s.object(prefix)
-	if err != nil {
-		return nil, err
-	}
-	rootInfo, err := os.Lstat(root)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return out, nil
+	err = fs.WalkDir(fsys, clean, func(name string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
 		}
-		return nil, err
-	}
-	if rootInfo.Mode()&os.ModeSymlink != 0 {
-		return nil, backup.ErrInvalidPackage
-	}
-	err = filepath.Walk(root, func(path string, info os.FileInfo, e error) error {
-		if e != nil || info == nil || info.IsDir() {
-			return e
+		if entry.Type()&os.ModeSymlink != 0 {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
 		}
-		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-			return filepath.SkipDir
+		if entry.IsDir() {
+			return nil
 		}
-		rel, e := filepath.Rel(s.root, path)
-		if e == nil {
-			out = append(out, filepath.ToSlash(rel))
+		info, err := s.root.Lstat(filepath.ToSlash(name))
+		if err != nil || !info.Mode().IsRegular() {
+			return nil
 		}
-		return e
+		out = append(out, filepath.ToSlash(name))
+		return nil
 	})
 	return out, err
 }
+
 func (s *Store) Delete(ctx context.Context, name string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	path, err := s.object(name)
+	clean, err := cleanObject(name)
 	if err != nil {
 		return err
 	}
-	return os.Remove(path)
+	if err := s.checkParents(filepath.ToSlash(filepath.Dir(clean))); err != nil {
+		return err
+	}
+	return s.root.Remove(filepath.ToSlash(clean))
 }
+
 func (s *Store) TestConnection(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	info, err := os.Lstat(s.root)
+	info, err := s.root.Stat(".")
 	if err == nil && !info.IsDir() {
 		return os.ErrInvalid
 	}
 	return err
 }
 
-func (s *Store) safeParents(dir string) error {
-	root, _ := filepath.Abs(s.root)
-	current := root
-	rel, err := filepath.Rel(root, dir)
-	if err != nil {
-		return err
+func (s *Store) mkdirParents(name string) error {
+	if name == "" || name == "." {
+		return nil
 	}
-	for _, part := range strings.Split(rel, string(filepath.Separator)) {
-		if part == "." || part == "" {
-			continue
+	current := ""
+	for _, part := range strings.Split(name, "/") {
+		if part == "" || part == "." || part == ".." {
+			return backup.ErrInvalidPackage
 		}
-		current = filepath.Join(current, part)
-		info, err := os.Lstat(current)
+		current = filepath.ToSlash(filepath.Join(current, part))
+		info, err := s.root.Lstat(current)
 		if os.IsNotExist(err) {
-			if err := os.Mkdir(current, 0700); err != nil {
+			if err := s.root.Mkdir(current, 0700); err != nil {
 				return err
 			}
 			continue
@@ -152,41 +201,37 @@ func (s *Store) safeParents(dir string) error {
 	}
 	return nil
 }
-func (s *Store) object(name string) (string, error) {
-	clean := filepath.Clean(filepath.FromSlash(name))
-	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || filepath.IsAbs(clean) {
-		return "", backup.ErrInvalidPackage
-	}
-	root, _ := filepath.Abs(s.root)
-	result, _ := filepath.Abs(filepath.Join(root, clean))
-	if result != root && !strings.HasPrefix(result, root+string(filepath.Separator)) {
-		return "", backup.ErrInvalidPackage
-	}
-	if err := s.checkParents(filepath.Dir(result)); err != nil {
-		return "", err
-	}
-	return result, nil
-}
 
-func (s *Store) checkParents(dir string) error {
-	root, _ := filepath.Abs(s.root)
-	current := root
-	rel, err := filepath.Rel(root, dir)
-	if err != nil {
-		return err
+func (s *Store) checkParents(name string) error {
+	if name == "" || name == "." {
+		return nil
 	}
-	for _, part := range strings.Split(rel, string(filepath.Separator)) {
-		if part == "" || part == "." {
-			continue
+	current := ""
+	for _, part := range strings.Split(filepath.ToSlash(name), "/") {
+		if part == "" || part == "." || part == ".." {
+			return backup.ErrInvalidPackage
 		}
-		current = filepath.Join(current, part)
-		info, statErr := os.Lstat(current)
-		if os.IsNotExist(statErr) {
-			continue
+		current = filepath.ToSlash(filepath.Join(current, part))
+		info, err := s.root.Lstat(current)
+		if err != nil {
+			return err
 		}
-		if statErr != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 			return backup.ErrInvalidPackage
 		}
 	}
 	return nil
+}
+
+func cleanObject(name string) (string, error) {
+	clean := filepath.Clean(filepath.FromSlash(name))
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || filepath.IsAbs(clean) {
+		return "", backup.ErrInvalidPackage
+	}
+	return clean, nil
+}
+
+func mustRelative(root, name string) string {
+	rel, _ := filepath.Rel(root, name)
+	return rel
 }
