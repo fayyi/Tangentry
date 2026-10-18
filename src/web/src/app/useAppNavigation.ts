@@ -1,14 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
-import { popped, pushPath } from '../shared/browser/historyStack'
-import { readerNoteFromURL, readerQueryFromURL, viewFromURL, viewPaths, type View } from './navigation'
+import { popped, pushPath, replacePath } from '../shared/browser/historyStack'
+import { navigateBack, readerNoteFromURL, readerQueryFromURL, resolveViewportTarget, routeKey, viewFromURL, viewPaths, type View, type ViewportTarget, type ViewportSnapshot } from './navigation'
 
 export type ReaderReturnView = Exclude<View, 'reader' | 'tools' | 'search'> | 'search' | 'tools'
 
 export function selectedSavedViewFromURL() {
   return viewFromURL() === 'subscriptions' ? new URLSearchParams(location.search).get('view') ?? '' : ''
 }
-
-type ViewportTarget = { top: number; sourceID: string }
 
 const initialScrollPositions = (): Record<View, number> => ({
   bilibili: 0,
@@ -24,18 +22,67 @@ const initialScrollPositions = (): Record<View, number> => ({
   notes: 0,
 })
 
-export function RestoreViewport({ top, sourceID, view }: ViewportTarget & { view: View }) {
+function findSource(view: View, sourceID: string, focusID: string) {
+  if (!sourceID && !focusID) return null
+  const inView = (node: HTMLElement) => view === 'discovery'
+    ? node.closest('[data-app-view="discovery"]')
+    : !node.closest('[data-app-view="discovery"]')
+  if (focusID) {
+    const focused = document.getElementById(focusID)
+    // A page-level control such as #main has no app-view marker; it is still a
+    // valid keyboard restoration target when no content card was recorded.
+    if (focused && (!sourceID || inView(focused))) return focused
+  }
+  if (!sourceID) return null
+  return Array.from(document.querySelectorAll<HTMLElement>('[data-content-id]'))
+    .find(node => node.dataset.contentId === sourceID && inView(node)) ?? null
+}
+
+export function RestoreViewport({ top, sourceID, focusID = '', routeKey: targetRoute = '', view }: ViewportTarget & { view: View }) {
   useLayoutEffect(() => {
-    window.scrollTo({ top, behavior: 'instant' })
-    if (document.documentElement.dataset.input === 'keyboard') document.getElementById('main')?.focus({ preventScroll: true })
-    if (sourceID) {
-      const candidates = Array.from(document.querySelectorAll<HTMLElement>(`[data-content-id="${CSS.escape(sourceID)}"]`))
-      const source = candidates.find(node => view === 'discovery'
-        ? node.closest('[data-app-view="discovery"]')
-        : !node.closest('[data-app-view="discovery"]'))
-      source?.focus({ preventScroll: true })
+    let frame = 0
+    let attempts = 0
+    let stopped = false
+    const observer = typeof MutationObserver === 'undefined' ? null : new MutationObserver(() => schedule())
+    // Keep watching long enough for network-backed galleries/readers to mount.
+    const maxAttempts = 180
+    const focusFallback = () => {
+      if (document.documentElement.dataset.input === 'keyboard') document.getElementById('main')?.focus({ preventScroll: true })
     }
-  }, [sourceID, top, view])
+    const restore = () => {
+      if (stopped) return
+      attempts++
+      // Re-apply after async lists render; an early scroll can otherwise be clamped by a short page.
+      window.scrollTo({ top, behavior: 'instant' })
+      const source = findSource(view, sourceID, focusID)
+      if (source) {
+        source.focus({ preventScroll: true })
+        stop()
+        return
+      }
+      if ((!sourceID && !focusID) || attempts >= maxAttempts) {
+        focusFallback()
+        stop()
+        return
+      }
+      schedule()
+    }
+    const schedule = () => {
+      if (stopped || frame) return
+      frame = window.requestAnimationFrame(() => {
+        frame = 0
+        restore()
+      })
+    }
+    const stop = () => {
+      stopped = true
+      if (frame) window.cancelAnimationFrame(frame)
+      observer?.disconnect()
+    }
+    observer?.observe(document.body, { childList: true, subtree: true })
+    schedule()
+    return stop
+  }, [focusID, sourceID, targetRoute, top, view])
   return null
 }
 
@@ -45,17 +92,50 @@ export function useAppNavigation(input: RefObject<HTMLInputElement | null>) {
   const [readerNoteId, setReaderNoteId] = useState(readerNoteFromURL)
   const [readingItem, setReadingItem] = useState<import('../shared/api/types').ContentItem | null>(null)
   const readerReturn = useRef<ReaderReturnView>(readerNoteId ? 'notes' : 'discovery')
+  const readerReturnPath = useRef(readerNoteId ? `${viewPaths.notes}` : viewPaths.discovery)
   const readerSourceID = useRef(readerNoteId ? `note:${readerNoteId}` : '')
   const scrollPositions = useRef<Record<View, number>>(initialScrollPositions())
   const currentView = useRef(view)
-  const viewportTarget = useRef<ViewportTarget>({ top: 0, sourceID: '' })
+  const currentRoute = useRef(routeKey())
+  const routeSnapshots = useRef(new Map<string, ViewportSnapshot>())
+  const viewportTarget = useRef<ViewportTarget>({ top: 0, sourceID: '', focusID: '', routeKey: currentRoute.current })
+  const pendingViewportTarget = useRef<ViewportTarget | null>(null)
+  const [viewportVersion, setViewportVersion] = useState(0)
 
-  function navigate(next: View, push = true, path = viewPaths[next]) {
+  useEffect(() => {
+    const previous = history.scrollRestoration
+    history.scrollRestoration = 'manual'
+    return () => { history.scrollRestoration = previous }
+  }, [])
+
+  function focusedTarget() {
+    const active = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const source = active?.closest<HTMLElement>('[data-content-id]')
+    return { sourceID: source?.dataset.contentId ?? '', focusID: active?.id ?? '' }
+  }
+
+  function navigate(next: View, push = true, path = viewPaths[next], targetOverride?: ViewportTarget) {
     const returningFromReader = currentView.current === 'reader' && next === readerReturn.current
-    scrollPositions.current[currentView.current] = window.scrollY
+    const previousRoute = currentRoute.current
+    const previousView = currentView.current
+    const focused = focusedTarget()
+    scrollPositions.current[previousView] = window.scrollY
+    routeSnapshots.current.set(previousRoute, {
+      view: previousView,
+      top: window.scrollY,
+      sourceID: focused.sourceID,
+      focusID: focused.focusID,
+      routeKey: previousRoute,
+    })
+    const nextRoute = routeKey(path)
     currentView.current = next
-    viewportTarget.current = { top: scrollPositions.current[next], sourceID: returningFromReader ? readerSourceID.current : '' }
+    const fallback: ViewportTarget = { top: scrollPositions.current[next], sourceID: returningFromReader ? readerSourceID.current : '', focusID: '', routeKey: nextRoute }
+    viewportTarget.current = targetOverride ?? resolveViewportTarget(nextRoute, routeSnapshots.current, fallback)
+    if (returningFromReader && !viewportTarget.current.sourceID) viewportTarget.current.sourceID = readerSourceID.current
     if (push) pushPath(path)
+    else if (routeKey(path) !== routeKey()) replacePath(path)
+    currentRoute.current = nextRoute
+    setViewportVersion(version => version + 1)
 
     setReaderQuery(readerQueryFromURL())
     const noteId = readerNoteFromURL()
@@ -73,10 +153,47 @@ export function useAppNavigation(input: RefObject<HTMLInputElement | null>) {
     requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: animate ? 'smooth' : 'instant' }))
   }
 
+  function setReaderReturn(view: ReaderReturnView, path: string) {
+    readerReturn.current = view
+    readerReturnPath.current = routeKey(path)
+  }
+
+  function returnToPath(sourcePath: string | undefined, fallback: View = 'discovery') {
+    const source = sourcePath ? { path: sourcePath } : null
+    const decision = navigateBack({
+      currentPath: currentRoute.current,
+      source,
+      // The source is eligible for pop only when this app session has a full
+      // snapshot for that exact route. Without the path-bearing history state
+      // API, a missing snapshot is treated conservatively as replace.
+      hasMatchingHistoryEntry: Boolean(sourcePath && routeSnapshots.current.has(routeKey(sourcePath))),
+      fallback: { path: viewPaths[fallback], top: scrollPositions.current[fallback] },
+    })
+    const restoreTarget: ViewportTarget = { ...decision.restore, routeKey: decision.path }
+    if (decision.action === 'pop') {
+      // Normally the destination has a route snapshot captured when leaving
+      // the source. Keep the pure decision as a fallback for older/direct
+      // entries whose snapshot is not present in this app session.
+      pendingViewportTarget.current = restoreTarget
+      history.back()
+      return
+    }
+    pendingViewportTarget.current = null
+    replacePath(decision.path)
+    navigate(viewFromURL(), false, decision.path, restoreTarget)
+  }
+
+  function returnFromReader() {
+    returnToPath(readerReturnPath.current, readerReturn.current)
+  }
+
   useEffect(() => {
     const popstate = (event: PopStateEvent) => {
       popped(event.state)
-      navigate(viewFromURL(), false)
+      const targetRoute = routeKey()
+      const target = routeSnapshots.current.has(targetRoute) ? undefined : pendingViewportTarget.current ?? undefined
+      pendingViewportTarget.current = null
+      navigate(viewFromURL(), false, targetRoute, target)
     }
     const cmdK = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key === 'k') {
@@ -102,8 +219,13 @@ export function useAppNavigation(input: RefObject<HTMLInputElement | null>) {
     readingItem,
     setReadingItem,
     readerReturn,
+    readerReturnPath,
+    setReaderReturn,
+    returnFromReader,
+    returnToPath,
     readerSourceID,
     scrollPositions,
     viewportTarget,
+    viewportVersion,
   }
 }

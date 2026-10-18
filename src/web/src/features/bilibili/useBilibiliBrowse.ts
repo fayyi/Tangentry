@@ -1,23 +1,29 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { replacePath } from '../../shared/browser/historyStack'
 import { request } from '../../shared/api/client'
 import type { ContentItem } from '../../shared/api/types'
+import { bilibiliRouteUpdate, bilibiliStateFromURL, type BilibiliArea, type BilibiliTab } from './bilibiliNavigation'
 
-export type BilibiliTab = 'popular' | 'ranking' | 'dynamic' | 'live' | 'my'
+export type { BilibiliArea, BilibiliTab } from './bilibiliNavigation'
+export { bilibiliPath, bilibiliReturnPath, bilibiliRouteUpdate, bilibiliStateFromURL } from './bilibiliNavigation'
 export type LiveRoom = { id: string; title: string; author: string; thumbnailUrl: string; url: string }
 type Page = { items: ContentItem[]; rooms?: LiveRoom[]; page: number; next?: string; hasMore: boolean; sourceTitle: string; notice?: string }
 type Profile = { loggedIn: boolean; id?: string; name?: string; avatar?: string; level?: number }
 type State = { page: Page | null; loading: boolean; known: boolean; error: string }
 const blank = (): State => ({ page: null, loading: false, known: false, error: '' })
-const tabs: BilibiliTab[] = ['popular', 'ranking', 'dynamic', 'live', 'my']
 function initialTab(): BilibiliTab {
-  const value = new URLSearchParams(location.search).get('tab')
-  return tabs.includes(value as BilibiliTab) ? value as BilibiliTab : 'popular'
+  return bilibiliStateFromURL().tab
 }
 
-export function useBilibiliBrowse(active: boolean) {
+function initialArea(): BilibiliArea {
+  return bilibiliStateFromURL().area
+}
+
+export function useBilibiliBrowse(active: boolean, onRouteChange: (path: string) => void) {
+  const routeChangeRef = useRef(onRouteChange)
+  routeChangeRef.current = onRouteChange
   const [tab, setTab] = useState<BilibiliTab>(initialTab)
-  const [area, setArea] = useState('1')
+  const [area, setAreaState] = useState<BilibiliArea>(initialArea)
+  const setArea = (value: string) => setAreaState(bilibiliStateFromURL(`/bilibili?tab=live&area=${encodeURIComponent(value)}`).area)
   const [states, setStates] = useState<Record<string, State>>({})
   const current = useRef(states); current.current = states
   const [profile, setProfile] = useState<Profile | null>(null)
@@ -67,7 +73,10 @@ export function useBilibiliBrowse(active: boolean) {
   }, [])
   useEffect(() => {
     if (active && !current.current[key]?.known) void read(tab, area)
-    if (active) replacePath('/bilibili?tab=' + tab)
+    if (active) {
+      const update = bilibiliRouteUpdate(tab, area)
+      routeChangeRef.current(update.path)
+    }
     return () => {
       const identities = Object.keys(controllers.current)
       for (const controller of Object.values(controllers.current)) controller.abort()
@@ -76,7 +85,12 @@ export function useBilibiliBrowse(active: boolean) {
     }
   }, [active, tab, area, key, read, revision])
   useEffect(() => {
-    const pop = () => { if (location.pathname === '/bilibili') setTab(initialTab()) }
+    const pop = () => {
+      if (location.pathname !== '/bilibili') return
+      const state = bilibiliStateFromURL()
+      setTab(state.tab)
+      setArea(state.area)
+    }
     window.addEventListener('popstate', pop)
     return () => window.removeEventListener('popstate', pop)
   }, [])
