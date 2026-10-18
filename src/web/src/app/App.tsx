@@ -32,7 +32,7 @@ import { ContentCard } from '../shared/ui/ContentCard'
 import { CardCollection } from '../shared/ui/CardCollection'
 import { ExperienceShell } from './ExperienceShell'
 import { MediaFilters } from '../shared/ui/MediaFilters'
-import { readerPath, readerPathForItem } from './navigation'
+import { appPageLayers, readerPath, readerPathForItem } from './navigation'
 import { BackToTop } from '../shared/ui/BackToTop'
 import { Toast } from '../shared/ui/Toast'
 import { useToast } from '../shared/hooks/useToast'
@@ -72,6 +72,7 @@ export function App() {
   const navigation = useAppNavigation(input)
   const { view, navigate, returnHome, readerQuery, readerNoteId, readingItem, setReadingItem, readerReturn, readerSourceID, scrollPositions, viewportTarget } = navigation
   const [discoveryMounted, setDiscoveryMounted] = useState(() => view === 'discovery')
+  const pageLayers = appPageLayers(view, discoveryMounted)
   useEffect(() => {
     if (view === 'discovery') setDiscoveryMounted(true)
   }, [view])
@@ -246,14 +247,17 @@ export function App() {
     >
     <ReaderActionsProvider><main id="main" className={`main-workspace ${view === 'reader' ? 'immersive-reader' : ''}`} tabIndex={-1}>
       <div className="content-container">
-      {(discoveryMounted || view === 'discovery') && <PageLoadBoundary>
-        <Activity mode={view === 'discovery' ? 'visible' : 'hidden'}>
+      <div className="discovery-page-container">
+      {pageLayers.mountDiscovery && <PageLoadBoundary key="discovery-page">
+        <Activity mode={pageLayers.discoveryVisible ? 'visible' : 'hidden'}>
           <div data-app-view="discovery">
-            <DiscoveryGallery active={view === 'discovery'} kind={galleryKind} onKind={setGalleryKind} origin={galleryOrigin} onOrigin={setGalleryOrigin} query={galleryQuery} onClearQuery={() => setGalleryQuery('')} notice={library.notice} noticeError={library.noticeError} gallery={gallery} savedIDs={savedIDs} pending={library.pending} savingUnavailable={savingUnavailable} onSave={item => void library.toggle(item)} onRead={openReader} onDownload={onDownload} onCreator={openCreator} onSearch={() => navigate('search')} onSubscriptions={() => navigate('subscriptions')} onBilibili={() => navigate('bilibili')} />
+            <DiscoveryGallery active={pageLayers.discoveryVisible} kind={galleryKind} onKind={setGalleryKind} origin={galleryOrigin} onOrigin={setGalleryOrigin} query={galleryQuery} onClearQuery={() => setGalleryQuery('')} notice={library.notice} noticeError={library.noticeError} gallery={gallery} savedIDs={savedIDs} pending={library.pending} savingUnavailable={savingUnavailable} onSave={item => void library.toggle(item)} onRead={openReader} onDownload={onDownload} onCreator={openCreator} onSearch={() => navigate('search')} onSubscriptions={() => navigate('subscriptions')} onBilibili={() => navigate('bilibili')} />
           </div>
         </Activity>
       </PageLoadBoundary>}
-      <PageLoadBoundary key={view}>
+      </div>
+      <div className="active-page-container">
+      <PageLoadBoundary key={`page-${pageLayers.activePage ?? 'discovery'}`}>
       {view === 'reader' && <AppReaderActions item={cachedReadingItem ?? null} saved={cachedReadingItem ? savedIDs.has(cachedReadingItem.id) : false} savingUnavailable={savingUnavailable} libraryPending={library.pending} library={library} downloads={downloads} readState={readStates} readingID={readingID} supportsReadState={supportsReadState(readingID)} onDownload={onDownload}/>}
       {view === 'history' ? <ViewingHistoryPage history={viewingHistory} onRead={openReader} onSave={item => void library.toggle(item)} savedIDs={savedIDs} pending={library.pending} unavailable={savingUnavailable}/>
       : view === 'discovery' ? null
@@ -289,6 +293,7 @@ export function App() {
         </>}
       </>}
       </PageLoadBoundary>
+      </div>
       <RestoreViewport key={view} view={view} {...viewportTarget.current}/>
       </div>
     </main></ReaderActionsProvider>

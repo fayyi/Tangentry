@@ -159,6 +159,20 @@ test('empty app and mobile navigation are usable', async ({ page }) => {
   expect(overflow).toBe(false)
 })
 
+test('navigation replaces the active page without stacking titles', async ({ page }) => {
+  await page.goto('/')
+  const mainNav = page.getByRole('navigation', { name: '主导航', exact: true })
+  for (const title of ['收藏', '订阅', '笔记', '收藏']) {
+    await mainNav.getByRole('button', { name: title, exact: true }).click()
+    await expect(page.locator('.content-container h1:visible')).toHaveCount(1)
+    await expect(page.locator('.content-container h1:visible')).toHaveText(title)
+    await expect(page.getByRole('status').filter({ hasText: '正在打开页面…' })).toHaveCount(0)
+  }
+  await page.goBack()
+  await expect(page.locator('.content-container h1:visible')).toHaveCount(1)
+  await expect(page.locator('.content-container h1:visible')).toHaveText('笔记')
+})
+
 test('black and white themes, reduced motion and keyboard drawer are accessible', async ({ page }) => {
   await page.goto('/')
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
