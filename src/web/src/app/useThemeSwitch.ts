@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type MouseEvent } from 'react'
 import { flushSync } from 'react-dom'
-import { getInterfacePreference, setInterfacePreference } from '../shared/preferences/interfacePreferences'
+import { getInterfacePreference, getPendingInterfacePreference, setInterfacePreference } from '../shared/preferences/interfacePreferences'
 
 export type ThemePreference = 'light' | 'dark' | 'system'
 export const THEME_PREFERENCES: readonly ThemePreference[] = ['light', 'dark', 'system']
@@ -24,6 +24,8 @@ export function readLegacyPreference(storage?: Pick<Storage, 'getItem'>): ThemeP
 
 export function readInitialPreference(input: { injected?: unknown; saved?: boolean; legacy?: unknown; datasetTheme?: string } = {}): ThemePreference {
   const state = (typeof window === 'undefined' ? {} : window) as { __TANGENTRY_THEME__?: unknown; __TANGENTRY_THEME_SAVED__?: boolean }
+  const pending = getPendingInterfacePreference('theme')
+  if (pending) return parseThemePreference(pending)
   const injected = input.injected === undefined ? state.__TANGENTRY_THEME__ : input.injected
   const saved = input.saved === undefined ? state.__TANGENTRY_THEME_SAVED__ : input.saved
   const legacy = input.legacy === undefined
@@ -69,7 +71,7 @@ export function useThemeSwitch() {
   }, [preference])
 
   useEffect(() => {
-    if (!hydrated) return
+    if (!hydrated && !userSelected.current) return
     try { localStorage.setItem('tangentry-theme', preference) } catch { /* Browser fallback is best effort. */ }
     void setInterfacePreference('theme', preference).catch(() => {})
   }, [preference, hydrated])
