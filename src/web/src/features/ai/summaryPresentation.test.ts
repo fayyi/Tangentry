@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { shouldRenderInlineSummary, summaryAvailability, summaryButtonState, summaryControlPresentation, summaryGenerationBlockedReason, summaryNeedsOutlineRegeneration } from './summaryPresentation'
+import { shouldRenderInlineSummary, summaryAvailability, summaryButtonState, summaryControlPresentation, summaryControlState, summaryGenerationBlockedReason, summaryNeedsOutlineRegeneration, summaryTextFallback } from './summaryPresentation'
 import { summaryInputFromText, summaryInputFromTrack } from './useSummary'
 import type { SummaryResult } from './summaryTypes'
 import type { SubtitleTrack } from '../../shared/api/types'
@@ -59,6 +59,26 @@ test('summary control presentation exposes next steps for every state', () => {
   expect(summaryControlPresentation('missing-input')).toMatchObject({ label: 'AI 摘要 · 需先转录', disabled: true, action: 'transcribe' })
 })
 
+test('summary control state maps content and inspection to the toolbar action', () => {
+  const busyBase = { inspection: null, loading: false, pending: false }
+  const automaticTrack: SubtitleTrack = { language: 'zh-CN', label: '中文', automatic: true, cues: Array.from({ length: 167 }, (_, index) => ({ start: index, end: index + 1, text: `字幕 ${index}` })) }
+  const automaticSubtitleState = summaryControlState({ ...busyBase, track: automaticTrack, inspection: inspection() })
+  expect(automaticSubtitleState).toMatchObject({ availability: 'ready', label: 'AI 摘要', disabled: false, action: 'generate' })
+  // Summary availability does not depend on playback readiness or player fallback mode.
+  const playbackReady = false
+  expect(playbackReady).toBe(false)
+  expect(automaticSubtitleState.disabled).toBe(false)
+  expect(summaryControlState({ ...busyBase, description: '视频简介', inspection: inspection() })).toMatchObject({ availability: 'ready', action: 'generate' })
+  expect(summaryControlState({ ...busyBase, track: { cues: [] }, description: '  ' })).toMatchObject({ availability: 'missing-input', label: 'AI 摘要 · 需先转录', action: 'transcribe' })
+  expect(summaryControlState({ ...busyBase, track: automaticTrack, loading: true })).toMatchObject({ availability: 'loading', label: 'AI 摘要 · 读取中', disabled: true, action: 'none' })
+  expect(summaryControlState({ ...busyBase, track: automaticTrack, inspection: inspection(), pending: true })).toMatchObject({ availability: 'generating', label: 'AI 摘要 · 生成中', disabled: true, action: 'none' })
+  expect(summaryControlState({ ...busyBase, track: automaticTrack, inspection: inspection({ summaryReady: false }) })).toMatchObject({ availability: 'ai-not-configured', label: 'AI 摘要 · 去设置', disabled: false, action: 'settings' })
+  expect(summaryControlState({ ...busyBase, track: automaticTrack, inspection: inspection({ active: true }) })).toMatchObject({ availability: 'busy', label: 'AI 摘要 · 其他任务占用', disabled: true })
+  expect(summaryControlState({ ...busyBase, track: automaticTrack, inspection: null, error: '状态读取失败' })).toMatchObject({ availability: 'error', label: 'AI 摘要 · 重试', disabled: false, action: 'retry' })
+  expect(summaryControlState({ ...busyBase, track: automaticTrack, inspection: { ...inspection(), result: result() } })).toMatchObject({ availability: 'saved', label: 'AI 摘要 · 已保存', disabled: true })
+  expect(summaryControlState({ ...busyBase, track: automaticTrack, inspection: { ...inspection(), result: result({ outline: [] }) } })).toMatchObject({ availability: 'needs-generation', label: 'AI 摘要 · 补生成大纲', disabled: false, action: 'generate' })
+})
+
 test('summary generation no-op guards report actionable feedback', () => {
   const ready = { hasInput: true, hasInspection: true, scopeCurrent: true, loading: false, pending: false, mutationPending: false, active: false, translating: false, ready: true }
   expect(summaryGenerationBlockedReason({ ...ready, hasInput: false })).toContain('先读取字幕或转录')
@@ -101,4 +121,10 @@ test('a video description is valid summary input without subtitles', () => {
   const description = '这是视频简介，可作为摘要输入。'
   expect(summaryInputFromText('bilibili:BVfixture1234', 'subtitle', description)).toEqual({ contentId: 'bilibili:BVfixture1234', source: 'subtitle', text: description, revision: 0 })
   expect(summaryAvailability({ input: Boolean(description.trim()), inspection: inspection(), loading: false, pending: false })).toBe('ready')
+})
+
+test('direct Bilibili reading uses asynchronously loaded description as summary fallback', () => {
+  expect(summaryTextFallback(undefined, '异步读取的视频简介')).toBe('异步读取的视频简介')
+  expect(summaryTextFallback('  ', '异步读取的视频简介')).toBe('异步读取的视频简介')
+  expect(summaryTextFallback('缓存中的简介', '异步读取的视频简介')).toBe('缓存中的简介')
 })

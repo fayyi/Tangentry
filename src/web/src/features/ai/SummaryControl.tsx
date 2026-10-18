@@ -2,7 +2,7 @@ import { LoaderCircle, Sparkles } from 'lucide-react'
 import type { ReactNode } from 'react'
 import type { useSummary } from './useSummary'
 import type { SummarySource } from './summaryMarkdown'
-import { summaryAvailability, summaryControlPresentation, summaryNeedsOutlineRegeneration } from './summaryPresentation'
+import { summaryControlState, summaryNeedsOutlineRegeneration } from './summaryPresentation'
 import './ai.css'
 
 export function openTranscription() {
@@ -32,11 +32,14 @@ export function SummaryControl({ summary, source: _source, onLocateQuote: _onLoc
 }) {
   const { inspection, loading, pending, error, notice, generate, cancel, reload, hasInput } = summary
   const result = inspection?.result
-  const availability = summaryAvailability({ input: hasInput, inspection, loading, pending, error })
-  const presentation = summaryControlPresentation(availability)
+  const { availability, ...presentation } = summaryControlState({ input: hasInput, inspection, loading, pending, error })
   const retry = () => { if (availability === 'error' && inspection) void generate(summaryNeedsOutlineRegeneration(result)); else if (availability === 'error') void reload() }
+  const activate = () => {
+    if (presentation.action === 'retry') retry()
+    else if (presentation.action === 'generate') void generate(summaryNeedsOutlineRegeneration(result))
+  }
   return <div className="ai-summary-control">
-    {presentation.action === 'settings' ? <a className="ai-inline-trigger" href="/tools#translation" title={presentation.title}><Sparkles size={14} aria-hidden="true" />{presentation.label}</a> : <button type="button" className="ai-inline-trigger" aria-busy={pending || loading} disabled={presentation.disabled} title={presentation.title} onClick={availability === 'error' ? retry : () => void generate(summaryNeedsOutlineRegeneration(result))}>{pending ? <LoaderCircle size={14} className="spin" aria-hidden="true" /> : <Sparkles size={14} aria-hidden="true" />}{presentation.label}</button>}
+    {presentation.action === 'settings' ? <a className="ai-inline-trigger" href="/tools#translation" title={presentation.title}><Sparkles size={14} aria-hidden="true" />{presentation.label}</a> : <button type="button" className="ai-inline-trigger" aria-busy={pending || loading} disabled={presentation.disabled} title={presentation.title} onClick={activate}>{pending ? <LoaderCircle size={14} className="spin" aria-hidden="true" /> : <Sparkles size={14} aria-hidden="true" />}{presentation.label}</button>}
     {presentation.action === 'transcribe' && <div className="ai-summary-empty"><p className="ai-summary-muted">{emptyMessage || '当前没有字幕或可用文字。'}</p>{emptyAction || <button type="button" className="text-button" onClick={openTranscription}>先转录再摘要</button>}</div>}
     {availability === 'busy' && <p className="ai-summary-muted" role="status">另一个 AI 任务正在运行，完成后会自动恢复。请稍候。</p>}
     {pending && <p className="ai-summary-muted" role="status">正在生成，已完成 {result?.completedCalls ?? 0} / {result?.totalCalls ?? 0} 次 <button type="button" className="text-button" onClick={cancel}>取消</button></p>}

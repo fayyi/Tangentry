@@ -19,8 +19,9 @@ function ResizableSubtitlePlayer({ children }: { children: ReactNode }) {
   return <div className="reader-player-resizable" style={{ '--reader-player-width': `${notebook.playerWidth}%` } as CSSProperties}>{children}<ReaderPlayerSizeHandle value={notebook.playerWidth} onChange={notebook.setPlayerWidth} onReset={notebook.resetPlayerWidth}/></div>
 }
 
-export function SubtitlePage({ query, initialItem, onReturn, notes, insights, onNoteAt, player, position, onSeek, onTrackChange, assistance }: {
+export function SubtitlePage({ query, initialItem, onItem, onReturn, notes, insights, onNoteAt, player, position, onSeek, onTrackChange, assistance }: {
   query: string; initialItem?: ContentItem; onReturn: () => void; notes?: ReactNode; insights?: ReactNode; onNoteAt?: (position: number, reference?: SubtitleReference) => void
+  onItem?: (item: ContentItem) => void
   assistance?: SubtitleAssistance
   player?: ReactNode; position?: number | null; onSeek?: (position: number) => void; onTrackChange?: (track: SubtitleTrack | null) => void
 }) {
@@ -31,18 +32,18 @@ export function SubtitlePage({ query, initialItem, onReturn, notes, insights, on
 
   useEffect(() => {
     if (!valid) return
-    if (initialItem?.platformId === query) { setItem(initialItem); setError(''); return }
+    if (initialItem?.platformId === query) { setItem(initialItem); onItem?.(initialItem); setError(''); return }
     const controller = new AbortController()
     setError('')
     void request<Feed>(`/discovery/bilibili?q=${encodeURIComponent(query)}&page=1`, { signal: controller.signal }).then(feed => {
       const video = feed.items.find(candidate => candidate.platformId === query)
       if (!video) throw new Error('没有找到这段视频，请返回列表重试。')
-      if (!controller.signal.aborted) setItem(video)
+      if (!controller.signal.aborted) { setItem(video); onItem?.(video) }
     }).catch(cause => {
       if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : '视频信息暂时无法获取。')
     })
     return () => controller.abort()
-  }, [query, initialItem, valid, attempt])
+  }, [query, initialItem, onItem, valid, attempt])
 
   return <section className="subtitle-page video-workspace">
     <div className="reading-nav"><button className="button button-secondary" onClick={onReturn}><ArrowLeft size={16} />返回列表</button><span>视频阅读 · 第一分 P</span><ReaderActionsSlot/><a className="button button-secondary" href={`https://www.bilibili.com/video/${query}/`} target="_blank" rel="noopener noreferrer">打开原视频 <ExternalLink size={15} /></a></div>
