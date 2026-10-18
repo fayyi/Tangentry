@@ -15,6 +15,7 @@ import { discoveryReasonType, getDiscoverySourceLabel, readDiscoveryFilterState,
 import { useDiscoveryTopics } from './useDiscoveryTopics'
 import { feedbackMessage, type DiscoveryFeedbackTarget, type DiscoveryFeedbackType } from './discoveryFeedback'
 import { PaperCard } from '../documents/PaperCard'
+import { canPollPlatformVerification } from './discoveryVerification'
 
 const labels: Record<GallerySource | 'huggingface', string> = { subscriptions: '订阅更新', bilibili: 'B站推荐', youtube: 'YouTube 推荐', xiaohongshu: '小红书推荐', linuxdo: 'Linux.do 话题', xiaoyuzhou: '小宇宙发现', douyin: '抖音推荐', huggingface: 'HF 每日论文' }
 
@@ -64,9 +65,10 @@ export function DiscoveryGallery({ active, kind, onKind, query, onClearQuery, no
     if (pollTimer.current !== undefined) window.clearTimeout(pollTimer.current)
   }, [])
   useEffect(() => {
-    if (active || pollTimer.current === undefined) return
-    window.clearTimeout(pollTimer.current)
+    if (active) return
+    if (pollTimer.current !== undefined) window.clearTimeout(pollTimer.current)
     pollTimer.current = undefined
+    setWebViewPlatform('')
   }, [active])
 
   async function verifyPlatform(source: PlatformWebView) {
@@ -78,8 +80,8 @@ export function DiscoveryGallery({ active, kind, onKind, query, onClearQuery, no
       await openDesktopPlatformLogin(source)
       let attempts = 0
       const poll = async () => {
-        if (!activeRef.current) return
-        if (attempts++ >= 120) { setWebViewPlatform(''); return }
+        if (!canPollPlatformVerification(activeRef.current, attempts)) { setWebViewPlatform(''); return }
+        attempts++
         try {
           const result = await request<{ platforms: Array<{ platform: string; configured: boolean; updatedAt: number }> }>('/settings/cookies')
           const state = result.platforms.find(value => value.platform === source)

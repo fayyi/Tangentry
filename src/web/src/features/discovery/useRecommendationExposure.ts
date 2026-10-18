@@ -35,7 +35,15 @@ export function useRecommendationExposure(active: boolean, identities: string, r
         }
       }
     }, { threshold: [.5] })
-    document.querySelectorAll(`${rootSelector} [data-testid="content-card"]`).forEach(node => observer.observe(node))
+    const observeCards = () => document.querySelectorAll(`${rootSelector} [data-testid="content-card"]`).forEach(node => observer.observe(node))
+    let cancelObserve: () => void
+    if ('requestIdleCallback' in window) {
+      const idle = window.requestIdleCallback(observeCards)
+      cancelObserve = () => window.cancelIdleCallback(idle)
+    } else {
+      const timeout = setTimeout(observeCards, 0)
+      cancelObserve = () => clearTimeout(timeout)
+    }
     const visibility = () => {
       for (const node of visible) {
         cancel(node)
@@ -45,6 +53,7 @@ export function useRecommendationExposure(active: boolean, identities: string, r
     document.addEventListener('visibilitychange', visibility)
     return () => {
       observer.disconnect()
+      cancelObserve()
       for (const node of timers.keys()) cancel(node)
       document.removeEventListener('visibilitychange', visibility)
     }

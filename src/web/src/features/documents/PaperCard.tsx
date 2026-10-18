@@ -15,7 +15,7 @@ export function PaperCard({ item, saved, pending, onRead, onSave, status, action
 }) {
   const paper = item.paper
   return <article className="paper-card">
-    <button className="paper-card-open" type="button" onClick={() => onRead(item)} aria-label={`阅读论文 ${item.title}`}>
+    <button className="paper-card-open" type="button" data-content-id={item.id} onClick={() => onRead(item)} aria-label={`阅读论文 ${item.title}`}>
       <span className="paper-card-type"><FileText size={15} aria-hidden="true"/>论文 · arXiv:{paper?.arxivId ?? item.platformId}</span>
       <strong>{item.title}</strong>
       <span className="paper-card-authors">{paper?.authors.join('、') || item.author || '作者信息暂缺'}</span>
