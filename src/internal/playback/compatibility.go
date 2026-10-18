@@ -18,6 +18,29 @@ import (
 const maxCompatibilityInput = 256 << 20
 const MaxCompatibilityOutput = 384 << 20
 
+// PlaybackFormat is the small subset of container metadata needed to decide
+// whether WKWebView can play a temporary file directly.
+type PlaybackFormat struct {
+	Container  string
+	VideoCodec string
+	AudioCodec string
+}
+
+// NeedsPlaybackConversion is deliberately pure so probe decisions stay easy
+// to test without invoking FFmpeg or yt-dlp.
+func NeedsPlaybackConversion(format PlaybackFormat) bool {
+	container := strings.ToLower(strings.TrimSpace(format.Container))
+	video := strings.ToLower(strings.TrimSpace(format.VideoCodec))
+	audio := strings.ToLower(strings.TrimSpace(format.AudioCodec))
+	if container != "mp4" && container != "mov,mp4,m4a,3gp,3g2,mj2" {
+		return true
+	}
+	if video != "h264" && video != "hevc" && video != "h265" {
+		return true
+	}
+	return audio != "aac"
+}
+
 type CompatibilityJob struct {
 	ID      string `json:"id"`
 	State   string `json:"state"`
@@ -40,6 +63,7 @@ type Compatibility struct {
 	http    *http.Client
 	resolve func(context.Context, string) (Source, error)
 	convert func(context.Context, string, string) error
+	probe   func(context.Context, string) (PlaybackFormat, error)
 	ctx     context.Context
 	cancel  context.CancelFunc
 	wg      sync.WaitGroup
@@ -49,11 +73,30 @@ type Compatibility struct {
 
 func compatibilityURL(raw string) bool {
 	u, err := url.Parse(raw)
-	return err == nil && len(raw) <= 8192 && u.Scheme == "https" && u.User == nil &&
-		u.Port() == "" && strings.HasSuffix(strings.ToLower(u.Hostname()), ".xhscdn.com")
+	if err != nil || len(raw) > 8192 || u.Scheme != "https" || u.User != nil || u.Port() != "" {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	// These are the CDN suffixes currently emitted by the platform resolvers.
+	// Keep this explicit: resolver output must never turn this service into a
+	// general-purpose URL fetcher.
+	for _, suffix := range []string{".xhscdn.com", ".douyinvod.com", ".douyinvod.net", ".bytecdn.cn", ".zjcdn.com", ".amemv.com"} {
+		if strings.HasSuffix(host, suffix) && host != suffix[1:] {
+			return true
+		}
+	}
+	return false
 }
 
+// ValidCompatibilitySource is used by platform adapters before a source is
+// handed to the temporary fetcher.
+func ValidCompatibilitySource(raw string) bool { return compatibilityURL(raw) }
+
 func NewCompatibility(client *http.Client, resolve func(context.Context, string) (Source, error), convert func(context.Context, string, string) error) (*Compatibility, error) {
+	return NewCompatibilityWithProbe(client, resolve, convert, nil)
+}
+
+func NewCompatibilityWithProbe(client *http.Client, resolve func(context.Context, string) (Source, error), convert func(context.Context, string, string) error, probe func(context.Context, string) (PlaybackFormat, error)) (*Compatibility, error) {
 	root, err := os.MkdirTemp("", "tangentry-playback-")
 	if err != nil {
 		return nil, err
@@ -70,7 +113,7 @@ func NewCompatibility(client *http.Client, resolve func(context.Context, string)
 		return nil
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &Compatibility{jobs: make(map[string]*compatibilityEntry), root: root, http: &clone, resolve: resolve, convert: convert, ctx: ctx, cancel: cancel}
+	s := &Compatibility{jobs: make(map[string]*compatibilityEntry), root: root, http: &clone, resolve: resolve, convert: convert, probe: probe, ctx: ctx, cancel: cancel}
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
@@ -143,20 +186,40 @@ func (s *Compatibility) run(ctx context.Context, entry *compatibilityEntry, loca
 			_ = os.RemoveAll(entry.dir)
 		}
 	}()
+	douyin := strings.Contains(strings.ToLower(locator), "douyin.com")
 	source, err := s.resolve(ctx, locator)
-	if err != nil || !compatibilityURL(source.URL) || source.Duration > 1800 {
-		s.update(entry, "failed", "未能取得适合兼容播放的视频，请刷新笔记后重试。")
+	if err != nil {
+		s.update(entry, "failed", compatibilityResolveMessage(err, douyin))
+		return
+	}
+	if !compatibilityURL(source.URL) || source.Duration > 1800 {
+		s.update(entry, "failed", "未能取得适合兼容播放的视频，请下载视频或打开原内容。")
 		return
 	}
 	input := filepath.Join(entry.dir, "input.mp4")
 	if err := s.fetch(ctx, source.URL, input); err != nil {
-		s.update(entry, "failed", "视频读取失败或超过 256 MB，请稍后重试。")
+		s.update(entry, "failed", compatibilityFetchMessage(err, douyin))
 		return
 	}
-	s.update(entry, "converting", "")
 	output := filepath.Join(entry.dir, "playback.mp4")
-	if s.convert(ctx, input, output) != nil {
-		s.update(entry, "failed", "视频兼容处理未完成，请检查 FFmpeg 后重试。")
+	needsConversion := true
+	if s.probe != nil {
+		if format, probeErr := s.probe(ctx, input); probeErr == nil {
+			needsConversion = NeedsPlaybackConversion(format)
+		}
+	}
+	if needsConversion {
+		s.update(entry, "converting", "")
+		if err := s.convert(ctx, input, output); err != nil {
+			message := "视频兼容处理未完成，请检查 FFmpeg 后重试。"
+			if ctx.Err() != nil {
+				message = "视频兼容处理已取消，请重试。"
+			}
+			s.update(entry, "failed", message)
+			return
+		}
+	} else if err := copyFile(input, output); err != nil {
+		s.update(entry, "failed", "视频暂存失败，请重试。")
 		return
 	}
 	info, err := os.Stat(output)
@@ -169,16 +232,66 @@ func (s *Compatibility) run(ctx context.Context, entry *compatibilityEntry, loca
 	s.update(entry, "ready", "")
 }
 
+func compatibilityFetchMessage(err error, douyin bool) string {
+	if errors.Is(err, ErrTooLarge) {
+		return "视频超过 256 MB 大小限制，请改为下载视频或打开原内容。"
+	}
+	if !douyin {
+		return "视频读取失败或超过 256 MB，请稍后重试。"
+	}
+	return "视频读取失败，可能是抖音 Cookie 已过期或网络不可用；请在工具设置 → 抖音 Cookie 检查后重试。"
+}
+
+func compatibilityResolveMessage(err error, douyin bool) string {
+	if !douyin {
+		return "未能取得适合兼容播放的视频，请刷新笔记后重试。"
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return "抖音视频准备超时或已取消，请检查网络和抖音 Cookie 后重试。"
+	}
+	message := strings.TrimSpace(err.Error())
+	if message == "" || len(message) > 512 || strings.Contains(strings.ToLower(message), "context deadline") || strings.Contains(strings.ToLower(message), "context canceled") {
+		return "未能取得适合兼容播放的视频，请检查抖音 Cookie、网络和工具设置后重试。"
+	}
+	return message
+}
+
+var ErrTooLarge = errors.New("compatibility media too large")
+
+func copyFile(input, output string) error {
+	in, err := os.Open(input)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(output, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.Copy(out, in)
+	closeErr := out.Close()
+	if copyErr != nil {
+		return copyErr
+	}
+	return closeErr
+}
+
 func (s *Compatibility) fetch(ctx context.Context, raw, path string) error {
 	r, _ := http.NewRequestWithContext(ctx, "GET", raw, nil)
 	r.Header.Set("User-Agent", "Mozilla/5.0")
 	r.Header.Set("Accept-Encoding", "identity")
+	if host := strings.ToLower(r.URL.Hostname()); strings.HasSuffix(host, ".douyinvod.com") || strings.HasSuffix(host, ".douyinvod.net") || strings.HasSuffix(host, ".bytecdn.cn") || strings.HasSuffix(host, ".zjcdn.com") || strings.HasSuffix(host, ".amemv.com") {
+		r.Header.Set("Referer", "https://www.douyin.com/")
+	}
 	res, err := s.http.Do(r)
 	if err != nil {
 		return ErrUnavailable
 	}
 	defer res.Body.Close()
 	if res.StatusCode != 200 || res.ContentLength > maxCompatibilityInput {
+		if res.ContentLength > maxCompatibilityInput {
+			return ErrTooLarge
+		}
 		return ErrUnavailable
 	}
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
@@ -188,6 +301,9 @@ func (s *Compatibility) fetch(ctx context.Context, raw, path string) error {
 	n, copyErr := io.Copy(file, io.LimitReader(res.Body, maxCompatibilityInput+1))
 	closeErr := file.Close()
 	if copyErr != nil || closeErr != nil || n == 0 || n > maxCompatibilityInput || res.ContentLength >= 0 && n != res.ContentLength {
+		if n > maxCompatibilityInput {
+			return ErrTooLarge
+		}
 		return ErrUnavailable
 	}
 	return nil

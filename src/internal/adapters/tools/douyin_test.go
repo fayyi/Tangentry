@@ -86,6 +86,10 @@ func TestDouyinErrorsDoNotExposeToolOutput(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "Cookie") || strings.Contains(err.Error(), "secret") {
 		t.Fatal(err)
 	}
+	_, err = tk.DouyinPlayback(context.Background(), "https://www.douyin.com/video/6961737553342991651")
+	if err == nil || !strings.Contains(err.Error(), "Cookie") || strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "private.example") {
+		t.Fatal(err)
+	}
 }
 
 func TestVideoMetadataDurationDoesNotInheritTranscriptionLimit(t *testing.T) {

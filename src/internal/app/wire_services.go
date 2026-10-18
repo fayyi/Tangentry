@@ -11,6 +11,7 @@ import (
 	"tangentry/internal/adapters/tools"
 	"tangentry/internal/ai"
 	"tangentry/internal/config"
+	"tangentry/internal/discovery"
 	"tangentry/internal/playback"
 	"tangentry/internal/subtitles"
 	"tangentry/internal/transcription"
@@ -74,9 +75,12 @@ func newLanguageAI(dataDir string, results ai.ResultStore, option Options) *ai.S
 	return languageAI
 }
 
-// newCompatibility converts Xiaohongshu videos the web view cannot play; it is optional.
+// newCompatibility converts online videos the web view cannot play; it is optional.
 func newCompatibility(p *platforms) *playback.Compatibility {
-	compatibility, err := playback.NewCompatibility(p.network.public, func(ctx context.Context, locator string) (playback.Source, error) {
+	compatibility, err := playback.NewCompatibilityWithProbe(p.network.public, func(ctx context.Context, locator string) (playback.Source, error) {
+		if ref, parseErr := discovery.ParseDouyin(locator); parseErr == nil && ref.ID != "" {
+			return p.network.toolkit.DouyinPlayback(ctx, ref.URL)
+		}
 		item, err := p.media.notes.Note(ctx, locator)
 		if err != nil {
 			return playback.Source{}, err
@@ -85,7 +89,7 @@ func newCompatibility(p *platforms) *playback.Compatibility {
 			return playback.Source{}, playback.ErrInvalid
 		}
 		return playback.Source{URL: item.MediaURL, Duration: item.DurationSeconds}, nil
-	}, p.network.toolkit.ConvertPlayback)
+	}, p.network.toolkit.ConvertPlayback, p.network.toolkit.ProbePlayback)
 	if err != nil {
 		slog.Warn("Temporary video playback unavailable")
 		return nil

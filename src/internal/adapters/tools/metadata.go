@@ -84,6 +84,60 @@ func (t *Toolkit) Douyin(ctx context.Context, raw string) (content.Item, error) 
 	}
 	return t.extractVideo(ctx, "douyin", ref.ID, ref.URL)
 }
+
+// DouyinPlayback resolves one progressive MP4 representation. Separate DASH
+// tracks are intentionally excluded because temporary playback needs a single
+// seekable body for the native player.
+func (t *Toolkit) DouyinPlayback(ctx context.Context, raw string) (playback.Source, error) {
+	ref, err := discovery.ParseDouyin(raw)
+	if err != nil || ref.ID == "" {
+		return playback.Source{}, discovery.ErrInvalidQuery
+	}
+	if !t.ytdlpReady() {
+		return playback.Source{}, &discovery.PlatformError{Message: "抖音视频解析工具尚未准备好，请在工具设置中检查 yt-dlp。"}
+	}
+	ctx, cancel := context.WithTimeout(ctx, 35*time.Second)
+	defer cancel()
+	cookieArgs, clean, err := t.cookieArguments(ref.URL)
+	if err != nil {
+		return playback.Source{}, &discovery.PlatformError{Message: "抖音 Cookie 读取失败，请在工具设置 → 抖音 Cookie 检查后重试。"}
+	}
+	defer clean()
+	args := []string{"--ignore-config", "--no-playlist", "--no-cache-dir", "--no-warnings", "--skip-download", "--dump-single-json", "--format", "b[ext=mp4][height<=1080][vcodec!=none][acodec!=none]/b[ext=mp4][height<=1080][vcodec!=none][acodec!=none]/b[ext=mp4][vcodec!=none][acodec!=none]", "--socket-timeout", "12", "--retries", "1"}
+	args = append(args, cookieArgs...)
+	args = append(args, "--", ref.URL)
+	cmd, err := t.ytdlpCommand(ctx, args...)
+	if err != nil {
+		return playback.Source{}, &discovery.PlatformError{Message: "抖音视频解析工具不可用，请在工具设置中检查 yt-dlp。"}
+	}
+	stdout, stderr := &metadataBuffer{}, &boundedBuffer{}
+	cmd.Stdout, cmd.Stderr = stdout, stderr
+	if err := cmd.Run(); err != nil || stdout.exceeded {
+		if ctx.Err() != nil {
+			return playback.Source{}, &discovery.PlatformError{Message: "抖音视频解析超时，请检查网络和抖音 Cookie 后重试。"}
+		}
+		message := "抖音视频暂时无法获取，请检查网络和工具设置中的抖音 Cookie。"
+		if strings.Contains(strings.ToLower(stderr.String()), "cookie") || strings.Contains(strings.ToLower(stderr.String()), "login") {
+			message = "抖音需要有效 Cookie，请在工具设置 → 抖音 Cookie 配置后重试。"
+		}
+		return playback.Source{}, &discovery.PlatformError{Message: message}
+	}
+	var data struct {
+		ID       string  `json:"id"`
+		URL      string  `json:"url"`
+		Protocol string  `json:"protocol"`
+		Ext      string  `json:"ext"`
+		Format   string  `json:"format"`
+		VCodec   string  `json:"vcodec"`
+		ACodec   string  `json:"acodec"`
+		Height   int     `json:"height"`
+		Duration float64 `json:"duration"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &data); err != nil || data.ID != ref.ID || data.URL == "" || data.Protocol != "https" || data.Ext != "mp4" || data.Height > 1080 || data.VCodec == "" || data.ACodec == "" || math.IsNaN(data.Duration) || math.IsInf(data.Duration, 0) || data.Duration < 0 || data.Duration > 1800 || !playback.ValidCompatibilitySource(data.URL) {
+		return playback.Source{}, &discovery.PlatformError{Message: "抖音没有返回可兼容播放的 MP4 视频，请下载视频或打开原内容。"}
+	}
+	return playback.Source{URL: data.URL, Quality: data.Height, Duration: int(data.Duration)}, nil
+}
 func (t *Toolkit) extractVideo(ctx context.Context, platform, id, url string) (content.Item, error) {
 	if !t.ytdlpReady() {
 		return content.Item{}, discovery.ErrUnavailable

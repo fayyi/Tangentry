@@ -22,12 +22,16 @@ func (h *mediaHandler) compatibilityOpen(w http.ResponseWriter, r *http.Request)
 		write(w, 400, apiError{"invalid_playback", "兼容播放请求无效。"})
 		return
 	}
-	ref, err := discovery.ParseXiaohongshu(body.URL)
-	if err != nil || ref.ID == "" {
-		write(w, 400, apiError{"invalid_playback", "请使用小红书笔记的完整分享地址。"})
+	locator := ""
+	if ref, err := discovery.ParseXiaohongshu(body.URL); err == nil && ref.ID != "" {
+		locator = ref.URL
+	} else if ref, err := discovery.ParseDouyin(body.URL); err == nil && ref.ID != "" {
+		locator = ref.URL
+	} else {
+		write(w, 400, apiError{"invalid_playback", "请使用小红书笔记或抖音视频的完整地址。"})
 		return
 	}
-	job, err := h.media.Compatibility.Open(ref.URL)
+	job, err := h.media.Compatibility.Open(locator)
 	if err != nil {
 		fail(w, err)
 		return

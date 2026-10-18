@@ -38,7 +38,7 @@ func TestCompatibilityRoutesValidateLocatorAndServeSeekableTemporaryFile(t *test
 		h.ServeHTTP(w, r)
 		return w
 	}
-	for _, body := range []string{`null`, `{}`, `{"url":"https://127.0.0.1/video"}`, `{"url":"https://xhslink.com/a/share"}`, `{"url":"https://www.xiaohongshu.com/explore/6411cf99000000001300b6d9","mediaUrl":"https://private.invalid"}`, `{"url":"https://www.xiaohongshu.com/explore/6411cf99000000001300b6d9"}{}`} {
+	for _, body := range []string{`null`, `{}`, `{"url":"https://127.0.0.1/video"}`, `{"url":"https://xhslink.com/a/share"}`, `{"url":"https://www.xiaohongshu.com/explore/6411cf99000000001300b6d9","mediaUrl":"https://private.invalid"}`, `{"url":"https://www.xiaohongshu.com/explore/6411cf99000000001300b6d9"}{}`, `{"url":"https://example.com/video/1234567890123456"}`} {
 		if w := send("POST", "", body, ""); w.Code != 400 {
 			t.Fatalf("bad input accepted: %d", w.Code)
 		}
@@ -68,5 +68,9 @@ func TestCompatibilityRoutesValidateLocatorAndServeSeekableTemporaryFile(t *test
 	}
 	if send("DELETE", "/"+job.ID, "", "").Code != 204 || send("GET", "/"+job.ID+"/media", "", "").Code != 410 {
 		t.Fatal("released media remains available")
+	}
+	douyin := send("POST", "", `{"url":"https://www.douyin.com/video/1234567890123456"}`, "")
+	if douyin.Code != 202 {
+		t.Fatalf("Douyin locator rejected: %d %s", douyin.Code, douyin.Body.String())
 	}
 }
