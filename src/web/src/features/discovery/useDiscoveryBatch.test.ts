@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest'
 import type { DiscoveryBatchItem } from '../../shared/api/types'
-import { appendDiscoveryBatch, appendDiscoveryItems, buildDiscoveryBatchParams, buildDiscoveryTopicParam, createDiscoveryBatchSession, discoveryReasonType, discoverySourceLabel, isDiscoverySessionStale, readDiscoveryFilterState, restoreDiscoveryBatchSession, updateDiscoveryFilterState } from './useDiscoveryBatch'
+import { appendDiscoveryBatch, appendDiscoveryItems, buildDiscoveryBatchParams, buildDiscoveryTopicParam, createDiscoveryBatchSession, discoveryBatchStopped, discoveryBottomState, discoveryReasonType, discoverySourceLabel, hasDiscoveryContinuation, isDiscoverySessionStale, readDiscoveryFilterState, restoreDiscoveryBatchSession, shouldRequestDiscoveryNextBatch, updateDiscoveryFilterState } from './useDiscoveryBatch'
 
 function entry(id: string, source = 'bilibili', reason = '来源更新'): DiscoveryBatchItem {
   return {
@@ -70,4 +70,32 @@ test('keeps discovery source and topic filters in the session', () => {
   updateDiscoveryFilterState({ platform: 'linuxdo', topic: '技术' })
   expect(readDiscoveryFilterState()).toMatchObject({ platform: 'linuxdo', topic: '技术' })
   updateDiscoveryFilterState({ platform: 'all', topic: '' })
+})
+
+test('keeps a refreshed batch pageable only when both continuation fields exist', () => {
+  const next = { batchId: 'batch', items: [entry('a')], hasNextBatch: true, nextCursor: 'cursor', reason: 'x', sourceStatus: {} }
+  expect(hasDiscoveryContinuation(next)).toBe(true)
+  expect(discoveryBatchStopped(next)).toBe(false)
+  expect(discoveryBatchStopped({ ...next, nextCursor: '' })).toBe(true)
+  expect(discoveryBatchStopped({ ...next, hasNextBatch: false })).toBe(true)
+})
+
+test('maps discovery load-more states and preserves backend end reasons', () => {
+  const batch = { batchId: 'batch', items: [entry('a')], hasNextBatch: false, endReason: '部分来源暂不可用（youtube），暂时没有更多了', reason: 'x', sourceStatus: {} }
+  expect(discoveryBottomState('', false, batch, 1)).toEqual({ kind: 'ended', message: batch.endReason })
+  expect(discoveryBottomState('请求失败', false, batch, 1)).toEqual({ kind: 'error', message: '请求失败' })
+  expect(discoveryBottomState('', true, batch, 1)).toEqual({ kind: 'loading' })
+  expect(discoveryBottomState('', false, { ...batch, hasNextBatch: true, nextCursor: 'next' }, 1)).toEqual({ kind: 'more' })
+  expect(discoveryBottomState('', false, null, 0)).toEqual({ kind: 'empty' })
+})
+
+test('guards duplicate sentinel intersections while a cursor request is in flight', () => {
+  const session = createDiscoveryBatchSession()
+  session.batch = { batchId: 'batch', items: [entry('a')], hasNextBatch: true, nextCursor: 'next', reason: 'x', sourceStatus: {} }
+  expect(shouldRequestDiscoveryNextBatch(true, session)).toBe(true)
+  session.loading = true
+  expect(shouldRequestDiscoveryNextBatch(true, session)).toBe(false)
+  session.loading = false
+  session.stopped = true
+  expect(shouldRequestDiscoveryNextBatch(true, session)).toBe(false)
 })
