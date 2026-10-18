@@ -11,7 +11,7 @@ func Card(item Item) Item {
 	if len(item.ArticleBlocks) == 0 && len(item.Transcripts) == 0 && len(description) <= CardDescriptionRunes {
 		return item
 	}
-	item.ArticleBlocks, item.Transcripts, item.Partial = nil, nil, true
+	item.ArticleBlocks, item.Transcripts, item.Discussion, item.Partial = nil, nil, nil, true
 	if len(description) > CardDescriptionRunes {
 		item.Description = string(description[:CardDescriptionRunes])
 	}

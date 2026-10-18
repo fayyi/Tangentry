@@ -26,6 +26,41 @@ type Client struct {
 	Page      platformfetch.Fetcher
 }
 
+func maxInt(values ...int) int {
+	result := 0
+	for _, value := range values {
+		if value > result {
+			result = value
+		}
+	}
+	return result
+}
+
+func MissingPostIDs(all []int64, loaded []content.DiscussionPost, limit int) []int64 {
+	if limit < 1 {
+		limit = 20
+	}
+	if limit > 50 {
+		limit = 50
+	}
+	seen := make(map[int64]struct{}, len(loaded))
+	for _, post := range loaded {
+		seen[post.ID] = struct{}{}
+	}
+	result := make([]int64, 0, limit)
+	for _, id := range all {
+		if id > 0 {
+			if _, ok := seen[id]; !ok {
+				result = append(result, id)
+				if len(result) == limit {
+					break
+				}
+			}
+		}
+	}
+	return result
+}
+
 type SessionState struct {
 	LoggedIn bool   `json:"loggedIn"`
 	Username string `json:"username,omitempty"`
@@ -232,13 +267,22 @@ func (c *Client) Topic(ctx context.Context, id string) (content.Item, error) {
 		Views      int    `json:"views"`
 		Likes      int    `json:"like_count"`
 		ReplyCount int    `json:"reply_count"`
+		PostsCount int    `json:"posts_count"`
 		Stream     struct {
 			Posts []struct {
-				Number   int    `json:"post_number"`
-				Body     string `json:"cooked"`
-				Username string `json:"username"`
-				Avatar   string `json:"avatar_template"`
+				ID        int64  `json:"id"`
+				Number    int    `json:"post_number"`
+				Body      string `json:"cooked"`
+				Username  string `json:"username"`
+				Name      string `json:"name"`
+				Avatar    string `json:"avatar_template"`
+				Created   string `json:"created_at"`
+				Likes     int    `json:"like_count"`
+				ReplyTo   int    `json:"reply_to_post_number"`
+				ReplyUser string `json:"reply_to_user"`
+				ReplyID   int64  `json:"reply_to_post_id"`
 			} `json:"posts"`
+			Stream []int64 `json:"stream"`
 		} `json:"post_stream"`
 	}
 	if json.Unmarshal(raw, &data) != nil || data.ID != number {
@@ -249,55 +293,101 @@ func (c *Client) Topic(ctx context.Context, id string) (content.Item, error) {
 	if !date.IsZero() {
 		item.PublishedAt = date.Unix()
 	}
-	var body strings.Builder
-	blocks := make([]content.ArticleBlock, 0, 32)
-	hasImage := false
+	posts := make([]content.DiscussionPost, 0, len(data.Stream.Posts))
 	for _, post := range data.Stream.Posts {
-		text := feeds.Text(post.Body)
 		cookedBlocks := feeds.ParseArticleBlocks(post.Body, item.URL)
-		if text == "" && len(cookedBlocks) == 0 {
+		if len(cookedBlocks) == 0 {
 			continue
 		}
 		if post.Number == 1 {
 			item.Author = post.Username
 			item.AuthorAvatarURL = discourseAvatar(post.Avatar)
 		}
-		if body.Len() > 0 {
-			body.WriteString("\n\n")
+		created, _ := time.Parse(time.RFC3339Nano, post.Created)
+		if post.ID <= 0 {
+			post.ID = int64(post.Number)
 		}
-		if post.Number > 1 && post.Username != "" {
-			body.WriteString("回复 ")
-			body.WriteString(post.Username)
-			body.WriteString("：")
-			blocks = append(blocks, content.ArticleBlock{Kind: "paragraph", Text: "回复 " + post.Username + "："})
-		}
-		body.WriteString(text)
-		for _, block := range cookedBlocks {
-			if block.Kind == "image" {
-				hasImage = true
+		posts = append(posts, content.DiscussionPost{ID: post.ID, Number: post.Number, Username: post.Username, Name: post.Name, AvatarURL: discourseAvatar(post.Avatar), CreatedAt: created.Unix(), LikeCount: post.Likes, ReplyToNumber: post.ReplyTo, ReplyToUser: post.ReplyUser, ReplyToPostID: post.ReplyID, Blocks: cookedBlocks})
+	}
+	var mainText []string
+	if len(posts) > 0 {
+		for _, block := range posts[0].Blocks {
+			if block.Kind != "image" && block.Kind != "emoji" && block.Text != "" {
+				mainText = append(mainText, block.Text)
 			}
 		}
-		blocks = append(blocks, cookedBlocks...)
 	}
-	item.Description = feeds.Text(body.String())
+	item.Description = feeds.Text(strings.Join(mainText, "\n\n"))
 	if data.ReplyCount > 0 {
 		item.ReplyCount = data.ReplyCount
 	} else if len(data.Stream.Posts) > 1 {
 		item.ReplyCount = len(data.Stream.Posts) - 1
 	}
-	if item.Description != "" || len(blocks) > 0 {
-		if !hasImage {
-			blocks = []content.ArticleBlock{{Kind: "paragraph", Text: item.Description}}
+	if len(posts) > 0 {
+		item.ArticleBlocks = posts[0].Blocks
+		participants := map[string]struct{}{}
+		for _, post := range posts {
+			participants[post.Username] = struct{}{}
 		}
-		item.ArticleBlocks = blocks
-		if len(item.ArticleBlocks) == 0 {
-			item.ArticleBlocks = []content.ArticleBlock{{Kind: "paragraph", Text: item.Description}}
+		postIDs := append([]int64(nil), data.Stream.Stream...)
+		if len(postIDs) == 0 {
+			for _, post := range posts {
+				postIDs = append(postIDs, post.ID)
+			}
 		}
+		item.Discussion = &content.Discussion{TopicID: id, TotalPosts: maxInt(data.PostsCount, len(postIDs), data.ReplyCount+1), LoadedPosts: len(posts), Participating: len(participants), PostIDs: postIDs, Posts: posts}
 	}
 	if content.Validate(item) != nil {
 		return content.Item{}, discovery.ErrUnavailable
 	}
 	return item, nil
+}
+
+func (c *Client) TopicPosts(ctx context.Context, id string, postIDs []int64) (content.Discussion, error) {
+	if _, err := strconv.ParseInt(id, 10, 64); err != nil || len(postIDs) == 0 || len(postIDs) > 50 {
+		return content.Discussion{}, discovery.ErrInvalidQuery
+	}
+	query := make([]string, 0, len(postIDs))
+	for _, postID := range postIDs {
+		if postID <= 0 {
+			return content.Discussion{}, discovery.ErrInvalidQuery
+		}
+		query = append(query, "post_ids[]="+strconv.FormatInt(postID, 10))
+	}
+	raw, _, err := c.read(ctx, "/t/"+id+"/posts.json?"+strings.Join(query, "&"))
+	if err != nil {
+		return content.Discussion{}, err
+	}
+	var data struct {
+		PostStream struct {
+			Posts []struct {
+				ID        int64  `json:"id"`
+				Number    int    `json:"post_number"`
+				Body      string `json:"cooked"`
+				Username  string `json:"username"`
+				Name      string `json:"name"`
+				Avatar    string `json:"avatar_template"`
+				Created   string `json:"created_at"`
+				Likes     int    `json:"like_count"`
+				ReplyTo   int    `json:"reply_to_post_number"`
+				ReplyUser string `json:"reply_to_user"`
+				ReplyID   int64  `json:"reply_to_post_id"`
+			} `json:"posts"`
+		} `json:"post_stream"`
+	}
+	if json.Unmarshal(raw, &data) != nil {
+		return content.Discussion{}, discovery.ErrUnavailable
+	}
+	posts := make([]content.DiscussionPost, 0, len(data.PostStream.Posts))
+	for _, post := range data.PostStream.Posts {
+		blocks := feeds.ParseArticleBlocks(post.Body, "https://linux.do/t/"+id)
+		if len(blocks) == 0 {
+			continue
+		}
+		created, _ := time.Parse(time.RFC3339Nano, post.Created)
+		posts = append(posts, content.DiscussionPost{ID: post.ID, Number: post.Number, Username: post.Username, Name: post.Name, AvatarURL: discourseAvatar(post.Avatar), CreatedAt: created.Unix(), LikeCount: post.Likes, ReplyToNumber: post.ReplyTo, ReplyToUser: post.ReplyUser, ReplyToPostID: post.ReplyID, Blocks: blocks})
+	}
+	return content.Discussion{TopicID: id, LoadedPosts: len(posts), Posts: posts}, nil
 }
 
 func (c *Client) Latest(ctx context.Context, page int) (discovery.Feed, error) {

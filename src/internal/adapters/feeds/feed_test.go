@@ -59,6 +59,34 @@ func TestAtomArticleImagesAndStructureArePreservedSafely(t *testing.T) {
 	}
 }
 
+func TestDiscourseCookedStructureKeepsLightboxListsAndInlineEmoji(t *testing.T) {
+	body := `<h1><a class="anchor" href="#ignored"></a><strong>脱敏标题</strong></h1>` +
+		`<p><div class="lightbox-wrapper"><a class="lightbox" href="https://img.example.test/original.png"><img src="https://img.example.test/thumb.png" alt="示例图" width="640" height="360" srcset="https://img.example.test/thumb.png, https://img.example.test/large.png 2x"><div class="meta"><svg></svg><span class="filename">不应显示</span><span class="informations">640×360</span></div></a></div></p>` +
+		`<ul><li><p>一级</p><ul><li><p>二级</p></li></ul></li></ul>` +
+		`<p>表情 <img class="emoji" src="https://img.example.test/emoji.png" alt=":wave:"/> 之后</p>` +
+		`<aside class="onebox"><a href="https://example.test/post">链接标题</a></aside>` +
+		`<aside class="quote"><p>引用内容</p></aside><pre><code>const x = 1</code></pre>`
+	blocks := ParseArticleBlocks(body, "https://forum.example.test/t/1")
+	if len(blocks) != 8 {
+		t.Fatalf("unexpected block count: %#v", blocks)
+	}
+	if blocks[0].Kind != "heading" || blocks[0].Text != "脱敏标题" {
+		t.Fatalf("heading/anchor handling failed: %#v", blocks[0])
+	}
+	if blocks[1].Kind != "image" || blocks[1].URL != "https://img.example.test/original.png" || blocks[1].Alt != "示例图" || blocks[1].Width != 640 || strings.Contains(blocks[1].Text, "不应显示") {
+		t.Fatalf("lightbox handling failed: %#v", blocks[1])
+	}
+	if blocks[2].Kind != "list" || blocks[2].Level != 0 || blocks[3].Kind != "list" || blocks[3].Level != 1 {
+		t.Fatalf("nested list handling failed: %#v", blocks[2:4])
+	}
+	if len(blocks[4].InlineImages) != 1 || blocks[4].InlineImages[0].Alt != ":wave:" {
+		t.Fatalf("inline emoji handling failed: %#v", blocks[4])
+	}
+	if blocks[5].Kind != "onebox" || blocks[5].URL != "https://example.test/post" || blocks[6].Kind != "quote" || blocks[7].Kind != "code" {
+		t.Fatalf("structured block handling failed: %#v", blocks[5:])
+	}
+}
+
 func TestRSSArticleTableCellsRemainDistinct(t *testing.T) {
 	body := `<table><tr><th>项目</th><th>金额</th></tr><tr><td>订阅<strong>A</strong></td><td>12.50</td></tr><tr><td>订阅B</td><td>100</td></tr></table>`
 	raw := `<rss version="2.0"><channel><title>feed</title><link>https://example.com</link><description>feed</description><item><guid>table</guid><title>table</title><link>https://example.com/table</link><description><![CDATA[` + body + `]]></description></item></channel></rss>`

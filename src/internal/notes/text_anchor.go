@@ -18,6 +18,8 @@ type TextAnchor struct {
 	Prefix     string `json:"prefix"`
 	Suffix     string `json:"suffix"`
 	SourceHash string `json:"sourceHash"`
+	PostNumber int    `json:"postNumber,omitempty"`
+	PostID     int64  `json:"postId,omitempty"`
 }
 
 var sourceHashPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
@@ -30,7 +32,7 @@ func validateAnchor(anchor *TextAnchor) error {
 		utf8.RuneCountInString(anchor.Quote) == 0 || utf8.RuneCountInString(anchor.Quote) > 2000 ||
 		utf8.RuneCountInString(anchor.Prefix) > 64 || utf8.RuneCountInString(anchor.Suffix) > 64 ||
 		anchor.Start < 0 || anchor.End > 2_000_000 || anchor.End <= anchor.Start ||
-		anchor.End-anchor.Start != len(utf16.Encode([]rune(anchor.Quote))) || !sourceHashPattern.MatchString(anchor.SourceHash) {
+		anchor.End-anchor.Start != len(utf16.Encode([]rune(anchor.Quote))) || !sourceHashPattern.MatchString(anchor.SourceHash) || anchor.PostNumber < 0 || anchor.PostID < 0 {
 		return ErrInvalid
 	}
 	return nil

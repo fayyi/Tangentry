@@ -210,6 +210,9 @@
 .article-markdown .markdown-body img { display: block; max-width: 100%; height: auto; max-height: 75vh; margin: 16px auto; object-fit: contain; border-radius: var(--radius-xs); }
 .article-block-image { margin: 20px 0; }
 .article-block-image img { display: block; width: auto; max-width: 100%; height: auto; max-height: 75vh; margin-inline: auto; object-fit: contain; border-radius: var(--radius-xs); }
+.article-block-emoji { display: inline; margin: 0 .12em; }
+.article-block-emoji img { display: inline-block; width: 1.25em; height: 1.25em; max-height: 1.25em; margin: 0; vertical-align: -.2em; border-radius: 0; }
+.article-inline-emoji { display: inline-block; width: 1.25em; height: 1.25em; margin: 0 .12em; vertical-align: -.2em; object-fit: contain; }
 .article-block-image figcaption { margin-top: 6px; color: var(--muted); font-size: 12px; text-align: center; }
 .article-block-image figcaption:empty { display: none; }
 .article-image-failed a { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; }
@@ -239,14 +242,40 @@
 .audio-playback-error p { margin: 0; color: var(--muted); }
 .audio-playback-error .button { min-height: 36px; font-size: 12px; }
 .article-structured { white-space: normal; }
-.article-structured .article-block { white-space: pre-wrap; margin: 0 0 1.25em; }
+.article-structured .article-block { white-space: pre-wrap; margin: 0 0 .85em; }
 .article-structured h2.article-block { font-size: 21px; line-height: 1.5; font-weight: 600; margin: 1.8em 0 .8em; }
 .article-structured h3.article-block { font-size: 18px; line-height: 1.5; margin: 1.6em 0 .8em; }
 .article-structured h4.article-block { font-size: 16px; line-height: 1.5; margin: 1.4em 0 .8em; }
 .article-structured .article-block-quote { border-left: 2px solid var(--line); padding-left: 18px; color: var(--muted); }
 .article-structured .article-block-code { font-size: 13px; line-height: 1.7; padding: 16px; background: var(--surface); border-radius: 6px; overflow-wrap: anywhere; }
-.article-structured .article-block-list { padding-left: 18px; position: relative; }
-.article-structured .article-block-list::before { content: '•'; position: absolute; left: 2px; }
+.article-structured .article-block-list { margin: 0 0 .35em; padding-left: 1.6em; white-space: normal; }
+.article-structured .article-block-list li { padding-left: .2em; }
+.article-structured .article-list-depth-1 { margin-left: 1.25em; }
+.article-structured .article-list-depth-2 { margin-left: 2.5em; }
+.article-structured .article-block-table { tab-size: 12; font-variant-numeric: tabular-nums; }
+.article-structured .article-block-onebox a { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
+.article-structured .article-block-details, .article-structured .article-block-spoiler { margin-block: .8em; padding: .5em .8em; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+.article-structured .article-block-details summary, .article-structured .article-block-spoiler summary { cursor: pointer; color: var(--ink); }
+.article-structured .article-block-details p, .article-structured .article-block-spoiler p { margin: .6em 0 0; }
+.discussion-reader { max-width: 80ch; margin-top: 22px; }
+.discussion-stats { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-bottom: 12px; padding: 8px 0; color: var(--muted); font-size: 12px; border-block: 1px solid var(--line); }
+.discussion-post { scroll-margin-top: 90px; padding: 16px 0 20px; border-bottom: 1px solid var(--line); }
+.discussion-post-focused { background: color-mix(in srgb, var(--accent-soft) 45%, transparent); outline: 2px solid var(--accent-line); outline-offset: 6px; }
+.discussion-post-header { display: flex; align-items: center; gap: 10px; min-height: 40px; }
+.discussion-post-avatar { flex: 0 0 auto; width: 40px; height: 40px; object-fit: cover; border-radius: 50%; background: var(--surface); }
+.discussion-post-byline { display: grid; grid-template-columns: auto auto; align-items: baseline; column-gap: 8px; min-width: 0; }
+.discussion-post-byline strong { overflow-wrap: anywhere; }
+.discussion-post-byline span { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.discussion-post-byline b { grid-column: 1 / -1; color: var(--accent-ink); font-size: 11px; font-weight: 500; }
+.discussion-post-header time { margin-left: auto; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.discussion-post-number { color: var(--muted); font-size: 12px; text-decoration: none; }
+.discussion-reply-link { display: inline-flex; align-items: center; gap: 5px; margin: 10px 0 2px 50px; padding: 0; border: 0; background: transparent; color: var(--muted); font-size: 12px; cursor: pointer; }
+.discussion-reply-link:hover { color: var(--ink); }
+.discussion-post .article-reader { margin-top: 8px; max-width: none; }
+.discussion-post .article-reader > h2 { display: none; }
+.discussion-post-footer { display: flex; justify-content: flex-end; margin-top: 6px; color: var(--muted); font-size: 12px; }
+.discussion-post-footer span { display: inline-flex; align-items: center; gap: 4px; }
+.discussion-load-status { display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 52px; color: var(--muted); font-size: 12px; }
 .fulltext-reader { max-width: 72ch; margin-top: 8px; }
 .fulltext-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .fulltext-toolbar .button { min-height: 34px; padding: 6px 10px; font-size: 12px; }

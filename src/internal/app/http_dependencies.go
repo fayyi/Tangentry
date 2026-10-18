@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"tangentry/internal/content"
 	"tangentry/internal/discovery"
 	httptransport "tangentry/internal/transport/http"
 )
@@ -20,6 +21,9 @@ func httpDiscoveryDependencies(s *services, adapters httpAdapterBundle) httptran
 		Search: discovery.NewService(p.creators), BilibiliBrowser: adapters.bilibiliBrowser,
 		RecommendationConfig: s.features.api.preferences, RecommendationQueue: s.features.recommendations.queue,
 		RecommendationPage: s.features.recommendations.Page, Imports: s.imports.importSource,
+		LinuxdoPosts: func(ctx context.Context, id string, postIDs []int64) (content.Discussion, error) {
+			return s.adapters.discovery.forum.TopicPosts(ctx, id, postIDs)
+		},
 		DiscoveryBatch:        s.features.discoveryBatch,
 		DiscoveryTopics:       discovery.NewTopicRules(s.runtime.store),
 		XiaohongshuDetail:     s.runtime.repositories.xiaohongshu.XiaohongshuDetail,

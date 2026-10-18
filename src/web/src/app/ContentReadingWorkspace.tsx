@@ -16,6 +16,7 @@ import { SummaryControl } from '../features/ai/SummaryControl'
 import { ReaderActions } from '../shared/reader/ReaderActions'
 import { TranscriptionControls } from '../features/subtitles/TranscriptionControls'
 import { request } from '../shared/api/client'
+import { discussionSummary } from '../features/reader/DiscussionReader'
 
 export function ContentReadingWorkspace({ id, linkedNoteId, initialItem, jobs, jobsLoading, onReturn, onItem }: { id: string; linkedNoteId?: string; initialItem?: ContentItem; jobs: DownloadJob[]; jobsLoading?: boolean; onReturn: () => void; onItem?: (item:ContentItem) => void }) {
   const [item,setItem]=useState<ContentItem|null>(initialItem??null)
@@ -54,7 +55,7 @@ export function ContentReadingWorkspace({ id, linkedNoteId, initialItem, jobs, j
   const captureAction = useRef<(() => void) | null>(null)
   const requestScreenshot = useCallback(() => captureAction.current?.(), [])
   const assistance=useSubtitleAssistance(id,captions,ready?seek:undefined,{contentId:id,title:item?.title,url:item?.url}, item?.kind !== 'pdf')
-  const summaryText = item?.description?.trim() || item?.articleBlocks?.map(block => `${block.text ?? ''}${block.alt ? `\n${block.alt}` : ''}`).join('\n').trim() || item?.images?.map(image => image.alt).filter(Boolean).join('\n').trim() || ''
+  const summaryText = item?.discussion ? discussionSummary(item.discussion) : item?.description?.trim() || item?.articleBlocks?.map(block => `${block.text ?? ''}${block.alt ? `\n${block.alt}` : ''}`).join('\n').trim() || item?.images?.map(image => image.alt).filter(Boolean).join('\n').trim() || ''
   const summaryInputText = item?.kind === 'image' && !summaryText ? item.title : summaryText
   const textSummary = useSummary(id, 'content', captions ?? undefined, ready ? seek : undefined, captions ? undefined : summaryInputText)
   const activeSummary = assistance?.summary ?? textSummary

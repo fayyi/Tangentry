@@ -26,22 +26,23 @@ func Validate(item Item) error {
 	if len(item.ArticleBlocks) > 4000 {
 		return ErrInvalid
 	}
+	if item.Discussion != nil {
+		if item.Discussion.TopicID == "" || len(item.Discussion.Posts) > 200 || len(item.Discussion.PostIDs) > 10000 || item.Discussion.TotalPosts < len(item.Discussion.Posts) || item.Discussion.LoadedPosts != len(item.Discussion.Posts) {
+			return ErrInvalid
+		}
+		for _, post := range item.Discussion.Posts {
+			if post.ID <= 0 || post.Number <= 0 || strings.TrimSpace(post.Username) == "" || post.LikeCount < 0 || post.ReplyToNumber < 0 || len(post.Blocks) > 4000 {
+				return ErrInvalid
+			}
+			for _, block := range post.Blocks {
+				if !validArticleBlock(block) {
+					return ErrInvalid
+				}
+			}
+		}
+	}
 	for _, block := range item.ArticleBlocks {
-		switch block.Kind {
-		case "paragraph", "quote", "code", "list":
-			if block.Level != 0 || strings.TrimSpace(block.Text) == "" || len(block.Text) > 20000 {
-				return ErrInvalid
-			}
-		case "heading":
-			if block.Level < 2 || block.Level > 4 || strings.TrimSpace(block.Text) == "" || len(block.Text) > 2000 {
-				return ErrInvalid
-			}
-		case "image":
-			u, err := url.Parse(block.URL)
-			if err != nil || len(block.URL) > 4096 || u.Hostname() == "" || u.User != nil || (u.Scheme != "https" && u.Scheme != "http") || block.Width < 0 || block.Height < 0 || block.Width > 30000 || block.Height > 30000 || len(block.Alt) > 1000 {
-				return ErrInvalid
-			}
-		default:
+		if !validArticleBlock(block) {
 			return ErrInvalid
 		}
 	}
@@ -70,4 +71,38 @@ func Validate(item Item) error {
 		}
 	}
 	return nil
+}
+
+func validArticleBlock(block ArticleBlock) bool {
+	if block.Group < 0 || block.Group > 100000 || len(block.Summary) > 2000 || len(block.InlineImages) > 100 {
+		return false
+	}
+	for _, image := range block.InlineImages {
+		u, err := url.Parse(image.URL)
+		if err != nil || len(image.URL) > 4096 || u.Hostname() == "" || u.User != nil || (u.Scheme != "https" && u.Scheme != "http") || image.Offset < 0 || image.Width < 0 || image.Height < 0 || image.Width > 30000 || image.Height > 30000 || len(image.Alt) > 1000 {
+			return false
+		}
+	}
+	switch block.Kind {
+	case "paragraph", "quote", "code", "table":
+		return block.Level == 0 && !block.Ordered && strings.TrimSpace(block.Text) != "" && len(block.Text) <= 20000
+	case "list":
+		return block.Level >= 0 && block.Level <= 16 && strings.TrimSpace(block.Text) != "" && len(block.Text) <= 20000
+	case "heading":
+		return block.Level >= 2 && block.Level <= 4 && !block.Ordered && strings.TrimSpace(block.Text) != "" && len(block.Text) <= 2000
+	case "details", "spoiler":
+		return block.Level == 0 && !block.Ordered && strings.TrimSpace(block.Text) != "" && len(block.Text) <= 20000 && strings.TrimSpace(block.Summary) != ""
+	case "onebox":
+		return block.Level == 0 && !block.Ordered && strings.TrimSpace(block.Text) != "" && len(block.Text) <= 2000 && validArticleURL(block.URL)
+	case "image", "emoji":
+		u, err := url.Parse(block.URL)
+		return err == nil && len(block.URL) <= 4096 && u.Hostname() != "" && u.User == nil && (u.Scheme == "https" || u.Scheme == "http") && block.Level == 0 && !block.Ordered && block.Summary == "" && block.Width >= 0 && block.Height >= 0 && block.Width <= 30000 && block.Height <= 30000 && len(block.Alt) <= 1000
+	default:
+		return false
+	}
+}
+
+func validArticleURL(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && len(raw) <= 4096 && u.Hostname() != "" && u.User == nil && (u.Scheme == "https" || u.Scheme == "http")
 }

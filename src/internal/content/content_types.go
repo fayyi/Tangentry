@@ -4,6 +4,7 @@ type Item struct {
 	Transcripts     []Transcript   `json:"transcripts,omitempty"`
 	Images          []Image        `json:"images,omitempty"`
 	ArticleBlocks   []ArticleBlock `json:"articleBlocks,omitempty"`
+	Discussion      *Discussion    `json:"discussion,omitempty"`
 	MediaURL        string         `json:"mediaUrl,omitempty"`
 	ID              string         `json:"id"`
 	Platform        string         `json:"platform"`
@@ -30,14 +31,49 @@ type Item struct {
 	Partial bool `json:"partial,omitempty"`
 }
 
+type Discussion struct {
+	TopicID       string           `json:"topicId"`
+	TotalPosts    int              `json:"totalPosts"`
+	LoadedPosts   int              `json:"loadedPosts"`
+	Participating int              `json:"participatingUsers,omitempty"`
+	PostIDs       []int64          `json:"postIds,omitempty"`
+	Posts         []DiscussionPost `json:"posts"`
+}
+
+type DiscussionPost struct {
+	ID            int64          `json:"id"`
+	Number        int            `json:"number"`
+	Username      string         `json:"username"`
+	Name          string         `json:"name,omitempty"`
+	AvatarURL     string         `json:"avatarUrl,omitempty"`
+	CreatedAt     int64          `json:"createdAt"`
+	LikeCount     int            `json:"likeCount,omitempty"`
+	ReplyToNumber int            `json:"replyToNumber,omitempty"`
+	ReplyToUser   string         `json:"replyToUser,omitempty"`
+	ReplyToPostID int64          `json:"replyToPostId,omitempty"`
+	Blocks        []ArticleBlock `json:"blocks"`
+}
+
 // ArticleBlock is the safe, structured subset of an article that can be
 // rendered by the reader. Image URLs are kept separate from text so feeds do
 // not have to expose arbitrary HTML to the frontend.
 type ArticleBlock struct {
-	Kind   string `json:"kind"`
-	Level  int    `json:"level,omitempty"`
-	Text   string `json:"text"`
-	URL    string `json:"url,omitempty"`
+	Kind         string               `json:"kind"`
+	Level        int                  `json:"level,omitempty"`
+	Group        int                  `json:"group,omitempty"`
+	Ordered      bool                 `json:"ordered,omitempty"`
+	Text         string               `json:"text"`
+	Summary      string               `json:"summary,omitempty"`
+	URL          string               `json:"url,omitempty"`
+	Alt          string               `json:"alt,omitempty"`
+	Width        int                  `json:"width,omitempty"`
+	Height       int                  `json:"height,omitempty"`
+	InlineImages []ArticleInlineImage `json:"inlineImages,omitempty"`
+}
+
+type ArticleInlineImage struct {
+	Offset int    `json:"offset"`
+	URL    string `json:"url"`
 	Alt    string `json:"alt,omitempty"`
 	Width  int    `json:"width,omitempty"`
 	Height int    `json:"height,omitempty"`
