@@ -81,25 +81,26 @@ type Config struct {
 	Revision             int64          `json:"revision"`
 }
 type Status struct {
-	Protocol             string         `json:"protocol"`
-	Translating          bool           `json:"translating"`
-	BaseURL              string         `json:"baseUrl"`
-	Model                string         `json:"model"`
-	ChatModel            string         `json:"chatModel"`
-	EnabledModels        ModelList      `json:"enabledModels"`
-	AvailableModels      ModelList      `json:"availableModels"`
-	SummaryModel         string         `json:"summaryModel"`
-	SummaryPrompt        string         `json:"summaryPrompt"`
-	TranslationPrompt    string         `json:"translationPrompt"`
-	ChatPrompt           string         `json:"chatPrompt"`
-	SummaryTemplate      PromptTemplate `json:"summaryTemplate"`
-	TranslationTemplate  PromptTemplate `json:"translationTemplate"`
-	ChatTemplate         PromptTemplate `json:"chatTemplate"`
-	SummaryContextBudget int            `json:"summaryContextBudget"`
-	SummaryReady         bool           `json:"summaryReady"`
-	HasKey               bool           `json:"hasKey"`
-	Ready                bool           `json:"ready"`
-	Revision             int64          `json:"revision"`
+	Protocol             string          `json:"protocol"`
+	Translating          bool            `json:"translating"`
+	BaseURL              string          `json:"baseUrl"`
+	Model                string          `json:"model"`
+	ChatModel            string          `json:"chatModel"`
+	EnabledModels        ModelList       `json:"enabledModels"`
+	AvailableModels      ModelList       `json:"availableModels"`
+	SummaryModel         string          `json:"summaryModel"`
+	SummaryPrompt        string          `json:"summaryPrompt"`
+	TranslationPrompt    string          `json:"translationPrompt"`
+	ChatPrompt           string          `json:"chatPrompt"`
+	SummaryTemplate      PromptTemplate  `json:"summaryTemplate"`
+	TranslationTemplate  PromptTemplate  `json:"translationTemplate"`
+	ChatTemplate         PromptTemplate  `json:"chatTemplate"`
+	SummaryContextBudget int             `json:"summaryContextBudget"`
+	SummaryReady         bool            `json:"summaryReady"`
+	HasKey               bool            `json:"hasKey"`
+	Ready                bool            `json:"ready"`
+	Revision             int64           `json:"revision"`
+	DefaultTemplates     PromptTemplates `json:"defaultTemplates"`
 }
 type ConfigureInput struct {
 	Protocol             string          `json:"protocol"`
@@ -197,7 +198,7 @@ func validConfig(c Config) bool {
 }
 func public(c Config) Status {
 	templates := promptTemplates(c)
-	return Status{Protocol: c.Protocol, BaseURL: c.BaseURL, Model: c.Model, ChatModel: chatModel(c), EnabledModels: modelList(c.EnabledModels), AvailableModels: modelList(c.AvailableModels), SummaryModel: c.SummaryModel, SummaryPrompt: templates.Summary.System, TranslationPrompt: templates.Translation.System, ChatPrompt: templates.Chat.System, SummaryTemplate: templates.Summary, TranslationTemplate: templates.Translation, ChatTemplate: templates.Chat, SummaryContextBudget: summaryContextBudget(c.SummaryContextBudget), HasKey: c.Key != "", Ready: c.Model != "", Revision: c.Revision}
+	return Status{Protocol: c.Protocol, BaseURL: c.BaseURL, Model: c.Model, ChatModel: chatModel(c), EnabledModels: modelList(c.EnabledModels), AvailableModels: modelList(c.AvailableModels), SummaryModel: c.SummaryModel, SummaryPrompt: templates.Summary.System, TranslationPrompt: templates.Translation.System, ChatPrompt: templates.Chat.System, SummaryTemplate: templates.Summary, TranslationTemplate: templates.Translation, ChatTemplate: templates.Chat, SummaryContextBudget: summaryContextBudget(c.SummaryContextBudget), HasKey: c.Key != "", Ready: c.Model != "", Revision: c.Revision, DefaultTemplates: DefaultPromptTemplates()}
 }
 
 func chatModel(c Config) string {

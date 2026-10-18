@@ -11,15 +11,11 @@
 .reading-nav-actions { min-width: 0; display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 6px; }
 .reader-read-state { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; }
 .reader-read-state .button[aria-pressed='true'] { border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent-ink); }
-.reader-read-state > p { order: 10; flex-basis: 100%; margin: 0; color: var(--muted); font-size: 12px; text-align: right; }
-.reader-read-state > p[role='alert'] { color: var(--danger); }
-.reader-read-state > p ~ .button { order: 11; }
 .immersive-reader .reading-nav { position: static; }
 @media (max-width: 760px) {
   .reading-nav { padding: 2px 0 8px; }
   .reading-nav > span { display: none; }
   .reading-nav-actions { flex: 1; }
-  .reader-read-state > p { text-align: left; }
 }
 
 .media-reader h1 { margin-top: 28px; overflow-wrap: anywhere; }
