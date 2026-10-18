@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"time"
 
 	"tangentry/internal/discovery"
 )
@@ -44,6 +45,8 @@ func (r *recommender) platformPage(ctx context.Context, source string, page int)
 		return p.network.toolkit.YouTubeRecommendationPage(ctx, page)
 	case "douyin":
 		return p.discovery.douyin.Recommendations(ctx, page)
+	case "huggingface":
+		return p.network.papers.Daily(ctx, time.Now())
 	case "xiaoyuzhou":
 		return p.discovery.podcasts.Recommendations(ctx, page, p.podcastToken())
 	case "linuxdo":

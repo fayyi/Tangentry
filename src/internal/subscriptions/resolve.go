@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"tangentry/internal/discovery"
+	"tangentry/internal/papers"
 )
 
 type ResolvedSource struct {
@@ -27,7 +28,22 @@ func (s *Service) Resolve(ctx context.Context, raw string) (ResolvedSource, erro
 		return ResolvedSource{}, ErrInvalid
 	}
 	result := ResolvedSource{}
-	if _, err := discovery.ParseYouTubeChannel(raw); err == nil {
+	if strings.HasPrefix(strings.ToLower(raw), "arxiv:") {
+		category, err := papers.NormalizeCategory(strings.TrimSpace(raw[len("arxiv:"):]))
+		if err != nil {
+			return result, ErrInvalid
+		}
+		result = ResolvedSource{Type: "arxiv", Query: category, Title: "arXiv 分类 " + category, URL: "https://rss.arxiv.org/rss/" + category}
+	} else if strings.HasPrefix(strings.ToLower(raw), "huggingface:") {
+		date := strings.TrimSpace(raw[len("huggingface:"):])
+		if date == "" {
+			date = "today"
+		}
+		if _, err := paperDate(date); err != nil {
+			return result, ErrInvalid
+		}
+		result = ResolvedSource{Type: "huggingface", Query: date, Title: "HF 每日论文", URL: "https://huggingface.co/papers"}
+	} else if _, err := discovery.ParseYouTubeChannel(raw); err == nil {
 		channel, err := s.ResolveYouTube(ctx, raw)
 		if err != nil {
 			return result, err
@@ -105,4 +121,11 @@ func (s *Service) Resolve(ctx context.Context, raw string) (ResolvedSource, erro
 		return ResolvedSource{}, ErrSnapshot
 	}
 	return result, nil
+}
+
+func paperDate(raw string) (time.Time, error) {
+	if raw == "today" {
+		return time.Now(), nil
+	}
+	return time.Parse("2006-01-02", raw)
 }

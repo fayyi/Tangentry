@@ -8,6 +8,7 @@ import (
 	"tangentry/internal/content"
 	"tangentry/internal/discovery"
 	"tangentry/internal/subscriptions"
+	"time"
 )
 
 // subscriptionFeeds adapts platform clients to the fetchers the subscription
@@ -21,9 +22,28 @@ func (f subscriptionFeeds) options() []subscriptions.Option {
 	return []subscriptions.Option{
 		subscriptions.WithConditionalFeeds(f.conditional),
 		subscriptions.WithRSSFeeds(f.rss),
+		subscriptions.WithPaperSources(f.paper),
 		subscriptions.WithYouTubeResolver(f.toolkit.YouTubeChannel),
 		subscriptions.WithSourceResolver(f.resolveTitle),
 	}
+}
+
+func (f subscriptionFeeds) paper(ctx context.Context, query string) (subscriptions.Snapshot, error) {
+	if f.papers == nil {
+		return subscriptions.Snapshot{}, discovery.ErrUnavailable
+	}
+	if strings.HasPrefix(query, "today") || strings.HasPrefix(query, "20") && len(query) == 10 {
+		date := time.Now()
+		if query != "today" {
+			if parsed, err := time.Parse("2006-01-02", query); err == nil {
+				date = parsed
+			}
+		}
+		feed, err := f.papers.Daily(ctx, date)
+		return subscriptions.Snapshot{Items: feed.Items, Title: feed.SourceTitle, Total: feed.Total, HasMore: feed.HasMore}, err
+	}
+	feed, err := f.papers.ArxivCategory(ctx, query)
+	return subscriptions.Snapshot{Items: feed.Items, Title: feed.SourceTitle, Total: feed.Total, HasMore: feed.HasMore}, err
 }
 
 // snapshot reads the latest items of a YouTube channel, RSS / Atom address or Bilibili creator.

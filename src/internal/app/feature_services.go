@@ -77,7 +77,7 @@ func wireFeatures(dataDir string, configuration config.Config, option Options, r
 		}),
 		override: option.Recommendations,
 	}
-	discoveryBatch := discovery.NewBatchService(recommendations, sources.Gallery, []string{"subscriptions", "bilibili", "youtube", "xiaohongshu", "linuxdo", "xiaoyuzhou", "douyin"}, store)
+	discoveryBatch := discovery.NewBatchService(recommendations, sources.Gallery, []string{"subscriptions", "bilibili", "youtube", "xiaohongshu", "linuxdo", "xiaoyuzhou", "douyin", "huggingface"}, store)
 	discoveryBatch.SetSourceEnabled(func(ctx context.Context, source string) (bool, error) {
 		return discovery.NewPreferences(store).Enabled(ctx, source)
 	})

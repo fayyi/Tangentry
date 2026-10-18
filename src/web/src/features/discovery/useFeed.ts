@@ -43,7 +43,10 @@ export function useFeed() {
     lastAppend.current = Boolean(continuing)
     const page = continuing && feed ? feed.page + 1 : 1
     try {
-      const result = await request<Feed>(`/discovery/${selected}?q=${encodeURIComponent(query.trim())}&page=${page}`, { signal: controller.current.signal })
+      const endpoint = selected === 'paper'
+        ? `/discovery/paper?q=${encodeURIComponent(query.trim())}`
+        : `/discovery/${selected}?q=${encodeURIComponent(query.trim())}&page=${page}`
+      const result = await request<Feed>(endpoint, { signal: controller.current.signal })
       if (id !== requestID.current) return
       result.source = selected
       setFeed(current => {

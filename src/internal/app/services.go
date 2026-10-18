@@ -33,6 +33,6 @@ func newServices(dataDir string, configuration config.Config, option Options) (_
 	startBackgroundServices(features)
 	return &services{
 		runtime: runtime, adapters: runtime.platforms, features: features,
-		imports: contentImporter{platforms: runtime.platforms.imports, records: runtime.repositories.xiaohongshu, documents: runtime.documents},
+		imports: contentImporter{platforms: runtime.platforms.imports, records: runtime.repositories.xiaohongshu, documents: runtime.documents, papers: runtime.platforms.network.papers},
 	}, started, nil
 }

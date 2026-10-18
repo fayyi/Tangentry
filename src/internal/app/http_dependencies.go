@@ -30,6 +30,7 @@ func httpDiscoveryDependencies(s *services, adapters httpAdapterBundle) httptran
 		XiaohongshuImageItems: s.runtime.repositories.xiaohongshu.XiaohongshuImageCandidates,
 		XiaohongshuImages:     adapters.imageCache, XiaohongshuImageVersion: adapters.imageVersion,
 		XiaohongshuRefresh: s.imports.refreshXiaohongshu,
+		PaperImport:        s.imports.importSource,
 	}
 }
 

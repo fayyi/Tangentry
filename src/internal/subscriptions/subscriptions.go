@@ -10,6 +10,7 @@ import (
 	"tangentry/internal/content"
 	"tangentry/internal/discovery"
 	"tangentry/internal/netpolicy"
+	papersdomain "tangentry/internal/papers"
 	"time"
 )
 
@@ -91,6 +92,7 @@ type Service struct {
 	active         map[string]bool
 	conditional    ConditionalFetcher
 	rss            RSSFetcher
+	paper          func(context.Context, string) (Snapshot, error)
 	resolveChannel ChannelResolver
 	resolveSource  SourceResolver
 	now            func() time.Time
@@ -180,7 +182,20 @@ func (s *Service) Create(ctx context.Context, input Input) (Source, bool, error)
 		defaultName = "YouTube 频道"
 		err = nil
 	}
-	if input.Type != "rss" && input.Type != "youtube" && (err != nil || kind != "creator" || input.Type != "" && input.Type != "bilibili") {
+	if input.Type == "arxiv" || input.Type == "huggingface" {
+		value, queryErr := paperSourceQuery(input.Type, input.Query)
+		err = queryErr
+		if err != nil {
+			return Source{}, false, ErrInvalid
+		}
+		uid = value
+		id = input.Type + ":source:" + rssIdentity(input.Type+":"+uid)
+		defaultName = "arXiv 分类 " + value
+		if input.Type == "huggingface" {
+			defaultName = "HF 每日论文"
+		}
+	}
+	if input.Type != "rss" && input.Type != "youtube" && input.Type != "arxiv" && input.Type != "huggingface" && (err != nil || kind != "creator" || input.Type != "" && input.Type != "bilibili") {
 		return Source{}, false, ErrInvalid
 	}
 	label := strings.TrimSpace(input.Name)
@@ -338,6 +353,26 @@ func (s *Service) BatchUpdate(ctx context.Context, ids []string) ([]BatchResult,
 }
 func (s *Service) Update(ctx context.Context, id string) (Detail, error) {
 	return s.update(ctx, id, nil)
+}
+
+// paperSourceQuery validates source-specific query values while keeping a
+// stable, local creator key for the existing subscription repository.
+func paperSourceQuery(source, query string) (string, error) {
+	query = strings.TrimSpace(query)
+	switch source {
+	case "arxiv":
+		return papersdomain.NormalizeCategory(query)
+	case "huggingface":
+		if query == "" || query == "today" {
+			return "today", nil
+		}
+		if len(query) == 10 && query[4] == '-' && query[7] == '-' {
+			if _, err := time.Parse("2006-01-02", query); err == nil {
+				return query, nil
+			}
+		}
+	}
+	return "", ErrInvalid
 }
 func (s *Service) update(ctx context.Context, id string, dueAt *time.Time) (Detail, error) {
 	release, err := s.acquire(id)

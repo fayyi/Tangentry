@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"tangentry/internal/adapters/feeds"
+	paperadapter "tangentry/internal/adapters/papers"
 	"tangentry/internal/adapters/platforms/bilibili"
 	"tangentry/internal/adapters/platforms/discourse"
 	"tangentry/internal/adapters/platforms/douyin"
@@ -35,6 +36,7 @@ type platformNetwork struct {
 	public  *http.Client
 	cookies *credentials.Store
 	toolkit *tools.Toolkit
+	papers  *paperadapter.Client
 }
 
 type platformDiscovery struct {
@@ -62,6 +64,7 @@ type platformSubscriptions struct {
 	youtube  *youtube.Client
 	creators discovery.Provider
 	toolkit  *tools.Toolkit
+	papers   *paperadapter.Client
 }
 
 type platformMedia struct {
@@ -93,15 +96,16 @@ func newPlatforms(dataDir string, configuration config.Config, toolkit *tools.To
 		return cookies.TokenPair("xiaoyuzhou")
 	}, Save: cookies.SaveTokensIfCurrent}
 	feedClient := &feeds.Client{HTTP: public}
+	paperClient := &paperadapter.Client{HTTP: public, UserAgent: "Tangentry/0.1 (paper reader)"}
 	youtubeClient := youtube.New(public)
 	douyinClient := &douyin.Client{HTTP: public, Cookie: cookieFor(cookies, "douyin"), UserAgent: userAgentFor(cookies, "douyin"), Page: option.PlatformPageFetcher}
 	notesClient := &xiaohongshu.Client{HTTP: public, Cookie: cookieFor(cookies, "xiaohongshu"), UserAgent: userAgentFor(cookies, "xiaohongshu")}
 	forumClient := &discourse.Client{HTTP: public, UserAgent: userAgentFor(cookies, "linuxdo"), Session: cookies.PrepareLinuxdoSession, UserKey: cookies.LinuxdoUserKey, Page: option.PlatformPageFetcher}
 	return &platforms{
-		network:       platformNetwork{public: public, cookies: cookies, toolkit: toolkit},
+		network:       platformNetwork{public: public, cookies: cookies, toolkit: toolkit, papers: paperClient},
 		discovery:     platformDiscovery{creators: creators, bilibili: client, douyin: douyinClient, notes: notesClient, forum: forumClient, podcasts: podcasts},
 		imports:       platformImports{feeds: feedClient, youtube: youtubeClient, douyin: douyinClient, notes: notesClient, forum: forumClient, podcasts: podcasts, toolkit: toolkit, noteImages: noteImages},
-		subscriptions: platformSubscriptions{feeds: feedClient, youtube: youtubeClient, creators: creators, toolkit: toolkit},
+		subscriptions: platformSubscriptions{feeds: feedClient, youtube: youtubeClient, creators: creators, toolkit: toolkit, papers: paperClient},
 		media:         platformMedia{bilibili: client, toolkit: toolkit, notes: notesClient, podcasts: podcasts},
 	}, nil
 }

@@ -74,6 +74,7 @@ export function restoreDiscoveryBatchSession(session: DiscoveryBatchSession | nu
 const sourceLabels: Record<string, string> = {
   subscriptions: '订阅更新', bilibili: 'B站推荐', youtube: 'YouTube 推荐',
   xiaohongshu: '小红书推荐', linuxdo: 'Linux.do 推荐', xiaoyuzhou: '小宇宙发现', douyin: '抖音推荐',
+  huggingface: 'HF 每日论文',
 }
 
 const discoverySession = createDiscoveryBatchSession(defaultDiscoveryBatchOptions, randomSeed())

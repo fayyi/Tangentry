@@ -21,7 +21,7 @@ export interface PDFAnnotationProps {
 }
 interface RenderedPage { page: number; rotation: number; zoom: number; width: number; viewport: PageViewport; text: string }
 
-export function PDFReader({ id, notes = [], focus, onQuote, onOpenNotes, onUnresolved }: { id: string } & PDFAnnotationProps) {
+export function PDFReader({ id, contentId = id, notes = [], focus, onQuote, onOpenNotes, onUnresolved }: { id: string; contentId?: string } & PDFAnnotationProps) {
   const notebook = useReadingNotebook()
   const navigatedFocus = useRef<{ id: string; token: number } | null>(null)
   const focusedLocation = useRef<{ id: string; token: number } | null>(null)
@@ -136,13 +136,13 @@ export function PDFReader({ id, notes = [], focus, onQuote, onOpenNotes, onUnres
   }
   const highlights = ready && rendered ? valid.filter(note => note.pdfAnchor!.page === page).map(note => ({ note, rects: note.pdfAnchor!.rects.map(rect => viewportPDFRect(rendered.viewport, rect)) })) : []
   const summarySegments = useMemo(() => pdfSummarySegments(summaryPages), [summaryPages])
-  const summary = useSummary(id, 'pdf', undefined, undefined, undefined, summarySegments)
+  const summary = useSummary(contentId, 'pdf', undefined, undefined, undefined, summarySegments)
   const locatePage = useCallback((target: number) => { if (target >= 1 && target <= (document?.numPages ?? 1)) setPage(target) }, [document])
   useEffect(() => {
     if (!notebook) return
-    notebook.setAIContent(<AIInsights summary={summary} onLocatePage={locatePage} contentId={id} context={summaryPages.map(value => value.text).join('\n')} revision={summary.inspection?.settings.revision ?? 0}/>)
+    notebook.setAIContent(<AIInsights summary={summary} onLocatePage={locatePage} contentId={contentId} context={summaryPages.map(value => value.text).join('\n')} revision={summary.inspection?.settings.revision ?? 0}/>)
     return () => notebook.setAIContent(null)
-  }, [notebook, id, locatePage, summary.inspection, summary.loading, summary.pending, summary.error, summary.notice, summaryPages])
+  }, [notebook, contentId, id, locatePage, summary.inspection, summary.loading, summary.pending, summary.error, summary.notice, summaryPages])
 
   return <section className="pdf-reader" aria-label="PDF 阅读器" onMouseUp={event => { event.stopPropagation(); capture() }} onKeyUp={event => event.stopPropagation()}>
     <link rel="stylesheet" href="/pdfjs/text_layer.css" precedence="pdf-text-layer" />

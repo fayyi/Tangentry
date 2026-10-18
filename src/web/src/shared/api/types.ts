@@ -50,6 +50,7 @@ export interface ContentItem {
 	images?: {url:string;width?:number;height?:number;alt?:string}[]
 	articleBlocks?: ArticleBlock[]
 	discussion?: Discussion
+	paper?: PaperMetadata
 	// A library card without its body; read the full item before saving it.
 	partial?: boolean
   id: string
@@ -73,6 +74,24 @@ export interface ContentItem {
   viewCount?: number
   publishedText?: string
   savedAt?: number
+}
+
+export interface PaperMetadata {
+  arxivId: string
+  documentId?: string
+  version?: number
+  authors: string[]
+  categories: string[]
+  abstract: string
+  publishedAt?: number
+  updatedAt?: number
+  pdfUrl: string
+  arxivUrl: string
+  hfUrl?: string
+  githubUrl?: string
+  upvotes?: number
+  githubStars?: number
+  aiKeywords?: string[]
 }
 
 export interface Feed {

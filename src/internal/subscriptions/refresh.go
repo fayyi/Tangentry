@@ -154,6 +154,10 @@ type ConditionalFetcher func(context.Context, string, Validators) (ConditionalRe
 type RSSFetcher func(context.Context, Source, Validators) (ConditionalResult, error)
 type Option func(*Service)
 
+func WithPaperSources(fetch func(context.Context, string) (Snapshot, error)) Option {
+	return func(s *Service) { s.paper = fetch }
+}
+
 func WithConditionalFeeds(fetch ConditionalFetcher) Option {
 	return func(s *Service) { s.conditional = fetch }
 }
@@ -235,7 +239,9 @@ func (s *Service) updateFeed(ctx context.Context, detail Detail) (Detail, error)
 		validators = Validators{}
 	}
 	var result ConditionalResult
-	if strings.HasPrefix(id, "rss:feed:") && s.rss != nil {
+	if (strings.HasPrefix(id, "arxiv:source:") || strings.HasPrefix(id, "huggingface:source:")) && s.paper != nil {
+		result.Snapshot, err = s.paper(ctx, detail.Source.CreatorID)
+	} else if strings.HasPrefix(id, "rss:feed:") && s.rss != nil {
 		result, err = s.rss(ctx, detail.Source, validators)
 	} else if strings.HasPrefix(id, "rss:feed:") && s.conditional != nil {
 		// Keep the lightweight conditional fetch hook usable for tests and
@@ -417,5 +423,5 @@ func (s *Service) Close() { s.mu.Lock(); s.closed = true; s.cancel(); s.mu.Unloc
 // Every saved source can be scheduled. RSS and YouTube additionally support
 // conditional validators; other source kinds use their regular fetcher.
 func SupportsRefresh(id string) bool {
-	return strings.HasPrefix(id, "rss:feed:") || strings.HasPrefix(id, "youtube:channel:") || strings.HasPrefix(id, "bilibili:creator:")
+	return strings.HasPrefix(id, "rss:feed:") || strings.HasPrefix(id, "youtube:channel:") || strings.HasPrefix(id, "bilibili:creator:") || paperSourceID.MatchString(id)
 }

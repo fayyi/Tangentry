@@ -6,5 +6,6 @@ export const discoverySources = {
   rss: { label: 'RSS', description: 'RSS / Atom 文章与播客', placeholder: 'https://example.com/feed.xml', inputLabel: 'RSS 订阅地址' },
   xiaoyuzhou: { label: '小宇宙', description: '公开单集与节目说明', placeholder: 'xiaoyuzhoufm.com/episode/… 的完整地址', inputLabel: '小宇宙单集地址' },
   pdf: { label: 'PDF', description: '文档链接或本机文件', placeholder: 'https://example.com/document.pdf', inputLabel: 'PDF 文档地址' },
+  paper: { label: '论文', description: 'arXiv、Hugging Face Papers 或 AlphaXiv 论文', placeholder: 'arXiv ID 或论文链接', inputLabel: '论文 ID 或链接' },
 }
 export type DiscoverySource = keyof typeof discoverySources

@@ -21,6 +21,7 @@ import { ReaderPlayerSizeHandle, ReadingNotebook, useReadingNotebook } from '../
 import { XiaohongshuSourceForm } from './XiaohongshuSourceForm'
 import { PodcastArtwork } from '../../shared/ui/PodcastArtwork'
 import { ReaderPublication } from './ReaderPublication'
+import { PaperInfoCard } from '../documents/PaperInfoCard'
 import { DiscussionReader } from './DiscussionReader'
 import { useReaderContent } from './useReaderContent'
 import './reader.css'
@@ -179,7 +180,7 @@ export function MediaReader({ id, initialItem, jobs, jobsLoading = false, video,
       {audioLayout && item && <div className="listen-heading"><PodcastArtwork key={item.id + item.thumbnailUrl} item={item} className="listen-artwork" resolveMissing={Boolean(item.mediaUrl)}/><div>{heading}</div></div>}
       {detailLoading && <p className="field-hint" role="status">正在读取笔记正文与图片…</p>}
       {detailError && <div className="error-panel reader-source-error" role="alert"><p>{detailError}</p><div className="reader-source-error-actions"><button className="button button-secondary" onClick={refreshDetails}><RotateCw size={14}/>重新获取笔记</button><button className="button button-secondary" onClick={()=>setSourceEditing(true)}>更新链接</button><a className="button button-secondary" href="/tools#accounts">检查登录</a></div></div>}
-      {item && (item.kind==='pdf'?(item.platform==='pdf'?<PDFReader id={item.platformId} {...pdfAnnotations}/>:item.mediaUrl?<FeedDocumentReader url={item.mediaUrl} annotations={pdfAnnotations}/>:<p className="field-hint">来源没有提供 PDF 文件地址。</p>):<>
+    {item && (item.kind==='pdf'?((item.platform==='pdf' || item.paper?.documentId)?<PDFReader id={item.paper?.documentId ?? item.platformId} contentId={item.id} {...pdfAnnotations}/>:item.paper?.pdfUrl || item.mediaUrl ? <FeedDocumentReader url={item.paper?.pdfUrl ?? item.mediaUrl!} annotations={pdfAnnotations}/>:<p className="field-hint">来源没有提供 PDF 文件地址。</p>):<>
         {item.kind==='audio'&&<div className="audio-reader">{item.mediaUrl?<><audio ref={bindMedia} aria-label="播客播放器" controls preload="none" src={item.mediaUrl} onLoadedMetadata={audioLoaded} onTimeUpdate={report} onSeeking={report} onSeeked={report} onPause={report} onError={()=>{setAudioError(true);onReady?.(false);onPosition?.(null)}}/>{audioError&&<div className="audio-playback-error" role="alert"><p>音频暂时无法播放，可重新连接或打开原内容收听。</p><button type="button" className="button button-secondary" onClick={reconnectAudio}><RotateCw size={14}/>重新连接音频</button></div>}</>:<p className="field-hint">这份内容没有可播放的公开音频地址，可在原站收听。</p>}</div>}
         {item.kind==='audio'&&item.mediaUrl&&<AudioControls media={native} identity={`${id}:${item.mediaUrl}`}/>}
         {item.kind==='audio'&&item.mediaUrl&&<NativeReadingProgress contentId={id} media={native} identity={`${id}:${item.mediaUrl}`}/>}
@@ -193,6 +194,7 @@ export function MediaReader({ id, initialItem, jobs, jobsLoading = false, video,
         {item.kind==='audio'&&!reading&&<p className="field-hint">当前来源未提供可用的逐字字幕，下面显示节目说明。</p>}
         {item?.platform === 'linuxdo' ? discussionText : description ? !notes && !videoLayout && !audioLayout && description : item.kind==='article'&&item.platform==='rss'?<FullTextArticle key={item.id} item={item} notes={annotations} focus={textFocus} onQuote={quoteText} onOpenNotes={revealNotes} onUnresolved={onUnresolved} navigationTarget={notesNavigation} onReturnedToReading={returnedToReading}/>:sourceText ? !textAboveNotes && sourceText : <article className="article-reader"><h2>{item.kind==='audio'?'节目说明':'内容简介'}</h2><p>{item.description||'来源没有提供正文，可打开原内容查看。'}</p>{item.platform==='rss'&&<p className="field-hint">显示订阅源提供的文字；摘要源可能不包含全文。</p>}</article>}
       </>)}
+      {item?.paper && <PaperInfoCard paper={item.paper}/>}
       {quote&&onQuote&&<button className="button button-secondary reader-quote" onClick={()=>{onQuote(quote);setQuote('')}}><StickyNote size={15}/>引用选中文字到批注</button>}
       </div>{notes&&<aside className="reading-notes" ref={notesRegion} tabIndex={-1} aria-label="当前内容笔记">{!videoLayout && !audioLayout && description}{textAboveNotes && <section className="reader-source-text" aria-label="来源正文">{sourceText}</section>}{notes}</aside>}</ReadingNotebook>
     {notes && item?.kind === 'article' && <div ref={setNotesNavigation} className="mobile-reader-notes-nav" aria-label="阅读与笔记"><button ref={notesShortcut} type="button" title="笔记" onClick={openNotes}><StickyNote size={16}/>笔记</button>{notesVisited && <button type="button" className="mobile-reader-resume" onClick={resumeReading}><BookOpen size={16}/>继续阅读</button>}</div>}

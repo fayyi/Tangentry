@@ -15,6 +15,7 @@ import (
 )
 
 var rssID = regexp.MustCompile(`^rss:feed:[a-f0-9]{64}$`)
+var paperSourceID = regexp.MustCompile(`^(?:arxiv|huggingface):source:[a-f0-9]{64}$`)
 
 // SourceURL returns the canonical human-facing address for a saved source.
 func SourceURL(id, creator string) string {
@@ -24,6 +25,12 @@ func SourceURL(id, creator string) string {
 	if strings.HasPrefix(id, "rss:feed:") {
 		return creator
 	}
+	if strings.HasPrefix(id, "arxiv:source:") {
+		return "arxiv:" + creator
+	}
+	if strings.HasPrefix(id, "huggingface:source:") {
+		return "huggingface:" + creator
+	}
 	return "https://space.bilibili.com/" + creator
 }
 
@@ -32,6 +39,9 @@ func validID(id string) bool {
 		return discovery.YouTubeChannelID(strings.TrimPrefix(id, "youtube:channel:"))
 	}
 	if rssID.MatchString(id) {
+		return true
+	}
+	if paperSourceID.MatchString(id) {
 		return true
 	}
 	if !strings.HasPrefix(id, "bilibili:creator:") {
@@ -76,7 +86,7 @@ func normalizeSnapshot(id string, snapshot Snapshot) (Snapshot, error) {
 	for i := range snapshot.Items {
 		item := &snapshot.Items[i]
 		kind, bv, err := discovery.ParseQuery(item.PlatformID)
-		if content.Validate(*item) != nil || seen[item.ID] || (strings.HasPrefix(id, "youtube:") && (item.Platform != "youtube" || item.Kind != "video" || item.AuthorID != strings.TrimPrefix(id, "youtube:channel:") || !validYouTubeItem(*item))) || (strings.HasPrefix(id, "bilibili:") && (err != nil || kind != "video" || bv != item.PlatformID || item.Platform != "bilibili")) || (strings.HasPrefix(id, "rss:") && item.Platform != "rss") {
+		if content.Validate(*item) != nil || seen[item.ID] || (strings.HasPrefix(id, "youtube:") && (item.Platform != "youtube" || item.Kind != "video" || item.AuthorID != strings.TrimPrefix(id, "youtube:channel:") || !validYouTubeItem(*item))) || (strings.HasPrefix(id, "bilibili:") && (err != nil || kind != "video" || bv != item.PlatformID || item.Platform != "bilibili")) || (strings.HasPrefix(id, "rss:") && item.Platform != "rss") || (strings.HasPrefix(id, "arxiv:source:") && item.Platform != "arxiv") || (strings.HasPrefix(id, "huggingface:source:") && item.Paper == nil) {
 			return Snapshot{}, ErrSnapshot
 		}
 		seen[item.ID] = true
