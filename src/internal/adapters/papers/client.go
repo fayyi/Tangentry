@@ -124,7 +124,7 @@ func (c *Client) get(ctx context.Context, endpoint string, arxiv bool) ([]byte, 
 	}
 	ua := c.UserAgent
 	if ua == "" {
-		ua = "Tangentry/0.1 (paper reader; contact: support@tangentry.local)"
+		ua = "Tangentry/0.1 (paper reader)"
 	}
 	req.Header.Set("User-Agent", ua)
 	req.Header.Set("Accept", "application/atom+xml, application/rss+xml, application/json, text/xml")
