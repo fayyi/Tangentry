@@ -195,6 +195,19 @@ func TestBatchSlowSourceDoesNotBlockFirstBatch(t *testing.T) {
 	}
 }
 
+func TestDouyinSourceKeepsWebViewBudgetSeparateFromFastSources(t *testing.T) {
+	service := NewBatchService(batchProvider{}, nil, []string{"douyin"})
+	if got := service.initialTimeout("douyin"); got != douyinInitialSourceTimeout {
+		t.Fatalf("douyin initial timeout = %s, want %s", got, douyinInitialSourceTimeout)
+	}
+	if got := service.sourceTimeout("douyin"); got != douyinBackgroundSourceTimeout {
+		t.Fatalf("douyin continuation timeout = %s, want %s", got, douyinBackgroundSourceTimeout)
+	}
+	if got := service.initialTimeout("bilibili"); got != defaultInitialSourceTimeout {
+		t.Fatalf("default initial timeout = %s, want %s", got, defaultInitialSourceTimeout)
+	}
+}
+
 func TestBatchRoundRobinsSourcesAndCapsRuns(t *testing.T) {
 	feeds := map[string]Feed{
 		"bilibili": {Items: make([]content.Item, 0, 8)},

@@ -20,12 +20,14 @@ import (
 )
 
 const (
-	platformFetchMaxBody = 4 << 20
-	platformFetchTimeout = 20 * time.Second
-	platformFetchIdle    = 5 * time.Minute
-	douyinCapturePoll    = 200 * time.Millisecond
-	douyinCaptureReads   = 75
-	douyinDOMWait        = 15 * time.Second
+	platformFetchMaxBody     = 4 << 20
+	platformFetchTimeout     = 20 * time.Second
+	platformFetchIdle        = 5 * time.Minute
+	douyinCapturePoll        = 200 * time.Millisecond
+	douyinDOMWait            = 15 * time.Second
+	douyinCaptureStable      = 700 * time.Millisecond
+	douyinCaptureQuiet       = 3 * time.Second
+	douyinFeedCaptureTimeout = 75 * time.Second
 )
 
 type platformPageBridge struct {
@@ -129,11 +131,28 @@ const douyinFeedCaptureScript = `(function(){
   window.__tangentryDouyinFeed = window.__tangentryDouyinFeed || [];
   const max = 4 * 1024 * 1024;
   const isFeed = value => /\/aweme\/(?:v1|v2)\/[^?]*feed/i.test(String(value || ''));
+  const jsonType = value => { const type = String(value || '').toLowerCase().split(';', 1)[0].trim(); return !type || type === 'application/json' || type === 'text/json' || type.endsWith('+json'); };
   const absolute = raw => { try { return new URL(String(raw || ''), location.href).href; } catch (_) { return String(raw || ''); } };
+  const idOf = value => { const match = String(value || '').match(/^[1-9][0-9]{15,19}$/); return match ? match[0] : ''; };
+  const countOf = value => { const number = Number(value); return Number.isFinite(number) && number >= 0 ? Math.min(Math.round(number), 2147483647) : 0; };
+  const project = video => {
+    if (!video || typeof video !== 'object') return null;
+    const id = idOf(video.aweme_id || video.awemeId || video.item_id || video.itemId); if (!id) return null;
+    const author = video.author || {};
+    const cover = video.video && video.video.cover;
+    const rawCover = cover && (cover.url_list || cover.urlList);
+    const thumbnailURL = Array.isArray(rawCover) ? rawCover.map(absolute).find(value => /^https:\/\//i.test(value)) || '' : '';
+    return {id:id, url:'https://www.douyin.com/video/' + id, thumbnailURL:thumbnailURL, title:String(video.desc || video.description || '').slice(0, 1000), author:String(author.nickname || author.name || '').slice(0, 200), authorID:String(author.uid || author.id || '').slice(0, 200), likeCount:countOf(video.statistics && (video.statistics.digg_count || video.statistics.diggCount)), duration:Math.round(countOf(video.video && video.video.duration) / 1000)};
+  };
+  const projectBody = body => {
+    try { const value = typeof body === 'string' ? JSON.parse(body) : body; const root = value && value.data && typeof value.data === 'object' ? value.data : value; const status = root && root.status_code != null ? root.status_code : value && value.status_code; const code = status == null ? 0 : Number(status)||0; const list = root && (root.aweme_list || root.awemeList); const parsed = Array.isArray(list) && (code === 0 || code === 2154); return {status:code,parsed:parsed,hasMore:code === 0 && Number(root && root.has_more)>0,cards:code === 0 && Array.isArray(list) ? list.map(project).filter(Boolean).slice(0, 500) : []}; } catch (_) { return null; }
+  };
   const push = (url, status, contentType, body) => {
     const resolvedURL = absolute(url);
-    if (!isFeed(resolvedURL) || typeof body !== 'string' || !body || body.length > max) return;
-    window.__tangentryDouyinFeed.push({url:resolvedURL, status:Number(status)||0, contentType:String(contentType || ''), body:body});
+    if (!isFeed(resolvedURL)) return;
+    const type = String(contentType || '');
+    const payload = jsonType(type) ? projectBody(body) : null;
+    window.__tangentryDouyinFeed.push({url:resolvedURL, status:Number(status)||0, contentType:type, apiStatus:payload && payload.status || 0, parsed:payload ? payload.parsed : false, hasMore:payload ? payload.hasMore : false, cards:payload ? payload.cards : []});
     if (window.__tangentryDouyinFeed.length > 32) window.__tangentryDouyinFeed.splice(0, window.__tangentryDouyinFeed.length - 32);
   };
   const originalFetch = window.fetch;
@@ -142,7 +161,7 @@ const douyinFeedCaptureScript = `(function(){
     const url = typeof request === 'string' ? request : request && request.url;
     return originalFetch.apply(this, arguments).then(response => {
       if (!isFeed(url || response.url)) return response;
-      try { const contentType = response.headers && response.headers.get ? response.headers.get('content-type') : ''; response.clone().text().then(body => push(url || response.url, response.status, contentType, body)).catch(() => {}); } catch (_) {}
+      try { const contentType = response.headers && response.headers.get ? response.headers.get('content-type') : ''; if (jsonType(contentType)) response.clone().text().then(body => push(url || response.url, response.status, contentType, body.length <= max ? body : null)).catch(() => {}); else push(url || response.url, response.status, contentType, null); } catch (_) {}
       return response;
     });
   };
@@ -152,7 +171,7 @@ const douyinFeedCaptureScript = `(function(){
   const send = XMLHttpRequest.prototype.send;
   XMLHttpRequest.prototype.open = function(method, url){ this.__tangentryURL = url; return open.apply(this, arguments); };
   const xhrSendWrapper = function(){
-    this.addEventListener('load', function(){ try { const body = this.responseType === 'json' ? JSON.stringify(this.response) : this.responseText; push(this.__tangentryURL || this.responseURL, this.status, this.getResponseHeader('content-type'), body); } catch (_) {} });
+    this.addEventListener('load', function(){ try { const contentType = this.getResponseHeader('content-type') || ''; const body = jsonType(contentType) && (this.responseType === 'json' ? this.response : this.responseText); push(this.__tangentryURL || this.responseURL, this.status, contentType, typeof body === 'string' && body.length > max ? null : body); } catch (_) {} });
     return send.apply(this, arguments);
   };
   window.__tangentryDouyinXHRSend = xhrSendWrapper;
@@ -293,13 +312,15 @@ func (b *platformPageBridge) CaptureFeed(ctx context.Context, platform string, p
 	if pages < 1 || pages > 10 {
 		return platformfetch.FeedCaptureResponse{}, errors.New("页面推荐抓取页数无效")
 	}
+	captureCtx, cancel := context.WithTimeout(ctx, douyinFeedCaptureTimeout)
+	defer cancel()
 	session, err := b.session(platform, "https://www.douyin.com/")
 	if err != nil {
 		return platformfetch.FeedCaptureResponse{}, err
 	}
 	session.mu.Lock()
 	defer session.mu.Unlock()
-	if err := waitPlatformPage(ctx, session.ready); err != nil {
+	if err := waitPlatformPage(captureCtx, session.ready); err != nil {
 		return platformfetch.FeedCaptureResponse{}, err
 	}
 	session.lastUsed = time.Now()
@@ -311,91 +332,95 @@ func (b *platformPageBridge) CaptureFeed(ctx context.Context, platform string, p
 	if err := session.window.Page().LoadURL("https://www.douyin.com/jingxuan"); err != nil {
 		return platformfetch.FeedCaptureResponse{}, err
 	}
-	if err := waitForPageReady(ctx, session.window.Page(), "jingxuan"); err != nil {
+	if err := waitForPageReady(captureCtx, session.window.Page(), "jingxuan"); err != nil {
 		return platformfetch.FeedCaptureResponse{}, err
 	}
-	if _, err := evalPageWithRetry(ctx, session.window.Page(), douyinFeedClearScript); err != nil && ctx.Err() != nil {
+	if _, err := evalPageWithRetry(captureCtx, session.window.Page(), douyinFeedClearScript); err != nil && captureCtx.Err() != nil {
 		return platformfetch.FeedCaptureResponse{}, err
 	}
 	result := douyinCaptureResult{}
 	started := time.Now()
 	var lastErr error
-	deadline := time.NewTimer(douyinDOMWait)
-	defer deadline.Stop()
+	deadline := started.Add(douyinDOMWait)
 	for i := 0; i < pages; i++ {
 		if i > 0 {
-			if scroll, err := evalPageWithRetry(ctx, session.window.Page(), douyinDomScrollScript); err == nil {
+			if scroll, err := evalPageWithRetry(captureCtx, session.window.Page(), douyinDomScrollScript); err == nil {
 				_ = decodeDouyinCaptureResult(scroll, &result)
 			} else {
 				lastErr = err
 			}
 		}
-		for {
-			if err := waitCapturePoll(ctx); err != nil {
-				return platformfetch.FeedCaptureResponse{}, err
-			}
-			beforeResponses, beforeCards := len(result.Responses), len(result.Cards)
-			readScript := douyinDomReadScript
-			if raw, err := evalPageWithRetry(ctx, session.window.Page(), readScript); err == nil {
-				_ = decodeDouyinCaptureResult(raw, &result)
-			} else {
-				lastErr = err
-			}
-			if len(result.Responses) > beforeResponses || len(result.Cards) > beforeCards || len(result.Cards) >= 20 {
-				break
-			}
-			select {
-			case <-ctx.Done():
-				return platformfetch.FeedCaptureResponse{}, ctx.Err()
-			case <-deadline.C:
-				break
-			default:
-			}
-			if time.Since(started) >= douyinDOMWait {
-				break
-			}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			break
 		}
-		if time.Since(started) >= douyinDOMWait {
+		previous := douyinCaptureCounts{feed: len(result.FeedCards), dom: len(result.Cards)}
+		waitFor := remaining
+		if i > 0 && waitFor > douyinCaptureQuiet {
+			waitFor = douyinCaptureQuiet
+		}
+		changed, err := waitForDouyinCapture(captureCtx, waitFor, previous, i > 0, func() (douyinCaptureCounts, error) {
+			if session.window == nil || session.window.IsDestroyed() {
+				return douyinCaptureCounts{}, errors.New("抖音推荐页面已关闭")
+			}
+			raw, evalErr := evalPageWithRetry(captureCtx, session.window.Page(), douyinDomReadScript)
+			if evalErr != nil {
+				lastErr = evalErr
+				if captureCtx.Err() != nil {
+					return douyinCaptureCounts{}, captureCtx.Err()
+				}
+				if session.window == nil || session.window.IsDestroyed() {
+					return douyinCaptureCounts{}, errors.New("抖音推荐页面已关闭")
+				}
+				return douyinCaptureCounts{}, nil
+			}
+			if decodeErr := decodeDouyinCaptureResult(raw, &result); decodeErr != nil {
+				lastErr = decodeErr
+				return douyinCaptureCounts{}, nil
+			}
+			return douyinCaptureCounts{feed: len(result.FeedCards), dom: len(result.Cards)}, nil
+		})
+		if err != nil {
+			return platformfetch.FeedCaptureResponse{}, err
+		}
+		if i > 0 && !changed {
 			break
 		}
 	}
 	for attempts := 0; attempts < 2; attempts++ {
-		if err := waitCapturePoll(ctx); err != nil {
+		if err := waitCapturePoll(captureCtx); err != nil {
 			return platformfetch.FeedCaptureResponse{}, err
 		}
-		raw, err := evalPageWithRetry(ctx, session.window.Page(), douyinFeedReadScript)
+		raw, err := evalPageWithRetry(captureCtx, session.window.Page(), douyinFeedReadScript)
 		if err != nil {
 			lastErr = err
 			continue
 		}
 		_ = decodeDouyinCaptureResult(raw, &result)
 	}
-	if len(result.Cards) == 0 && len(result.Responses) == 0 {
+	if len(result.Cards) == 0 && len(result.FeedCards) == 0 {
 		if err := session.window.Page().LoadURL("https://www.douyin.com/?recommend=1"); err == nil {
-			if err := waitForPageReady(ctx, session.window.Page(), "recommend=1"); err == nil {
+			if err := waitForPageReady(captureCtx, session.window.Page(), "recommend=1"); err == nil {
 				for i := 0; i < pages; i++ {
-					if raw, err := evalPageWithRetry(ctx, session.window.Page(), douyinRecommendNextScript); err == nil {
+					if raw, err := evalPageWithRetry(captureCtx, session.window.Page(), douyinRecommendNextScript); err == nil {
 						_ = decodeDouyinCaptureResult(raw, &result)
 					}
-					if err := waitCapturePoll(ctx); err != nil {
+					if err := waitCapturePoll(captureCtx); err != nil {
 						return platformfetch.FeedCaptureResponse{}, err
 					}
-					if raw, err := evalPageWithRetry(ctx, session.window.Page(), douyinFeedReadScript); err == nil {
+					if raw, err := evalPageWithRetry(captureCtx, session.window.Page(), douyinFeedReadScript); err == nil {
 						_ = decodeDouyinCaptureResult(raw, &result)
 					}
 				}
 			}
 		}
 	}
-	if len(result.Responses) == 0 && lastErr != nil && ctx.Err() != nil {
+	if len(result.Responses) == 0 && len(result.FeedCards) == 0 && lastErr != nil && captureCtx.Err() != nil {
 		return platformfetch.FeedCaptureResponse{}, lastErr
 	}
 	responses := make([]platformfetch.Response, 0, len(result.Responses))
 	for _, response := range result.Responses {
-		if len(response.Body) > platformFetchMaxBody {
-			continue
-		}
-		responses = append(responses, platformfetch.Response{Status: response.Status, Body: response.Body, URL: response.URL, ContentType: response.ContentType, Restricted: isCloudflarePage(response.Status, response.Body, response.ContentType)})
+		responses = append(responses, platformfetch.Response{Status: response.Status, APIStatus: response.APIStatus, Parsed: response.Parsed, URL: response.URL, ContentType: response.ContentType})
 	}
 	if session.closeAt == nil {
 		session.closeAt = time.AfterFunc(platformFetchIdle, func() {
@@ -415,7 +440,58 @@ func (b *platformPageBridge) CaptureFeed(ctx context.Context, platform string, p
 		pageURL = blocked
 	}
 	result.DOM.WaitMilliseconds = int(time.Since(started) / time.Millisecond)
-	return platformfetch.FeedCaptureResponse{Responses: responses, DOMCards: result.Cards, PageURL: pageURL, Title: result.Title, Ready: result.Ready, ResourcePaths: result.ResourcePaths, InitiatorTypes: result.InitiatorTypes, FetchHookInstalled: result.FetchHookInstalled, XHRHookInstalled: result.XHRHookInstalled, DOM: result.DOM}, nil
+	return platformfetch.FeedCaptureResponse{Responses: responses, FeedCards: result.FeedCards, FeedHasMore: result.FeedHasMore, FeedParsed: result.FeedParsed, DOMCards: result.Cards, PageURL: pageURL, Title: result.Title, Ready: result.Ready, ResourcePaths: result.ResourcePaths, InitiatorTypes: result.InitiatorTypes, FetchHookInstalled: result.FetchHookInstalled, XHRHookInstalled: result.XHRHookInstalled, DOM: result.DOM}, nil
+}
+
+type douyinCaptureCounts struct {
+	feed int
+	dom  int
+}
+
+func waitForDouyinCapture(ctx context.Context, maxWait time.Duration, previous douyinCaptureCounts, requireGrowth bool, read func() (douyinCaptureCounts, error)) (bool, error) {
+	if maxWait <= 0 {
+		return false, nil
+	}
+	deadline := time.NewTimer(maxWait)
+	defer deadline.Stop()
+	ticker := time.NewTicker(douyinCapturePoll)
+	defer ticker.Stop()
+	started := time.Now()
+	last := previous
+	stableSince := time.Time{}
+	changed := false
+	for {
+		counts, err := read()
+		if err == nil {
+			if counts.feed > last.feed || counts.dom > last.dom {
+				last = counts
+				changed = true
+				stableSince = time.Now()
+			} else if !requireGrowth && !stableSince.IsZero() && (counts.feed != last.feed || counts.dom != last.dom) {
+				last = counts
+				stableSince = time.Now()
+			}
+			hasCards := counts.feed > 0 || counts.dom > 0
+			if hasCards && (!requireGrowth || changed) {
+				if stableSince.IsZero() {
+					stableSince = time.Now()
+				}
+				if time.Since(stableSince) >= douyinCaptureStable {
+					return changed, nil
+				}
+			}
+		}
+		if requireGrowth && !changed && time.Since(started) >= douyinCaptureQuiet {
+			return false, nil
+		}
+		select {
+		case <-ctx.Done():
+			return changed, ctx.Err()
+		case <-deadline.C:
+			return changed, nil
+		case <-ticker.C:
+		}
+	}
 }
 
 func (b *platformPageBridge) CaptureSearch(ctx context.Context, platform, query, cursor string) (platformfetch.SearchCaptureResponse, error) {
@@ -491,17 +567,26 @@ func searchPageURL(platform, query, cursor string) (string, error) {
 type douyinCaptureResponse struct {
 	URL         string `json:"url"`
 	Status      int    `json:"status"`
+	APIStatus   int    `json:"apiStatus"`
+	Parsed      bool   `json:"parsed"`
+	HasMore     bool   `json:"hasMore"`
 	ContentType string `json:"contentType"`
-	Body        string `json:"body"`
+	// Body is accepted only for backwards-compatible test/bridge payloads. The
+	// native hook no longer exports response text; it exports Cards instead.
+	Body  string                  `json:"body,omitempty"`
+	Cards []platformfetch.DOMCard `json:"cards"`
 }
 
 type douyinCaptureResult struct {
-	PageURL   string                  `json:"pageUrl"`
-	Title     string                  `json:"title"`
-	Ready     string                  `json:"ready"`
-	Responses []douyinCaptureResponse `json:"responses"`
-	Cards     []platformfetch.DOMCard `json:"cards"`
-	Resources []struct {
+	PageURL     string                  `json:"pageUrl"`
+	Title       string                  `json:"title"`
+	Ready       string                  `json:"ready"`
+	Responses   []douyinCaptureResponse `json:"responses"`
+	FeedCards   []platformfetch.DOMCard `json:"feedCards"`
+	FeedHasMore bool                    `json:"feedHasMore"`
+	FeedParsed  bool                    `json:"feedParsed"`
+	Cards       []platformfetch.DOMCard `json:"cards"`
+	Resources   []struct {
 		Path          string `json:"path"`
 		InitiatorType string `json:"initiatorType"`
 	} `json:"resources"`
@@ -535,6 +620,11 @@ func decodeDouyinCaptureResult(raw any, result *douyinCaptureResult) error {
 			continue
 		}
 		result.Responses = append(result.Responses, response)
+		result.FeedParsed = result.FeedParsed || response.Parsed
+		result.FeedCards = mergeDOMCards(result.FeedCards, response.Cards)
+		if response.HasMore {
+			result.FeedHasMore = true
+		}
 	}
 	if len(result.Responses) > 128 {
 		result.Responses = result.Responses[len(result.Responses)-128:]
@@ -876,7 +966,7 @@ func platformFetchScript(path string, request app.PlatformPageRequest) (string, 
 	if request.Method != "GET" && request.Method != "HEAD" {
 		bodyOption = ", body:" + string(body)
 	}
-	return fmt.Sprintf(`const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), %d); try { return await fetch(location.origin + %s, {method:%s, headers:%s, credentials:"include"%s, signal:controller.signal}).then(async response => { const max=%d; const meta={status:response.status, url:response.url || "", contentType:response.headers.get("content-type") || ""}; if (!response.body) { const body=await response.text(); return {...meta, body:body.length>max?"":body, tooLarge:body.length>max}; } const reader=response.body.getReader(); const decoder=new TextDecoder(); let body="", bytes=0; try { for (;;) { const part=await reader.read(); if (part.done) break; bytes+=part.value.byteLength; if (bytes>max) { await reader.cancel(); return {...meta, body:"", tooLarge:true}; } body+=decoder.decode(part.value,{stream:true}); } body+=decoder.decode(); return {...meta, body:body, tooLarge:false}; } finally { reader.releaseLock(); } }); } finally { clearTimeout(timer); }`, platformFetchTimeout.Milliseconds(), pathJSON, method, headers, bodyOption, platformFetchMaxBody), nil
+	return fmt.Sprintf(`const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), %d); try { return await fetch(location.origin + %s, {method:%s, headers:%s, credentials:"include"%s, signal:controller.signal}).then(async response => { const max=%d; const meta={status:response.status, url:response.url || "", contentType:response.headers.get("content-type") || ""}; const type=String(meta.contentType).toLowerCase().split(";",1)[0].trim(); const jsonType=!type || type === "application/json" || type === "text/json" || type.endsWith("+json"); if (!jsonType) return {...meta, body:"", tooLarge:false}; if (!response.body) { const body=await response.text(); return {...meta, body:body.length>max?"":body, tooLarge:body.length>max}; } const reader=response.body.getReader(); const decoder=new TextDecoder(); let body="", bytes=0; try { for (;;) { const part=await reader.read(); if (part.done) break; bytes+=part.value.byteLength; if (bytes>max) { await reader.cancel(); return {...meta, body:"", tooLarge:true}; } body+=decoder.decode(part.value,{stream:true}); } body+=decoder.decode(); return {...meta, body:body, tooLarge:false}; } finally { reader.releaseLock(); } }); } finally { clearTimeout(timer); }`, platformFetchTimeout.Milliseconds(), pathJSON, method, headers, bodyOption, platformFetchMaxBody), nil
 }
 
 func isCloudflarePage(status int, body string, contentTypes ...string) bool {

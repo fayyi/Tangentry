@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo"
 
@@ -203,6 +204,16 @@ func TestDecodeDouyinCaptureResultParsesDOMCardsAndResources(t *testing.T) {
 	}
 }
 
+func TestDecodeDouyinCaptureResultKeepsSafeFeedProjectionMetadata(t *testing.T) {
+	var result douyinCaptureResult
+	raw := map[string]any{
+		"responses": []map[string]any{{"status": 200, "contentType": "application/json", "apiStatus": 0, "parsed": true, "hasMore": true, "cards": []map[string]any{{"id": "6961737553342991651", "title": "页面投影"}}}},
+	}
+	if err := decodeDouyinCaptureResult(raw, &result); err != nil || !result.FeedParsed || !result.FeedHasMore || len(result.FeedCards) != 1 || result.FeedCards[0].Title != "页面投影" {
+		t.Fatalf("feed projection metadata lost: %+v err=%v", result, err)
+	}
+}
+
 func TestDecodeDouyinCaptureResultUsesLatestHookState(t *testing.T) {
 	var result douyinCaptureResult
 	if err := decodeDouyinCaptureResult(map[string]any{"fetchHookInstalled": true, "xhrHookInstalled": true}, &result); err != nil {
@@ -231,6 +242,26 @@ func TestWaitCapturePollHonorsContext(t *testing.T) {
 	cancel()
 	if err := waitCapturePoll(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("wait error=%v", err)
+	}
+}
+
+func TestWaitForDouyinCaptureWaitsForStableCardsAndCancellation(t *testing.T) {
+	reads := 0
+	started := time.Now()
+	changed, err := waitForDouyinCapture(context.Background(), 2*time.Second, douyinCaptureCounts{}, false, func() (douyinCaptureCounts, error) {
+		reads++
+		if reads < 2 {
+			return douyinCaptureCounts{dom: reads}, nil
+		}
+		return douyinCaptureCounts{dom: 2}, nil
+	})
+	if err != nil || !changed || reads < 4 || time.Since(started) < douyinCaptureStable {
+		t.Fatalf("capture did not wait for stability: changed=%v err=%v reads=%d", changed, err, reads)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := waitForDouyinCapture(ctx, time.Second, douyinCaptureCounts{}, false, func() (douyinCaptureCounts, error) { return douyinCaptureCounts{}, nil }); !errors.Is(err, context.Canceled) {
+		t.Fatalf("capture cancellation err=%v", err)
 	}
 }
 

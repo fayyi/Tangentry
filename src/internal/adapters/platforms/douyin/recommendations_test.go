@@ -80,6 +80,17 @@ func TestRecommendationCloudflareChallengeRequestsRevalidation(t *testing.T) {
 	}
 }
 
+func TestRecommendationRateLimitOffersInAppVerification(t *testing.T) {
+	c := &Client{Cookie: func(string) string { return "sessionid=fixture" }, HTTP: &http.Client{Transport: trip(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusTooManyRequests, Request: r, Body: io.NopCloser(strings.NewReader("rate limited"))}, nil
+	})}}
+	_, err := c.Recommendations(context.Background(), 1)
+	var platform *discovery.PlatformError
+	if !errors.As(err, &platform) || !platform.Restricted || !strings.Contains(platform.Message, "应用内") || !strings.Contains(platform.Message, "重新验证") {
+		t.Fatalf("rate limit did not offer actionable verification: %v", err)
+	}
+}
+
 func TestRecommendationDiagnosticsRedactTokensAndDescribeResponse(t *testing.T) {
 	body := `{"message":"captcha token abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"}`
 	diagnostic := describePageResponse(http.StatusOK, body, false, "text/html", "https://www.douyin.com/aweme/v2/web/module/feed/?msToken=secret")
@@ -128,6 +139,55 @@ func TestMapDOMCardsDeduplicatesAndMapsSafeFields(t *testing.T) {
 	}, 1)
 	if len(feed.Items) != 2 || feed.Items[0].ID != "douyin:6961737553342991651" || feed.Items[0].LikeCount != 12 || feed.Items[0].DurationSeconds != 31 || feed.Items[1].ThumbnailURL != "" || feed.Items[1].LikeCount != 0 {
 		t.Fatalf("DOM cards not mapped safely: %+v", feed)
+	}
+}
+
+func TestRecommendationCaptureUsesPageDecodedFeedProjection(t *testing.T) {
+	c := &Client{Page: captureFetcherFunc(func(context.Context, string, int) (platformfetch.FeedCaptureResponse, error) {
+		return platformfetch.FeedCaptureResponse{
+			Responses:   []platformfetch.Response{{Status: http.StatusOK, ContentType: "application/x-protobuf; charset=utf-8", URL: "https://www.douyin.com/aweme/v2/web/module/feed/"}},
+			FeedCards:   []platformfetch.DOMCard{{ID: "6961737553342991651", Title: "页面已解码", Author: "作者", Duration: 12}},
+			FeedHasMore: true,
+		}, nil
+	}), Cookie: func(string) string { t.Fatal("cookie fallback should not run"); return "" }}
+	feed, err := c.Recommendations(context.Background(), 1)
+	if err != nil || len(feed.Items) != 1 || !feed.HasMore || feed.Items[0].Title != "页面已解码" {
+		t.Fatalf("decoded projection was not used: %+v %v", feed, err)
+	}
+}
+
+func TestBinaryCaptureDiagnosticsDoNotIncludeBody(t *testing.T) {
+	c := &Client{Page: captureFetcherFunc(func(context.Context, string, int) (platformfetch.FeedCaptureResponse, error) {
+		return platformfetch.FeedCaptureResponse{Responses: []platformfetch.Response{{Status: http.StatusOK, Body: "R$binary-secret-token", ContentType: "application/x-protobuf", URL: "https://www.douyin.com/aweme/v2/web/module/feed/"}}}, nil
+	}), Cookie: func(string) string { return "sessionid=fixture" }, HTTP: &http.Client{Transport: trip(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Request: r, Body: io.NopCloser(strings.NewReader(`{"status_code":2154,"aweme_list":[],"has_more":1}`))}, nil
+	})}}
+	_, err := c.Recommendations(context.Background(), 1)
+	if err == nil || strings.Contains(err.Error(), "binary-secret-token") || strings.Contains(err.Error(), "R$") {
+		t.Fatalf("binary body leaked in diagnostics: %v", err)
+	}
+}
+
+func TestPageDecodedEmptyFeedExplainsNoRecommendations(t *testing.T) {
+	c := &Client{Page: captureFetcherFunc(func(context.Context, string, int) (platformfetch.FeedCaptureResponse, error) {
+		return platformfetch.FeedCaptureResponse{
+			Responses:  []platformfetch.Response{{Status: http.StatusOK, APIStatus: 2154, Parsed: true, ContentType: "application/json", URL: "https://www.douyin.com/aweme/v2/web/module/feed/"}},
+			FeedParsed: true,
+		}, nil
+	}), Cookie: func(string) string { t.Fatal("cookie fallback should not run"); return "" }}
+	_, err := c.Recommendations(context.Background(), 1)
+	if err == nil || !strings.Contains(err.Error(), "2154") || strings.Contains(err.Error(), "Cookie") {
+		t.Fatalf("empty page feed was not classified safely: %v", err)
+	}
+}
+
+func TestCookieBinaryResponseIsSkippedWithMetadataOnlyDiagnostic(t *testing.T) {
+	c := &Client{Cookie: func(string) string { return "sessionid=fixture" }, HTTP: &http.Client{Transport: trip(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Request: r, Header: http.Header{"Content-Type": {"application/x-protobuf; charset=utf-8"}}, Body: io.NopCloser(strings.NewReader("R$binary-secret-token"))}, nil
+	})}}
+	_, err := c.Recommendations(context.Background(), 1)
+	if err == nil || !strings.Contains(err.Error(), "非 JSON") || strings.Contains(err.Error(), "binary-secret-token") || strings.Contains(err.Error(), "R$") {
+		t.Fatalf("cookie binary response was not safely diagnosed: %v", err)
 	}
 }
 

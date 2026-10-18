@@ -76,6 +76,8 @@ type BatchService struct {
 
 const defaultInitialSourceTimeout = 4 * time.Second
 const backgroundSourceTimeout = 30 * time.Second
+const douyinInitialSourceTimeout = 20 * time.Second
+const douyinBackgroundSourceTimeout = 75 * time.Second
 
 type initialSourceResult struct {
 	source   string
@@ -411,7 +413,7 @@ func (s *BatchService) extendSnapshot(ctx context.Context, request BatchRequest,
 		for attempts := 0; attempts < 100 && !snapshot.Exhausted[source]; attempts++ {
 			fetchCtx := ctx
 			cancel := func() {}
-			if timeout := s.sourceTimeout(); timeout > 0 {
+			if timeout := s.sourceTimeout(source); timeout > 0 {
 				fetchCtx, cancel = context.WithTimeout(ctx, timeout)
 			}
 			feed, err := s.provider.Fetch(fetchCtx, source, page)
@@ -451,7 +453,10 @@ func (s *BatchService) extendSnapshot(ctx context.Context, request BatchRequest,
 	return nil
 }
 
-func (s *BatchService) sourceTimeout() time.Duration {
+func (s *BatchService) sourceTimeout(source string) time.Duration {
+	if source == "douyin" {
+		return douyinBackgroundSourceTimeout
+	}
 	if s.initialSourceTimeout <= 0 {
 		return defaultInitialSourceTimeout
 	}
@@ -463,14 +468,14 @@ func (s *BatchService) fetchInitial(ctx context.Context, source string, fetch fu
 	// that missed it should continue in the background. The recommendation
 	// cache shares that in-flight call with the next cursor page, avoiding a
 	// second page load. Bound detached work so a closed page cannot leak forever.
-	backgroundCtx, backgroundCancel := context.WithTimeout(context.WithoutCancel(ctx), backgroundSourceTimeout)
+	backgroundCtx, backgroundCancel := context.WithTimeout(context.WithoutCancel(ctx), s.backgroundTimeout(source))
 	result := make(chan initialSourceResult, 1)
 	go func() {
 		defer backgroundCancel()
 		feed, err := fetch(backgroundCtx)
 		result <- initialSourceResult{source: source, feed: feed, err: err, timedOut: errors.Is(err, context.DeadlineExceeded)}
 	}()
-	deadline := time.NewTimer(s.sourceTimeout())
+	deadline := time.NewTimer(s.initialTimeout(source))
 	defer deadline.Stop()
 	select {
 	case value := <-result:
@@ -479,8 +484,23 @@ func (s *BatchService) fetchInitial(ctx context.Context, source string, fetch fu
 	case <-deadline.C:
 		return initialSourceResult{source: source, err: context.DeadlineExceeded, timedOut: true}
 	case <-ctx.Done():
+		backgroundCancel()
 		return initialSourceResult{source: source, err: ctx.Err()}
 	}
+}
+
+func (s *BatchService) initialTimeout(source string) time.Duration {
+	if source == "douyin" {
+		return douyinInitialSourceTimeout
+	}
+	return s.sourceTimeout(source)
+}
+
+func (s *BatchService) backgroundTimeout(source string) time.Duration {
+	if source == "douyin" {
+		return douyinBackgroundSourceTimeout
+	}
+	return backgroundSourceTimeout
 }
 
 func (s *BatchService) saveSnapshot(ctx context.Context, batchID, requestKey string, snapshot batchSnapshot) error {
