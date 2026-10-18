@@ -18,16 +18,20 @@ import { PaperCard } from '../documents/PaperCard'
 
 const labels: Record<GallerySource | 'huggingface', string> = { subscriptions: '订阅更新', bilibili: 'B站推荐', youtube: 'YouTube 推荐', xiaohongshu: '小红书推荐', linuxdo: 'Linux.do 话题', xiaoyuzhou: '小宇宙发现', douyin: '抖音推荐', huggingface: 'HF 每日论文' }
 
-export function DiscoveryGallery({ kind, onKind, query, onClearQuery, notice, noticeError, gallery, savedIDs, pending, savingUnavailable, onSave, onRead, onDownload, onCreator, onSearch, onSubscriptions, onBilibili }: {
+export function DiscoveryGallery({ active, kind, onKind, query, onClearQuery, notice, noticeError, gallery, savedIDs, pending, savingUnavailable, onSave, onRead, onDownload, onCreator, onSearch, onSubscriptions, onBilibili }: {
+  active: boolean
   kind: string; onKind: (kind: string) => void; origin: string; onOrigin: (origin: string) => void; notice: string; noticeError: boolean
   query: string; onClearQuery: () => void
   gallery: ReturnType<typeof useGallery>; savedIDs: Set<string>; pending: Set<string>; savingUnavailable: boolean
   onSave: (item: ContentItem) => void; onRead: (item: ContentItem) => void; onDownload: (item: ContentItem) => void; onCreator: (platform: string, authorID: string) => void; onSearch: () => void; onSubscriptions: () => void; onBilibili: () => void
 }) {
   const capabilities = useCapabilities()
-  const batchState = useDiscoveryBatch(true)
-  const topicState = useDiscoveryTopics(true)
+  const batchState = useDiscoveryBatch(active)
+  const topicState = useDiscoveryTopics(active)
   const sentinel = useRef<HTMLDivElement>(null)
+  const activeRef = useRef(active)
+  activeRef.current = active
+  const pollTimer = useRef<number | undefined>(undefined)
   const [platform, setPlatformState] = useState(() => readDiscoveryFilterState().platform)
   const [topic, setTopicState] = useState(() => readDiscoveryFilterState().topic)
   const [webViewPlatform, setWebViewPlatform] = useState<PlatformWebView | ''>('')
@@ -41,7 +45,7 @@ export function DiscoveryGallery({ kind, onKind, query, onClearQuery, notice, no
   const selectedEntries = (batchState.batch?.items ?? []).filter(entry => platform === 'all' || entry.source === platform)
   const search = query.trim().toLocaleLowerCase()
   const items = selectedEntries.filter(({ item, reason }) => !feedbackHidden.has(item.id) && matchesKind(item.kind) && (!search || `${item.title} ${item.author} ${item.description} ${item.previewText || ''} ${item.platform} ${reason}`.toLocaleLowerCase().includes(search)))
-  useRecommendationExposure(true, items.map(({ item }) => item.id).join(','))
+  useRecommendationExposure(active, items.map(({ item }) => item.id).join(','), '[data-app-view="discovery"]')
   const loading = batchState.loading
   const errorCount = Object.values(sourceStatus).filter(status => status.status !== 'ok' && status.status !== 'disabled' && status.status !== 'loading').length
   const loadingCount = Object.values(sourceStatus).filter(status => status.status === 'loading').length
@@ -50,11 +54,20 @@ export function DiscoveryGallery({ kind, onKind, query, onClearQuery, notice, no
   const setKind = (value: string) => { onKind(value); updateDiscoveryFilterState({ kind: value }) }
 
   useEffect(() => {
-    if (!sentinel.current || !batchState.batch?.hasNextBatch) return
+    if (!active || !sentinel.current || !batchState.batch?.hasNextBatch) return
     const observer = new IntersectionObserver(entries => { if (entries.some(entry => entry.isIntersecting) && !batchState.loading) batchState.nextBatch() }, { rootMargin: '720px 0px' })
     observer.observe(sentinel.current)
     return () => observer.disconnect()
-  }, [batchState.batch?.hasNextBatch, batchState.loading, batchState.nextBatch])
+  }, [active, batchState.batch?.hasNextBatch, batchState.loading, batchState.nextBatch])
+
+  useEffect(() => () => {
+    if (pollTimer.current !== undefined) window.clearTimeout(pollTimer.current)
+  }, [])
+  useEffect(() => {
+    if (active || pollTimer.current === undefined) return
+    window.clearTimeout(pollTimer.current)
+    pollTimer.current = undefined
+  }, [active])
 
   async function verifyPlatform(source: PlatformWebView) {
     if (webViewPlatform) return
@@ -65,15 +78,17 @@ export function DiscoveryGallery({ kind, onKind, query, onClearQuery, notice, no
       await openDesktopPlatformLogin(source)
       let attempts = 0
       const poll = async () => {
+        if (!activeRef.current) return
         if (attempts++ >= 120) { setWebViewPlatform(''); return }
         try {
           const result = await request<{ platforms: Array<{ platform: string; configured: boolean; updatedAt: number }> }>('/settings/cookies')
           const state = result.platforms.find(value => value.platform === source)
+          if (!activeRef.current) return
           if (state?.configured && (!previous?.configured || state.updatedAt > (previous.updatedAt ?? 0))) { setWebViewPlatform(''); batchState.retry(); return }
         } catch { /* The native window may still be completing its challenge. */ }
-        window.setTimeout(() => void poll(), 1500)
+        if (activeRef.current) pollTimer.current = window.setTimeout(() => void poll(), 1500)
       }
-      window.setTimeout(() => void poll(), 1500)
+      pollTimer.current = window.setTimeout(() => void poll(), 1500)
     } catch (cause) { setWebViewError(cause instanceof Error ? cause.message : '无法打开应用内登录窗口。'); setWebViewPlatform('') }
   }
 

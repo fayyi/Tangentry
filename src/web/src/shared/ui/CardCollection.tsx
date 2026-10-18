@@ -26,7 +26,12 @@ export function CardCollection({ children, masonry = true, rowGap = 16, ...props
       }))
       for (const { card, rows } of sizes) card.style.gridRowEnd = `span ${rows}`
     }
-    resize(cards.map(target => ({ target })))
+    // Activity hides and later reveals the collection by restarting effects while
+    // preserving the DOM. Existing spans keep the page geometry stable, so let
+    // ResizeObserver refresh them asynchronously instead of synchronously
+    // measuring every card during reveal.
+    const hasExistingSpans = cards.length > 0 && cards.every(card => card.style.gridRowEnd)
+    if (!hasExistingSpans) resize(cards.map(target => ({ target })))
     if (Math.abs(window.scrollY - scrollTop) > 1) window.scrollTo({ top: scrollTop, behavior: 'auto' })
     const observer = new ResizeObserver(resize)
     cards.forEach(card => observer.observe(card))

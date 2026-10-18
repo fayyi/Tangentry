@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { request } from '../../shared/api/client'
 
-export function useRecommendationExposure(active: boolean, identities: string) {
+export function useRecommendationExposure(active: boolean, identities: string, rootSelector = '.mixed-gallery') {
   const marked = useRef(new Set<string>())
   useEffect(() => {
     if (!active) return
@@ -35,7 +35,7 @@ export function useRecommendationExposure(active: boolean, identities: string) {
         }
       }
     }, { threshold: [.5] })
-    document.querySelectorAll('.mixed-gallery [data-testid="content-card"]').forEach(node => observer.observe(node))
+    document.querySelectorAll(`${rootSelector} [data-testid="content-card"]`).forEach(node => observer.observe(node))
     const visibility = () => {
       for (const node of visible) {
         cancel(node)
@@ -48,5 +48,5 @@ export function useRecommendationExposure(active: boolean, identities: string) {
       for (const node of timers.keys()) cancel(node)
       document.removeEventListener('visibilitychange', visibility)
     }
-  }, [active, identities])
+  }, [active, identities, rootSelector])
 }

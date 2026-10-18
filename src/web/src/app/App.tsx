@@ -1,5 +1,5 @@
 import { AlertCircle, ArrowRight, Bookmark, Check, Compass, Grid2X2, List, Plus } from 'lucide-react'
-import { lazy, useEffect, useMemo, useRef, useState } from 'react'
+import { Activity, lazy, useEffect, useMemo, useRef, useState } from 'react'
 import { ReaderActionsProvider } from '../shared/reader/ReaderActions'
 import { DiscoveryGallery } from '../features/discovery/DiscoveryGallery'
 import { readDiscoveryFilterState } from '../features/discovery/useDiscoveryBatch'
@@ -71,6 +71,10 @@ export function App() {
   const input = useRef<HTMLInputElement>(null)
   const navigation = useAppNavigation(input)
   const { view, navigate, returnHome, readerQuery, readerNoteId, readingItem, setReadingItem, readerReturn, readerSourceID, scrollPositions, viewportTarget } = navigation
+  const [discoveryMounted, setDiscoveryMounted] = useState(() => view === 'discovery')
+  useEffect(() => {
+    if (view === 'discovery') setDiscoveryMounted(true)
+  }, [view])
   const bilibili = useBilibiliBrowse(view === 'bilibili')
   const subscriptions = useSubscriptions(view === 'subscriptions')
   const [subscriptionView, setSubscriptionView] = useState(() => selectedSavedViewFromURL())
@@ -234,10 +238,18 @@ export function App() {
       onDismissResume={() => setLastReader(null)}
     >
     <ReaderActionsProvider><main id="main" className={`main-workspace ${view === 'reader' ? 'immersive-reader' : ''}`} tabIndex={-1}>
-      <div className="content-container"><PageLoadBoundary key={view}>
+      <div className="content-container">
+      {(discoveryMounted || view === 'discovery') && <PageLoadBoundary>
+        <Activity mode={view === 'discovery' ? 'visible' : 'hidden'}>
+          <div data-app-view="discovery">
+            <DiscoveryGallery active={view === 'discovery'} kind={galleryKind} onKind={setGalleryKind} origin={galleryOrigin} onOrigin={setGalleryOrigin} query={galleryQuery} onClearQuery={() => setGalleryQuery('')} notice={library.notice} noticeError={library.noticeError} gallery={gallery} savedIDs={savedIDs} pending={library.pending} savingUnavailable={savingUnavailable} onSave={item => void library.toggle(item)} onRead={openReader} onDownload={onDownload} onCreator={(platform, authorID) => navigate('search', true, `/search?creatorPlatform=${encodeURIComponent(platform)}&creator=${encodeURIComponent(authorID)}`)} onSearch={() => navigate('search')} onSubscriptions={() => navigate('subscriptions')} onBilibili={() => navigate('bilibili')} />
+          </div>
+        </Activity>
+      </PageLoadBoundary>}
+      <PageLoadBoundary key={view}>
       {view === 'reader' && <AppReaderActions item={cachedReadingItem ?? null} saved={cachedReadingItem ? savedIDs.has(cachedReadingItem.id) : false} savingUnavailable={savingUnavailable} libraryPending={library.pending} library={library} downloads={downloads} readState={readStates} readingID={readingID} supportsReadState={supportsReadState(readingID)} onDownload={onDownload}/>}
       {view === 'history' ? <ViewingHistoryPage history={viewingHistory} onRead={openReader} onSave={item => void library.toggle(item)} savedIDs={savedIDs} pending={library.pending} unavailable={savingUnavailable}/>
-      : view === 'discovery' ? <DiscoveryGallery kind={galleryKind} onKind={setGalleryKind} origin={galleryOrigin} onOrigin={setGalleryOrigin} query={galleryQuery} onClearQuery={() => setGalleryQuery('')} notice={library.notice} noticeError={library.noticeError} gallery={gallery} savedIDs={savedIDs} pending={library.pending} savingUnavailable={savingUnavailable} onSave={item => void library.toggle(item)} onRead={openReader} onDownload={onDownload} onCreator={(platform, authorID) => navigate('search', true, `/search?creatorPlatform=${encodeURIComponent(platform)}&creator=${encodeURIComponent(authorID)}`)} onSearch={() => navigate('search')} onSubscriptions={() => navigate('subscriptions')} onBilibili={() => navigate('bilibili')} />
+      : view === 'discovery' ? null
       : view === 'podcasts' ? <PodcastsPage history={viewingHistory.entries} library={library.items} episodes={podcastEpisodes} gallery={gallery} savedIDs={savedIDs} pending={library.pending} unavailable={savingUnavailable} onRead={openReader} onSave={item => void library.toggle(item)} onDownload={onDownload} onSubscriptions={() => navigate('subscriptions')} onSettings={() => { navigate('tools', true, '/tools#accounts') }} onAdd={() => { discovery.setSource('xiaoyuzhou'); focusSource() }} />
       : view === 'bilibili' ? <BilibiliPage browser={bilibili} savedIDs={savedIDs} pending={library.pending} unavailable={savingUnavailable} notice={library.notice} noticeError={library.noticeError} onRead={openReader} onSave={item => void library.toggle(item)} onReturn={() => navigate('discovery')} onLogin={() => navigate('tools', true, '/tools#accounts')} onLibrary={() => navigate('library')} />
       : view === 'notes' ? <GlobalNotesPage browser={globalNotes} savedItems={library.items} onRead={openNoteReader} /> : view === 'reader' ? (
@@ -269,8 +281,9 @@ export function App() {
         {!loading && !error && items.length === 0 && !(view === 'library' && progressOverview.effectiveFilter !== 'all') && (view === 'library' || discovery.feed || filters.search) && <section className="empty-state"><div className="empty-art" aria-hidden="true">{filters[view as ContentView] ? <Compass size={26} strokeWidth={1.4} /> : view === 'library' ? <Bookmark size={26} strokeWidth={1.4} /> : <BrandMark className="empty-brand"/>}</div><h2>{filters[view as ContentView] ? '没有找到匹配的内容' : view === 'library' ? libraryKind !== 'all' ? `还没有收藏${kindNames[libraryKind] ?? ''}` : '给喜欢的内容留个位置' : '这位创作者暂时没有可见投稿'}</h2><p>{filters[view as ContentView] ? '搜索仅覆盖当前已加载的标题与作者，试试其他关键词。' : view === 'library' ? libraryKind !== 'all' ? '切换到其他类型，或从发现与订阅里收藏更多内容。' : '在发现、订阅或阅读时点击收藏，它们就会出现在这里。' : '换一位 UP 主，或直接输入视频地址。'}</p>{filters[view as ContentView] ? <button className="button button-secondary" onClick={() => setFilters(current => ({ ...current, [view]: '' }))}>清除搜索</button> : view === 'library' && libraryKind !== 'all' ? <button className="button button-secondary" onClick={() => setLibraryKind('all')}>查看全部收藏</button> : <button className="empty-link" onClick={view === 'library' ? () => navigate('discovery') : focusSource}>{view === 'library' ? '去发现内容' : '添加第一个来源'}<ArrowRight size={15} /></button>}</section>}
         </>}
       </>}
-      <RestoreViewport key={view} {...viewportTarget.current}/>
-      </PageLoadBoundary></div>
+      </PageLoadBoundary>
+      <RestoreViewport key={view} view={view} {...viewportTarget.current}/>
+      </div>
     </main></ReaderActionsProvider>
     <BackToTop />
     <UpdaterNotice />
