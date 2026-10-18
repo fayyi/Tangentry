@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { request } from '../../shared/api/client'
 
-export function useRecommendationExposure(active: boolean, identities: string) {
+export function useRecommendationExposure(active: boolean, identities: string, rootSelector = '.mixed-gallery') {
   const marked = useRef(new Set<string>())
   useEffect(() => {
     if (!active) return
@@ -35,7 +35,15 @@ export function useRecommendationExposure(active: boolean, identities: string) {
         }
       }
     }, { threshold: [.5] })
-    document.querySelectorAll('.mixed-gallery [data-testid="content-card"]').forEach(node => observer.observe(node))
+    const observeCards = () => document.querySelectorAll(`${rootSelector} [data-testid="content-card"]`).forEach(node => observer.observe(node))
+    let cancelObserve: () => void
+    if ('requestIdleCallback' in window) {
+      const idle = window.requestIdleCallback(observeCards)
+      cancelObserve = () => window.cancelIdleCallback(idle)
+    } else {
+      const timeout = setTimeout(observeCards, 0)
+      cancelObserve = () => clearTimeout(timeout)
+    }
     const visibility = () => {
       for (const node of visible) {
         cancel(node)
@@ -45,8 +53,9 @@ export function useRecommendationExposure(active: boolean, identities: string) {
     document.addEventListener('visibilitychange', visibility)
     return () => {
       observer.disconnect()
+      cancelObserve()
       for (const node of timers.keys()) cancel(node)
       document.removeEventListener('visibilitychange', visibility)
     }
-  }, [active, identities])
+  }, [active, identities, rootSelector])
 }

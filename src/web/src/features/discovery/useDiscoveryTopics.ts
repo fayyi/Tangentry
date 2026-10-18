@@ -6,12 +6,13 @@ export function useDiscoveryTopics(active: boolean) {
   const [topics, setTopics] = useState<DiscoveryTopicRule[]>([])
   const [error, setError] = useState('')
   const controller = useRef<AbortController | null>(null)
+  const loaded = useRef(false)
   const reload = useCallback(async () => {
     controller.current?.abort()
     const next = new AbortController(); controller.current = next
     try {
       const result = await request<{ topics: DiscoveryTopicRule[] }>('/discovery/topics', { signal: next.signal })
-      if (!next.signal.aborted) { setTopics(result.topics); setError('') }
+      if (!next.signal.aborted) { setTopics(result.topics); setError(''); loaded.current = true }
     } catch (cause) { if (!next.signal.aborted) setError(cause instanceof Error ? cause.message : '主题规则暂不可用。') }
   }, [])
   const create = useCallback(async (name: string) => {
@@ -19,7 +20,7 @@ export function useDiscoveryTopics(active: boolean) {
     if (!clean) return false
     try {
       const result = await request<DiscoveryTopicRule>('/discovery/topics', { method: 'POST', body: JSON.stringify({ name: clean, keywords: [clean] }) })
-      setTopics(current => [...current.filter(topic => topic.id !== result.id), result])
+      setTopics(current => [...current.filter(topic => topic.id !== result.id), result]); loaded.current = true
       return true
     } catch (cause) { setError(cause instanceof Error ? cause.message : '主题保存失败。'); return false }
   }, [])
@@ -28,7 +29,7 @@ export function useDiscoveryTopics(active: boolean) {
     if (!clean) return false
     try {
       const result = await request<DiscoveryTopicRule>(`/discovery/topics/${encodeURIComponent(topic.id)}`, { method: 'PUT', body: JSON.stringify({ name: clean, keywords: [clean], revision: topic.revision }) })
-      setTopics(current => current.map(value => value.id === result.id ? result : value))
+      setTopics(current => current.map(value => value.id === result.id ? result : value)); loaded.current = true
       return true
     } catch (cause) { setError(cause instanceof Error ? cause.message : '主题保存失败。'); return false }
   }, [])
@@ -39,6 +40,9 @@ export function useDiscoveryTopics(active: boolean) {
       return true
     } catch (cause) { setError(cause instanceof Error ? cause.message : '主题删除失败。'); return false }
   }, [])
-  useEffect(() => { if (active) void reload(); return () => controller.current?.abort() }, [active, reload])
+  useEffect(() => {
+    if (active && !loaded.current) void reload()
+    return () => controller.current?.abort()
+  }, [active, reload])
   return { topics, error, reload, create, update, remove }
 }

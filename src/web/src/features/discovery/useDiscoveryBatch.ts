@@ -202,6 +202,14 @@ export function useDiscoveryBatch(active: boolean) {
   useEffect(() => {
     if (!active) return
     if (!discoverySession.batch && !discoverySession.loading) void load(discoverySession.options)
+    return () => {
+      const controller = discoverySession.controller
+      if (!controller) return
+      controller.abort()
+      discoverySession.controller = undefined
+      discoverySession.loading = false
+      notifyDiscoverySession()
+    }
   }, [active, load])
 
   const update = useCallback((patch: Partial<DiscoveryBatchOptions>) => {
@@ -218,19 +226,21 @@ export function useDiscoveryBatch(active: boolean) {
   }, [active, load])
 
   const nextBatch = useCallback(() => {
+    if (!active) return
     const current = discoverySession.batch; const cursor = discoverySession.cursor ?? current?.nextCursor
     if (!cursor || discoverySession.loading || discoverySession.stopped) return
     discoverySession.unreadIds = current?.items.map(item => item.item.id) ?? []
     void load(discoverySession.options, cursor)
-  }, [load])
+  }, [active, load])
 
   const retry = useCallback(() => {
+    if (!active) return
     const current = discoverySession.batch
     discoverySession.cursor = undefined
     discoverySession.stopped = false
     discoverySession.unreadIds = current?.items.map(item => item.item.id) ?? []
     void load(discoverySession.options)
-  }, [load])
+  }, [active, load])
   const reset = useCallback(() => update(defaultDiscoveryBatchOptions), [update])
   const saveTopics = useCallback((next: string[]) => {
     const unique = [...new Set(next.map(value => value.trim()).filter(Boolean))].slice(0, 20)

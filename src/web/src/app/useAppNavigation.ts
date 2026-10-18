@@ -24,12 +24,18 @@ const initialScrollPositions = (): Record<View, number> => ({
   notes: 0,
 })
 
-export function RestoreViewport({ top, sourceID }: ViewportTarget) {
+export function RestoreViewport({ top, sourceID, view }: ViewportTarget & { view: View }) {
   useLayoutEffect(() => {
     window.scrollTo({ top, behavior: 'instant' })
     if (document.documentElement.dataset.input === 'keyboard') document.getElementById('main')?.focus({ preventScroll: true })
-    if (sourceID) document.querySelector<HTMLElement>(`[data-content-id="${CSS.escape(sourceID)}"]`)?.focus({ preventScroll: true })
-  }, [])
+    if (sourceID) {
+      const candidates = Array.from(document.querySelectorAll<HTMLElement>(`[data-content-id="${CSS.escape(sourceID)}"]`))
+      const source = candidates.find(node => view === 'discovery'
+        ? node.closest('[data-app-view="discovery"]')
+        : !node.closest('[data-app-view="discovery"]'))
+      source?.focus({ preventScroll: true })
+    }
+  }, [sourceID, top, view])
   return null
 }
 
