@@ -1,14 +1,17 @@
 import { Bookmark, ExternalLink, FileText } from 'lucide-react'
+import type { ReactNode } from 'react'
 import type { ContentItem } from '../../shared/api/types'
 import { CardCollection } from '../../shared/ui/CardCollection'
 import './paper.css'
 
-export function PaperCard({ item, saved, pending, onRead, onSave }: {
+export function PaperCard({ item, saved, pending, onRead, onSave, status, actions }: {
   item: ContentItem
   saved: boolean
   pending: boolean
   onRead: (item: ContentItem) => void
   onSave: (item: ContentItem) => void
+  status?: ReactNode
+  actions?: ReactNode
 }) {
   const paper = item.paper
   return <article className="paper-card">
@@ -21,8 +24,10 @@ export function PaperCard({ item, saved, pending, onRead, onSave }: {
       {paper?.aiKeywords?.length ? <span className="paper-card-keywords">{paper.aiKeywords.slice(0, 5).map(value => <span key={value}>{value}</span>)}</span> : null}
     </button>
     <div className="paper-card-footer">
+      {status}
       <span>{paper?.upvotes !== undefined ? `👍 ${paper.upvotes}` : ''}{paper?.githubStars !== undefined ? ` · GitHub ★ ${paper.githubStars}` : ''}</span>
       {paper?.arxivUrl && <a href={paper.arxivUrl} target="_blank" rel="noopener noreferrer" aria-label="打开 arXiv 论文" title="打开 arXiv 论文"><ExternalLink size={15} aria-hidden="true"/></a>}
+      {actions}
       <button type="button" className={`paper-card-save${saved ? ' active' : ''}`} disabled={pending} aria-label={`${saved ? '取消收藏' : '收藏'} ${item.title}`} title={saved ? '取消收藏' : '收藏'} onClick={() => onSave(item)}><Bookmark size={16} fill={saved ? 'currentColor' : 'none'} aria-hidden="true"/></button>
     </div>
   </article>

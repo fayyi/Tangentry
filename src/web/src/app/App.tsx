@@ -16,6 +16,7 @@ import { ViewingHistoryPage } from '../features/history/ViewingHistoryPage'
 import { useSearchHistory } from '../features/search/useSearchHistory'
 import { SearchHistory } from '../features/search/SearchHistory'
 import { ModernGalleryCard } from '../shared/ui/ModernGalleryCard'
+import { PaperCard } from '../features/documents/PaperCard'
 import { SkeletonGallery } from '../shared/ui/SkeletonLoading'
 import { SourceComposer } from '../features/discovery/SourceComposer'
 import type { DiscoverySource } from '../features/discovery/sources'
@@ -135,6 +136,12 @@ export function App() {
     navigate('downloads')
   }
 
+  function renderCollectionItem(item: ContentItem) {
+    if (item.paper) return <PaperCard key={item.id} item={item} saved={savedIDs.has(item.id)} pending={savingUnavailable || library.pending.has(item.id)} onRead={openReader} onSave={item => void library.toggle(item)} />
+    const Card = layouts[contentView] === 'grid' ? ModernGalleryCard : ContentCard
+    return <Card key={item.id} status={view === 'library' && (item.kind === 'video' || item.kind === 'audio') ? <CardProgress progress={progressOverview.get(item.id)} supported={supportsProgress(item.id)} /> : undefined} item={item} saved={savedIDs.has(item.id)} pending={savingUnavailable || library.pending.has(item.id)} onRead={openReader} onSave={item => void library.toggle(item)} onDownload={onDownload} progress={progressOverview.get(item.id)} />
+  }
+
   const libraryReadingItem = library.items.find(item => item.id === readerQuery || item.platformId === readerQuery)
   const currentReadingItem = readingItem?.id === readerQuery || readingItem?.platformId === readerQuery ? readingItem : null
   const cachedReadingItem = currentReadingItem?.platform === 'rss' && libraryReadingItem && libraryReadingItem.description.length > currentReadingItem.description.length
@@ -246,7 +253,7 @@ export function App() {
         </div>}
         {view === 'library' && <div className="collection-filterbar"><ProgressOverviewControls overview={progressOverview} search={filters.library} onSearch={value => setFilters(current => ({ ...current, library: value }))} /></div>}
         {library.notice && <p className="inline-feedback collection-save-feedback" role={library.noticeError ? 'alert' : 'status'}>{library.noticeError ? <AlertCircle size={17} /> : <Check size={17} />}{library.notice}</p>}
-        {items.length > 0 && <CardCollection masonry={layouts[contentView] === 'grid' && libraryKind !== 'video' && libraryKind !== 'audio'} data-media={view === 'library' ? libraryKind : 'all'} className={`content-collection ${layouts[contentView] === 'list' ? 'list-layout' : 'gallery-layout modern-gallery'}`} aria-label={view === 'library' ? '收藏内容' : '发现内容'}>{items.map(item => { const Card = layouts[contentView] === 'grid' ? ModernGalleryCard : ContentCard; return <Card key={item.id} status={view === 'library' && (item.kind === 'video' || item.kind === 'audio') ? <CardProgress progress={progressOverview.get(item.id)} supported={supportsProgress(item.id)} /> : undefined} item={item} saved={savedIDs.has(item.id)} pending={savingUnavailable || library.pending.has(item.id)} onRead={openReader} onSave={item => void library.toggle(item)} onDownload={onDownload} progress={progressOverview.get(item.id)} /> })}</CardCollection>}
+        {items.length > 0 && <CardCollection masonry={layouts[contentView] === 'grid' && libraryKind !== 'video' && libraryKind !== 'audio'} data-media={view === 'library' ? libraryKind : 'all'} className={`content-collection ${layouts[contentView] === 'list' ? 'list-layout' : 'gallery-layout modern-gallery'}`} aria-label={view === 'library' ? '收藏内容' : '发现内容'}>{items.map(renderCollectionItem)}</CardCollection>}
         {loading && sourceItems.length === 0 && (view === 'library' || discovery.feed || discovery.loading) && <SkeletonGallery count={layouts[contentView] === 'grid' ? 8 : 6} />}
         {!loading && !error && items.length === 0 && view === 'library' && progressOverview.effectiveFilter !== 'all' && <section className="empty-state"><h2>没有符合当前进度的收藏</h2><p>进度与标题、作者搜索共同筛选；可以查看全部进度或调整关键词。</p><button className="button button-secondary" onClick={() => progressOverview.setFilter('all')}>查看全部进度</button></section>}
         {!loading && !error && items.length === 0 && !(view === 'library' && progressOverview.effectiveFilter !== 'all') && (view === 'library' || discovery.feed || filters.search) && <section className="empty-state"><div className="empty-art" aria-hidden="true">{filters[view as ContentView] ? <Compass size={26} strokeWidth={1.4} /> : view === 'library' ? <Bookmark size={26} strokeWidth={1.4} /> : <BrandMark className="empty-brand"/>}</div><h2>{filters[view as ContentView] ? '没有找到匹配的内容' : view === 'library' ? libraryKind !== 'all' ? `还没有收藏${kindNames[libraryKind] ?? ''}` : '给喜欢的内容留个位置' : '这位创作者暂时没有可见投稿'}</h2><p>{filters[view as ContentView] ? '搜索仅覆盖当前已加载的标题与作者，试试其他关键词。' : view === 'library' ? libraryKind !== 'all' ? '切换到其他类型，或从发现与订阅里收藏更多内容。' : '在发现、订阅或阅读时点击收藏，它们就会出现在这里。' : '换一位 UP 主，或直接输入视频地址。'}</p>{filters[view as ContentView] ? <button className="button button-secondary" onClick={() => setFilters(current => ({ ...current, [view]: '' }))}>清除搜索</button> : view === 'library' && libraryKind !== 'all' ? <button className="button button-secondary" onClick={() => setLibraryKind('all')}>查看全部收藏</button> : <button className="empty-link" onClick={view === 'library' ? () => navigate('discovery') : focusSource}>{view === 'library' ? '去发现内容' : '添加第一个来源'}<ArrowRight size={15} /></button>}</section>}
