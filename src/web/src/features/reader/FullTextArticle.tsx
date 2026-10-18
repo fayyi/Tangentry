@@ -135,6 +135,6 @@ export function FullTextArticle({ item, notes, focus, onQuote, onOpenNotes, onUn
     </div>
     {busy && <p className="fulltext-status" role="status">{busy === 'read' ? '正在读取本机全文…' : '正在获取原站正文…'}</p>}
     {error && <p className="fulltext-status" role="alert">{error}</p>}
-    <ArticleReader ref={article} key={source} contentId={summaryText ? item.id : ''} title={source === 'original' && doc ? '原站全文' : '订阅源正文'} text={source === 'original' && doc ? doc.text : feedText} blocks={source === 'original' && doc ? doc.blocks : feedMarkdown ? undefined : feedBlocks} feed={source === 'feed'} toolbarOwnsSummary notes={notes} focus={requestedFocus} sourceURL={source === 'original' && doc ? doc.sourceUrl : item.url} onQuote={source === 'original' && doc || description ? onQuote : undefined} onOpenNotes={onOpenNotes} navigationTarget={navigationTarget} onReturnedToReading={onReturnedToReading}/>
+    <ArticleReader ref={article} key={source} contentId={summaryText ? item.id : ''} title={source === 'original' && doc ? '原站全文' : '订阅源正文'} text={source === 'original' && doc ? doc.text : feedText} blocks={source === 'original' && doc ? doc.blocks : feedMarkdown ? undefined : feedBlocks} feed={source === 'feed'} toolbarOwnsSummary notes={notes} focus={requestedFocus} sourceURL={source === 'original' && doc ? doc.sourceUrl : item.url} onQuote={onQuote} onOpenNotes={onOpenNotes} navigationTarget={navigationTarget} onReturnedToReading={onReturnedToReading}/>
   </section>
 }

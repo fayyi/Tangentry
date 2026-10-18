@@ -86,6 +86,32 @@ func TestLibraryPageFiltersSearchesAndOmitsBodies(t *testing.T) {
 	}
 }
 
+func TestSavedLinuxdoTopicCanBeUpgradedWithDiscussion(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(filepath.Join(t.TempDir(), "library.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	item := content.Item{ID: "linuxdo:42", Platform: "linuxdo", PlatformID: "42", Kind: "article", Title: "合成话题", URL: "https://linux.do/t/42", Description: "旧缓存正文", SavedAt: 123}
+	if _, err := store.Save(ctx, item); err != nil {
+		t.Fatal(err)
+	}
+	item.Description = "更新后的主帖正文"
+	item.ArticleBlocks = []content.ArticleBlock{{Kind: "paragraph", Text: item.Description}}
+	item.Discussion = &content.Discussion{TopicID: "42", TotalPosts: 2, LoadedPosts: 1, PostIDs: []int64{101, 102}, Posts: []content.DiscussionPost{{ID: 101, Number: 1, Username: "synthetic", Blocks: item.ArticleBlocks}}}
+	item.SavedAt = 123
+	if _, err := store.Save(ctx, item); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := store.Get(ctx, item.ID)
+	if err != nil || got.SavedAt != 123 || got.Discussion == nil || got.Discussion.TotalPosts != 2 || got.Description != "更新后的主帖正文" {
+		t.Fatalf("upgraded topic was not persisted: %+v, %v", got, err)
+	}
+}
+
 func TestHistoryPersistsAcrossReopenAndKeepsNewestSnapshot(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "history.db")

@@ -97,7 +97,7 @@
 .note-format-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; }
 .note-format-tools button { display: grid; place-items: center; min-width: 30px; min-height: 30px; border-radius: 5px; color: var(--muted); }
 .note-format-tools > span { margin-left: auto; color: var(--muted); font-size: 10px; }
-.note-editor textarea { font-size: 13px; line-height: 1.85; min-height: 180px; font-family: var(--font-mono); border-color: transparent; background: var(--surface); }
+.note-editor textarea { font-size: 13px; line-height: 1.85; min-height: 180px; font-family: var(--font-reading); border-color: transparent; background: var(--surface); }
 .note-preview { min-height: 180px; max-height: 400px; overflow-y: auto; padding: 12px; border-radius: 6px; background: var(--surface); }
 .note-draft-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .note-auto-time { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -219,7 +219,7 @@
 .reading-columns .reading-notes .notes-panel.notes-workspace .notes-panel-heading h2 { font-size: 13px; }
 .reading-columns .reading-notes .notes-panel.notes-workspace .note-editor { gap: 10px; padding: 14px 0 0; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: transparent; }
 .reading-columns .reading-notes .notes-panel.notes-workspace .note-editor-heading > label { color: var(--ink); font-size: 13px; font-weight: 600; }
-.reading-columns .reading-notes .notes-panel.notes-workspace .note-editor textarea { max-height: none; padding: 4px 0; border: 0; border-radius: 0; background: transparent; font-family: var(--font-mono); font-size: 15px; line-height: 1.85; resize: none; min-height: 84px; }
+.reading-columns .reading-notes .notes-panel.notes-workspace .note-editor textarea { max-height: none; padding: 4px 0; border: 0; border-radius: 0; background: transparent; font-family: var(--font-reading); font-size: 15px; line-height: 1.85; resize: none; min-height: 84px; }
 .reading-columns .reading-notes .notes-panel.notes-workspace .note-editor[data-writing=true] textarea { min-height: 220px; }
 .reading-columns .reading-notes .notes-panel.notes-workspace .note-editor textarea:focus-visible { outline: none; }
 .reading-columns .reading-notes .notes-panel.notes-workspace .note-preview { padding: 4px 0; border: 0; background: transparent; }

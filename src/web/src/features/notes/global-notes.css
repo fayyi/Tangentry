@@ -18,7 +18,7 @@
 .notebook-writing .note-editor-heading > label { color: var(--ink); font-size: 13px; font-weight: 600; }
 .notebook-writing .note-format-tools > span { display: none; }
 /* Typora-like writing: the page is the editor, not a box inside it. */
-.notebook-writing .note-editor textarea { min-height: 42vh; padding: 4px 0; border: 0; border-radius: 0; background: transparent; font-size: 15px; line-height: 1.85; resize: none; }
+.notebook-writing .note-editor textarea { min-height: 42vh; padding: 4px 0; border: 0; border-radius: 0; background: transparent; font-family: var(--font-reading); font-size: 15px; line-height: 1.85; resize: none; }
 .notebook-writing .note-editor textarea:focus-visible { outline: none; }
 .notebook-writing .global-note-editor { position: static; }
 .global-editor-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }

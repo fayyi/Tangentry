@@ -99,7 +99,7 @@ export function useReaderContent({ id, initialItem, jobs, jobsLoading, onItem }:
     }
 
     async function resolve(): Promise<ContentItem | undefined> {
-      if (initialItem?.id === id && !initialItem.partial) return initialItem
+      if (initialItem?.id === id && !initialItem.partial && (initialItem.platform !== 'linuxdo' || initialItem.discussion)) return initialItem
       try {
         return await request<ContentItem>('/library/' + encodeURIComponent(id), { signal: controller.signal })
       } catch (cause) {
@@ -224,13 +224,34 @@ export function useReaderContent({ id, initialItem, jobs, jobsLoading, onItem }:
   }, [item, onItem, detailRead, detailError, localSocial?.id])
 
   useEffect(() => {
-    if (item?.platform !== 'linuxdo' || item.description) return
+    if (item?.platform !== 'linuxdo' || item.discussion?.posts.length) return
     const controller = new AbortController()
-    void request<{ items: ContentItem[] }>('/discovery/linuxdo?q=' + encodeURIComponent(item.url), { signal: controller.signal }).then(feed => {
-      if (!controller.signal.aborted && feed.items[0]?.id === id) setItem(feed.items[0])
-    }).catch(() => {})
+    setDetailLoading(true)
+    setDetailError('')
+    void request<{ items: ContentItem[] }>('/discovery/linuxdo?q=' + encodeURIComponent(item.url), { signal: controller.signal }).then(async feed => {
+      const fetched = feed.items.find(candidate => candidate.id === id && candidate.platform === 'linuxdo' && candidate.discussion)
+      if (!fetched) throw new Error('未能读取话题楼层，请重试。')
+      if (controller.signal.aborted) return
+      let detail: ContentItem = { ...fetched, savedAt: item.savedAt }
+      if (item.savedAt) {
+        try {
+          detail = await request<ContentItem>('/library', { method: 'POST', body: JSON.stringify(detail) })
+        } catch {
+          // The freshly fetched discussion remains available for this reading session.
+        }
+      }
+      if (!controller.signal.aborted) {
+        setDetailLoading(false)
+        setItem(detail)
+        onItem?.(detail)
+      }
+    }).catch(cause => {
+      if (!controller.signal.aborted) setDetailError(cause instanceof Error ? cause.message : '话题楼层暂时无法读取。')
+    }).finally(() => {
+      if (!controller.signal.aborted) setDetailLoading(false)
+    })
     return () => controller.abort()
-  }, [id, item?.platform, item?.url])
+  }, [id, item?.platform, item?.url, Boolean(item?.discussion?.posts.length), attempt, onItem])
 
   function onSourceUpdated(detail: ContentItem) {
     storedDetail.current = { key: `${id}:${attempt}:${localAttempt}`, value: { item: detail, complete: true } }
