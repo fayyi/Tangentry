@@ -20,6 +20,16 @@ type slowBatchProvider struct {
 	quick content.Item
 }
 
+type blockingContinuationProvider struct{}
+
+func (blockingContinuationProvider) Fetch(ctx context.Context, source string, _ int) (Feed, error) {
+	if source == "douyin" {
+		<-ctx.Done()
+		return Feed{}, ctx.Err()
+	}
+	return Feed{}, nil
+}
+
 func (p slowBatchProvider) Fetch(ctx context.Context, source string, _ int) (Feed, error) {
 	if source == "slow" {
 		<-ctx.Done()
@@ -192,6 +202,38 @@ func TestBatchSlowSourceDoesNotBlockFirstBatch(t *testing.T) {
 	}
 	if !response.HasNextBatch || response.NextCursor == "" {
 		t.Fatalf("loading source did not preserve continuation: %#v", response)
+	}
+}
+
+func TestDouyinSourceKeepsWebViewBudgetSeparateFromFastSources(t *testing.T) {
+	service := NewBatchService(batchProvider{}, nil, []string{"douyin"})
+	if got := service.initialTimeout("douyin"); got != douyinInitialSourceTimeout {
+		t.Fatalf("douyin initial timeout = %s, want %s", got, douyinInitialSourceTimeout)
+	}
+	if got := service.sourceTimeout("douyin"); got != douyinBackgroundSourceTimeout {
+		t.Fatalf("douyin continuation timeout = %s, want %s", got, douyinBackgroundSourceTimeout)
+	}
+	if got := service.continuationTimeout("douyin"); got != douyinContinuationTimeout {
+		t.Fatalf("douyin continuation timeout = %s, want %s", got, douyinContinuationTimeout)
+	}
+	if got := service.initialTimeout("bilibili"); got != defaultInitialSourceTimeout {
+		t.Fatalf("default initial timeout = %s, want %s", got, defaultInitialSourceTimeout)
+	}
+}
+
+func TestDouyinContinuationTimeoutMarksLoadingWithoutLongBlock(t *testing.T) {
+	service := NewBatchService(blockingContinuationProvider{}, nil, []string{"douyin"})
+	service.continuationTimeoutOverride = 15 * time.Millisecond
+	snapshot := batchSnapshot{Candidates: []batchCandidate{{Item: batchItem("douyin", "6961737553342991651", "已有内容", "作者", 1), Source: "douyin"}}, Status: map[string]BatchSourceStatus{}, NextPages: map[string]int{"douyin": 2}, Exhausted: map[string]bool{"douyin": false}}
+	started := time.Now()
+	if err := service.extendSnapshot(context.Background(), BatchRequest{Size: 10}, &snapshot, 1); err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("continuation blocked too long: %s", elapsed)
+	}
+	if snapshot.Status["douyin"].Status != "loading" || snapshot.Exhausted["douyin"] {
+		t.Fatalf("continuation timeout did not preserve loading state: %+v", snapshot)
 	}
 }
 

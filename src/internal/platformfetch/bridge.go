@@ -12,8 +12,21 @@ type Request struct {
 
 type Response struct {
 	Status      int
+	APIStatus   int
+	Parsed      bool
 	Body        string
 	Restricted  bool
+	URL         string
+	ContentType string
+}
+
+// FeedResponse is the metadata-only projection of a captured feed request.
+// Response bodies never cross the native capture bridge.
+type FeedResponse struct {
+	Status      int
+	APIStatus   int
+	Parsed      bool
+	HasMore     bool
 	URL         string
 	ContentType string
 }
@@ -26,7 +39,10 @@ type Fetcher interface {
 // platform page's own feed requests. Responses are kept separate because the
 // page may issue several feed calls while scrolling.
 type FeedCaptureResponse struct {
-	Responses          []Response
+	Responses          []FeedResponse
+	FeedCards          []DOMCard
+	FeedHasMore        bool
+	FeedParsed         bool
 	DOMCards           []DOMCard
 	PageURL            string
 	Title              string
@@ -42,24 +58,24 @@ type FeedCaptureResponse struct {
 // the native bridge. It is intentionally metadata-only: no raw HTML or
 // cookies cross the bridge.
 type DOMDiagnostics struct {
-	URL                  string         `json:"url,omitempty"`
-	VideoLinkCount       int            `json:"videoLinkCount,omitempty"`
+	URL                   string         `json:"url,omitempty"`
+	VideoLinkCount        int            `json:"videoLinkCount,omitempty"`
 	CandidateSelectorHits map[string]int `json:"candidateSelectorHits,omitempty"`
-	CardsRead            int            `json:"cardsRead,omitempty"`
-	WaitMilliseconds     int            `json:"waitMilliseconds,omitempty"`
+	CardsRead             int            `json:"cardsRead,omitempty"`
+	WaitMilliseconds      int            `json:"waitMilliseconds,omitempty"`
 }
 
 // DOMCard is the credential-free projection of a recommendation card read
 // from a platform page. It intentionally contains no cookies or raw HTML.
 type DOMCard struct {
-	ID           string
-	URL          string
-	ThumbnailURL string
-	Title        string
-	Author       string
-	AuthorID     string
-	LikeCount    int
-	Duration     int
+	ID           string `json:"id"`
+	URL          string `json:"url"`
+	ThumbnailURL string `json:"thumbnailURL"`
+	Title        string `json:"title"`
+	Author       string `json:"author"`
+	AuthorID     string `json:"authorID"`
+	LikeCount    int    `json:"likeCount"`
+	Duration     int    `json:"duration"`
 }
 
 // FeedCaptureFetcher is optional. Adapters must continue to work with a

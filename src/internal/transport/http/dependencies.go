@@ -7,6 +7,7 @@ import (
 	"tangentry/internal/discovery"
 	"tangentry/internal/documents"
 	"tangentry/internal/downloads"
+	"tangentry/internal/preferences"
 	"tangentry/internal/subscriptions"
 	"tangentry/internal/subtitles"
 )
@@ -14,6 +15,7 @@ import (
 // Options is retained for focused HTTP handler tests. Application wiring uses
 // Dependencies so each feature receives only its own collaborators.
 type Options struct {
+	Preferences             preferences.Store
 	BilibiliBrowser         BilibiliBrowser
 	LinuxdoLogin            BrowserLoginFlow[LinuxdoState]
 	LinuxdoSession          func(context.Context) (LinuxdoSession, error)
@@ -74,6 +76,7 @@ type SavedViewService interface {
 }
 
 type Dependencies struct {
+	Preferences preferences.Store
 	Accounts AccountDependencies
 	Browse   DiscoveryDependencies
 	Library  LibraryDependencies
