@@ -69,6 +69,26 @@ func (c *Client) Search(ctx context.Context, query, cursor string) (discovery.Se
 	return discovery.SearchPage{Items: items, Cursor: nextPage(page, data.PageInfo.Pages), HasMore: data.PageInfo.Pages > page || len(items) == 20, Platform: "bilibili"}, nil
 }
 
+func (c *Client) Creator(ctx context.Context, id, cursor string) (discovery.SearchPage, error) {
+	page := 1
+	if cursor != "" {
+		value, err := strconv.Atoi(cursor)
+		if err != nil || value < 1 {
+			return discovery.SearchPage{}, discovery.ErrInvalidQuery
+		}
+		page = value
+	}
+	feed, err := c.CreatorVideos(ctx, id, page)
+	if err != nil {
+		return discovery.SearchPage{}, err
+	}
+	next := ""
+	if feed.HasMore {
+		next = strconv.Itoa(page + 1)
+	}
+	return discovery.SearchPage{Items: feed.Items, Cursor: next, HasMore: next != "", Platform: "bilibili"}, nil
+}
+
 func nextPage(page, pages int) string {
 	if pages > page {
 		return strconv.Itoa(page + 1)

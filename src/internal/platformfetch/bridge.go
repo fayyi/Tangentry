@@ -45,6 +45,7 @@ type DOMCard struct {
 	ThumbnailURL string
 	Title        string
 	Author       string
+	AuthorID     string
 	LikeCount    int
 	Duration     int
 }
@@ -53,4 +54,18 @@ type DOMCard struct {
 // regular Fetcher for server/headless builds and older shells.
 type FeedCaptureFetcher interface {
 	CaptureFeed(context.Context, string, int) (FeedCaptureResponse, error)
+}
+
+// SearchCaptureResponse is the safe card projection read from a platform's
+// own search page in a native WebView.
+type SearchCaptureResponse struct {
+	DOMCards []DOMCard
+	PageURL  string
+	Title    string
+	Ready    string
+}
+
+// SearchCaptureFetcher is optional and only available in desktop shells.
+type SearchCaptureFetcher interface {
+	CaptureSearch(context.Context, string, string, string) (SearchCaptureResponse, error)
 }

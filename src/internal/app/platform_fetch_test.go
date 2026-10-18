@@ -14,7 +14,7 @@ func (appPageFetcher) Fetch(context.Context, string, string, platformfetch.Reque
 	return platformfetch.Response{}, nil
 }
 
-func TestPlatformPageFetcherIsInjectedIntoLinuxdoAndDouyin(t *testing.T) {
+func TestPlatformPageFetcherIsInjectedIntoPageBackedPlatforms(t *testing.T) {
 	fetcher := appPageFetcher{}
 	dataDir := t.TempDir()
 	services, started, err := newServices(dataDir, config.Config{DownloadDir: dataDir}, Options{PlatformPageFetcher: fetcher})
@@ -27,5 +27,8 @@ func TestPlatformPageFetcherIsInjectedIntoLinuxdoAndDouyin(t *testing.T) {
 	}
 	if services.adapters.discovery.douyin.Page != fetcher {
 		t.Fatal("Douyin client did not receive page fetcher")
+	}
+	if services.adapters.discovery.notes.Page != fetcher {
+		t.Fatal("Xiaohongshu client did not receive page fetcher")
 	}
 }

@@ -23,8 +23,23 @@ func TestSearchMapsDiscourseTopicsAndCursor(t *testing.T) {
 	if err != nil || len(page.Items) != 1 || page.Cursor != "2" || !page.HasMore {
 		t.Fatalf("unexpected search page: %+v, %v", page, err)
 	}
-	if page.Items[0].ID != "linuxdo:42" || page.Items[0].Description != "摘要" || page.Items[0].Author != "作者" {
+	if page.Items[0].ID != "linuxdo:42" || page.Items[0].Description != "摘要" || page.Items[0].Author != "作者" || page.Items[0].AuthorID != "作者" {
 		t.Fatalf("unexpected topic: %+v", page.Items[0])
+	}
+}
+
+func TestCreatorMapsCreatedTopicsAndUsesUsername(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/topics/created-by/alice.json" || r.URL.Query().Get("page") != "1" {
+			t.Fatalf("unexpected creator request: %s", r.URL.String())
+		}
+		_, _ = w.Write([]byte(`{"topic_list":{"topics":[{"id":7,"title":"作者主题","excerpt":"正文","created_at":"2026-10-17T12:00:00Z","reply_count":1,"views":2,"like_count":3}],"more_full_page_results":true}}`))
+	}))
+	defer server.Close()
+	client := &Client{HTTP: &http.Client{Transport: rewriteTransport{base: server.URL}}}
+	page, err := client.Creator(context.Background(), "alice", "")
+	if err != nil || len(page.Items) != 1 || page.Cursor != "2" || page.Items[0].AuthorID != "alice" {
+		t.Fatalf("unexpected creator page: %+v, %v", page, err)
 	}
 }
 

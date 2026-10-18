@@ -29,6 +29,7 @@ func TestPlatformPageOriginAndCloudflareRecognition(t *testing.T) {
 	}{
 		{"linuxdo", "https://linux.do/"},
 		{"douyin", "https://www.douyin.com/"},
+		{"xiaohongshu", "https://www.xiaohongshu.com/"},
 	} {
 		origin, ok := platformPageOrigin(test.platform)
 		if !ok || origin != test.origin {
@@ -89,6 +90,39 @@ func TestDouyinFeedCaptureScriptHooksPageRequests(t *testing.T) {
 	}
 	if !strings.Contains(douyinRecommendNextScript, "ArrowDown") || !strings.Contains(douyinRecommendNextScript, "WheelEvent") {
 		t.Fatal("recommendation fallback does not advance the page")
+	}
+}
+
+func TestSearchDOMReadScriptMapsAuthorLinks(t *testing.T) {
+	for _, part := range []string{"authorIDFrom", "/user\\/profile", "authorID", "cards"} {
+		if !strings.Contains(searchDomReadScript, part) {
+			t.Fatalf("search DOM script does not contain %q", part)
+		}
+	}
+}
+
+func TestSearchPageURLValidatesPlatformQueryAndCursor(t *testing.T) {
+	tests := []struct {
+		platform string
+		query    string
+		cursor   string
+		want     string
+	}{
+		{"douyin", "猫 / 狗", "", "https://www.douyin.com/search/%E7%8C%AB%20%2F%20%E7%8B%97"},
+		{"xiaohongshu", "旅行笔记", "2", "https://www.xiaohongshu.com/search_result?keyword=%E6%97%85%E8%A1%8C%E7%AC%94%E8%AE%B0&page=2"},
+	}
+	for _, test := range tests {
+		got, err := searchPageURL(test.platform, test.query, test.cursor)
+		if err != nil || got != test.want {
+			t.Fatalf("searchPageURL(%q, %q, %q) = %q, %v; want %q", test.platform, test.query, test.cursor, got, err, test.want)
+		}
+	}
+	for _, test := range [][3]string{
+		{"", "query", ""}, {"other", "query", ""}, {"douyin", "", ""}, {"douyin", "query", "0"}, {"douyin", "query", "1001"}, {"douyin", strings.Repeat("x", 201), ""}, {"douyin", "query\x00", ""},
+	} {
+		if got, err := searchPageURL(test[0], test[1], test[2]); err == nil || got != "" {
+			t.Fatalf("invalid searchPageURL(%q, %q, %q) = %q, %v", test[0], test[1], test[2], got, err)
+		}
 	}
 }
 
@@ -206,6 +240,9 @@ func TestPlatformPageURLAllowed(t *testing.T) {
 		{"douyin", "https://douyin.com/", false},
 		{"douyin", "https://passport.douyin.com/", false},
 		{"douyin", "https://www.douyin.com.evil.example/", false},
+		{"xiaohongshu", "https://www.xiaohongshu.com/", true},
+		{"xiaohongshu", "https://xiaohongshu.com/", false},
+		{"xiaohongshu", "https://edith.xiaohongshu.com/", false},
 	} {
 		if got := platformPageURLAllowed(test.raw, test.platform); got != test.allowed {
 			t.Fatalf("platformPageURLAllowed(%q, %q) = %v, want %v", test.raw, test.platform, got, test.allowed)

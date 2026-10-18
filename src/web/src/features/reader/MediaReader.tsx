@@ -1,4 +1,4 @@
-import { ArrowLeft, BookOpen, ExternalLink, PanelRightClose, PanelRightOpen, RotateCw, StickyNote } from 'lucide-react'
+import { ArrowLeft, BookOpen, ExternalLink, PanelRightClose, PanelRightOpen, RotateCw, StickyNote, UserRound } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode, RefObject } from 'react'
 import type { ContentItem, DownloadJob, ReadingNote, TextAnchor, PDFAnchor } from '../../shared/api/types'
@@ -34,7 +34,7 @@ function ResizableReaderPlayer({ children }: { children: ReactNode }) {
   return <div className="reader-player-resizable" style={{ '--reader-player-width': `${notebook.playerWidth}%` } as CSSProperties}>{children}<ReaderPlayerSizeHandle value={notebook.playerWidth} onChange={notebook.setPlayerWidth} onReset={notebook.resetPlayerWidth}/></div>
 }
 
-export function MediaReader({ id, initialItem, jobs, jobsLoading = false, video, reading, notes, insights, mediaRef, playbackRef, onReady, onPosition, onSeek, onItem, onQuote, annotations = [], textFocus, onOpenNotes, onUnresolved, onPDFQuote, onReturn }: { id: string; initialItem?: ContentItem; jobs: DownloadJob[]; jobsLoading?: boolean; video?: ReactNode; reading?: ReactNode; notes?: ReactNode; insights?: ReactNode; mediaRef?:RefObject<HTMLMediaElement|null>; playbackRef?:RefObject<PlaybackHandle|null>; onReady?:(ready:boolean)=>void; onPosition?:(seconds:number|null)=>void; onSeek?:(seconds:number)=>void; onItem?:(item:ContentItem)=>void; onQuote?:(text:string,anchor?:TextAnchor)=>void; annotations?:ReadingNote[]; textFocus?:{id:string;token:number;allowReturn?:boolean}|null; onOpenNotes?:(ids:string[])=>void; onUnresolved?:(ids:string[])=>void; onPDFQuote?:(text:string,anchor:PDFAnchor)=>void; onReturn: () => void }) {
+export function MediaReader({ id, initialItem, jobs, jobsLoading = false, video, reading, notes, insights, mediaRef, playbackRef, onReady, onPosition, onSeek, onItem, onQuote, annotations = [], textFocus, onOpenNotes, onUnresolved, onPDFQuote, onCreator, onReturn }: { id: string; initialItem?: ContentItem; jobs: DownloadJob[]; jobsLoading?: boolean; video?: ReactNode; reading?: ReactNode; notes?: ReactNode; insights?: ReactNode; mediaRef?:RefObject<HTMLMediaElement|null>; playbackRef?:RefObject<PlaybackHandle|null>; onReady?:(ready:boolean)=>void; onPosition?:(seconds:number|null)=>void; onSeek?:(seconds:number)=>void; onItem?:(item:ContentItem)=>void; onQuote?:(text:string,anchor?:TextAnchor)=>void; annotations?:ReadingNote[]; textFocus?:{id:string;token:number;allowReturn?:boolean}|null; onOpenNotes?:(ids:string[])=>void; onUnresolved?:(ids:string[])=>void; onPDFQuote?:(text:string,anchor:PDFAnchor)=>void; onCreator?:(platform:string, authorID:string)=>void; onReturn: () => void }) {
   const [quote,setQuote]=useState('')
   const { item, error, localReadFailed, retryLocalRead, social, localSocial, refreshDetails, detailError, detailLoading, detailRead, sourceEditing, setSourceEditing, onSourceUpdated } = useReaderContent({ id, initialItem, jobs, jobsLoading, onItem })
   const [focusReading, setFocusReading] = useState(false)
@@ -170,7 +170,7 @@ export function MediaReader({ id, initialItem, jobs, jobsLoading = false, video,
     : null
   const videoLayout = Boolean(video || item?.kind === 'video')
   const audioLayout = item?.kind === 'audio'
-  const heading = <>{item ? <BilingualTitle heading contentId={item.id} text={item.title}/> : <h1>内容阅读</h1>}{item && <p className="reading-meta">{item.author||'未知作者'} · <ReaderPublication key={item.id} item={item}/></p>}</>
+  const heading = <>{item ? <BilingualTitle heading contentId={item.id} text={item.title}/> : <h1>内容阅读</h1>}{item && <p className="reading-meta">{item.author||'未知作者'} {item.authorId && onCreator && <button type="button" className="creator-link" onClick={() => onCreator(item.platform, item.authorId)}><UserRound size={13}/>看看 TA 最近</button>} · <ReaderPublication key={item.id} item={item}/></p>}</>
   const player = video ? <ResizableReaderPlayer>{video}</ResizableReaderPlayer> : null
   const videoDetails = <div className="watch-details">{heading}{description}</div>
   return <section data-focus-reading={focusReading} className={`media-reader${item?.kind === 'article' ? ' article-workspace' : ''}${item?.kind === 'pdf' ? ' document-workspace' : ''}${videoLayout ? ' video-workspace' : ''}${audioLayout ? ' audio-workspace' : ''}`}>

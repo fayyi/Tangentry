@@ -44,6 +44,7 @@ type platformDiscovery struct {
 	notes    *xiaohongshu.Client
 	forum    *discourse.Client
 	podcasts *xiaoyuzhou.Client
+	youtube  *youtube.Client
 }
 
 type platformImports struct {
@@ -95,11 +96,11 @@ func newPlatforms(dataDir string, configuration config.Config, toolkit *tools.To
 	feedClient := &feeds.Client{HTTP: public}
 	youtubeClient := youtube.New(public)
 	douyinClient := &douyin.Client{HTTP: public, Cookie: cookieFor(cookies, "douyin"), UserAgent: userAgentFor(cookies, "douyin"), Page: option.PlatformPageFetcher}
-	notesClient := &xiaohongshu.Client{HTTP: public, Cookie: cookieFor(cookies, "xiaohongshu"), UserAgent: userAgentFor(cookies, "xiaohongshu")}
+	notesClient := &xiaohongshu.Client{HTTP: public, Cookie: cookieFor(cookies, "xiaohongshu"), UserAgent: userAgentFor(cookies, "xiaohongshu"), Page: option.PlatformPageFetcher}
 	forumClient := &discourse.Client{HTTP: public, UserAgent: userAgentFor(cookies, "linuxdo"), Session: cookies.PrepareLinuxdoSession, UserKey: cookies.LinuxdoUserKey, Page: option.PlatformPageFetcher}
 	return &platforms{
 		network:       platformNetwork{public: public, cookies: cookies, toolkit: toolkit},
-		discovery:     platformDiscovery{creators: creators, bilibili: client, douyin: douyinClient, notes: notesClient, forum: forumClient, podcasts: podcasts},
+		discovery:     platformDiscovery{creators: creators, bilibili: client, douyin: douyinClient, notes: notesClient, forum: forumClient, podcasts: podcasts, youtube: youtubeClient},
 		imports:       platformImports{feeds: feedClient, youtube: youtubeClient, douyin: douyinClient, notes: notesClient, forum: forumClient, podcasts: podcasts, toolkit: toolkit, noteImages: noteImages},
 		subscriptions: platformSubscriptions{feeds: feedClient, youtube: youtubeClient, creators: creators, toolkit: toolkit},
 		media:         platformMedia{bilibili: client, toolkit: toolkit, notes: notesClient, podcasts: podcasts},

@@ -18,9 +18,9 @@ import { AIInsights } from '../features/ai/AIInsights'
 import { useSummary } from '../features/ai/useSummary'
 
 // App composes media and captions. Feature internals stay independent.
-export function YouTubeReadingWorkspace({ id, linkedNoteId, initialItem, jobs, loading, error, onReturn, onDownloads, onRefresh }: {
+export function YouTubeReadingWorkspace({ id, linkedNoteId, initialItem, jobs, loading, error, onReturn, onDownloads, onRefresh, onCreator }: {
   id: string; linkedNoteId?: string; initialItem?: ContentItem; jobs: DownloadJob[]; loading: boolean; error: string
-  onReturn: () => void; onDownloads: () => void; onRefresh: () => void
+  onReturn: () => void; onDownloads: () => void; onRefresh: () => void; onCreator?: (platform:string, authorID:string) => void
 }) {
   const player = useRef<LocalPlayerHandle>(null)
   const sequence = useRef(0)
@@ -51,7 +51,7 @@ export function YouTubeReadingWorkspace({ id, linkedNoteId, initialItem, jobs, l
   const requestScreenshot = useCallback(() => captureAction.current?.(), [])
   const noteAt = useCallback((positionSeconds: number, subtitleReference?: SubtitleReference) => setTarget({ contentId: id, positionSeconds, subtitleReference, token: ++sequence.current }), [id])
   if (!valid) return <p className="subtitle-error" role="alert">阅读地址缺少正确的 YouTube 视频标识，请返回列表选择视频。</p>
-  return <MediaReader id={id} initialItem={initialItem} jobs={jobs} onReturn={onReturn} onItem={setExportItem} onSeek={ready ? seek : undefined}
+  return <MediaReader id={id} initialItem={initialItem} jobs={jobs} onReturn={onReturn} onCreator={onCreator} onItem={setExportItem} onSeek={ready ? seek : undefined}
     video={<><ReaderCaptureAction onCapture={requestScreenshot}/>{!loading&&sources.length===0?<OnlineVideoPlayer ref={player} onPosition={setPosition} onReady={setReady} onProgress={progress.observe} onPlaying={setPlaying} platform="youtube" id={videoId} title={initialItem?.title??videoId} cover={initialItem?.thumbnailUrl} overlay={<PlayerCaptureOverlay onCapture={requestScreenshot}/>}/>:<LocalVideoPlayer ref={player} sources={sources} loading={loading} error={error} captions={captions} onReady={setReady} onPosition={setPosition} onDownloads={onDownloads} onRefresh={onRefresh} onProgress={progress.observe} onPlaying={setPlaying} overlay={<PlayerCaptureOverlay onCapture={requestScreenshot}/>} />}{(progress.saved || progress.readError || progress.writeError || position !== null) && <ReadingProgressPanel progress={progress} ready={ready} playing={playing} position={position} onSeek={seek}/>}</>}
     reading={<SubtitleReader source="youtube" item={{ platformId: videoId, url, title: exportItem?.title, author: exportItem?.author }} position={position} onSeek={ready ? seek : undefined} onTrackChange={setCaptions} assistance={assistance} onNoteAt={noteAt} />}
     insights={insights}
