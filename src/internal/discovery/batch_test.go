@@ -123,6 +123,43 @@ func TestBatchCursorReadsPersistedSnapshotAndEnds(t *testing.T) {
 	_ = first
 }
 
+func TestBatchContinuesAfterEmptyPageWithContinuation(t *testing.T) {
+	snapshots := &batchSnapshots{}
+	provider := batchProvider{pages: map[string]map[int]Feed{
+		"bilibili": {
+			1: {Items: []content.Item{batchItem("bilibili", "first", "首批", "作者", 2)}, HasMore: true},
+			2: {Items: nil, HasMore: true},
+			3: {Items: []content.Item{batchItem("bilibili", "third", "续页", "作者", 1)}, HasMore: false},
+		},
+	}}
+	service := NewBatchService(provider, nil, []string{"bilibili"}, snapshots)
+	first, err := service.Create(context.Background(), BatchRequest{Size: 10, Seed: 12})
+	if err != nil || !first.HasNextBatch || first.NextCursor == "" {
+		t.Fatalf("first page lost continuation: %#v, err=%v", first, err)
+	}
+	second, err := service.Create(context.Background(), BatchRequest{Size: 10, Seed: 12, Cursor: first.NextCursor})
+	if err != nil || len(second.Items) != 1 || second.Items[0].Item.ID != "bilibili:third" || second.HasNextBatch {
+		t.Fatalf("empty continuation page did not advance to next source page: %#v, err=%v", second, err)
+	}
+}
+
+func TestBatchEndReasonNamesUnavailableSources(t *testing.T) {
+	service := NewBatchService(batchProvider{failures: map[string]error{"youtube": ErrUnavailable}}, nil, []string{"youtube"})
+	response, err := service.Create(context.Background(), BatchRequest{Size: 10, Seed: 13})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.EndReason != "部分来源暂不可用（YouTube），暂时没有更多了" {
+		t.Fatalf("empty response should not claim a source-specific end reason: %#v", response)
+	}
+
+	snapshot := batchSnapshot{Candidates: []batchCandidate{{Item: batchItem("bilibili", "one", "一", "作者", 1), Source: "bilibili"}}, Status: map[string]BatchSourceStatus{"youtube": {Status: "unavailable"}}, Exhausted: map[string]bool{"bilibili": true, "youtube": true}}
+	page := service.page(BatchRequest{Size: 10}, "key", batchCursor{BatchID: "batch"}, snapshot)
+	if page.EndReason != "部分来源暂不可用（YouTube），暂时没有更多了" {
+		t.Fatalf("source failure was not included in end reason: %#v", page)
+	}
+}
+
 func TestBatchUsesDefaultsWhenOptionsAreOmitted(t *testing.T) {
 	service := NewBatchService(batchProvider{feeds: map[string]Feed{
 		"bilibili": {Items: []content.Item{batchItem("bilibili", "BV17x411w7KC", "默认", "作者", 1)}},

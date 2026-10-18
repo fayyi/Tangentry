@@ -49,6 +49,43 @@ export interface DiscoveryFilterState {
   topic: string
 }
 
+export type DiscoveryBottomState =
+  | { kind: 'error'; message: string }
+  | { kind: 'loading' }
+  | { kind: 'more' }
+  | { kind: 'ended'; message: string }
+  | { kind: 'filtered'; message: string }
+  | { kind: 'empty' }
+
+/** A batch is pageable only when the server supplied both continuation signals. */
+export function hasDiscoveryContinuation(batch: Pick<DiscoveryBatchResponse, 'hasNextBatch' | 'nextCursor'> | null | undefined): boolean {
+  return Boolean(batch?.hasNextBatch && batch.nextCursor?.trim())
+}
+
+/** Keep the client stopped flag aligned with the cursor it can actually send. */
+export function discoveryBatchStopped(batch: Pick<DiscoveryBatchResponse, 'hasNextBatch' | 'nextCursor'> | null | undefined): boolean {
+  return !hasDiscoveryContinuation(batch)
+}
+
+/** Guard duplicate observer entries before starting a cursor request. */
+export function shouldRequestDiscoveryNextBatch(active: boolean, session: Pick<DiscoveryBatchSession, 'batch' | 'cursor' | 'loading' | 'stopped'>): boolean {
+  const cursor = session.cursor ?? session.batch?.nextCursor
+  return active && Boolean(cursor) && !session.loading && !session.stopped
+}
+
+/** Map the four user-facing load-more states without depending on React. */
+export function discoveryBottomState(error: string, loading: boolean, batch: DiscoveryBatchResponse | null, itemCount: number): DiscoveryBottomState {
+  if (error) return { kind: 'error', message: error }
+  if (loading) return { kind: 'loading' }
+  // A populated batch with no visible items means the active filters hid it;
+  // do not present that as an exhausted feed.
+  if (itemCount === 0 && (batch?.items.length ?? 0) > 0) return { kind: 'filtered', message: '当前筛选没有匹配的内容，请调整筛选条件。' }
+  if (hasDiscoveryContinuation(batch)) return { kind: 'more' }
+  if (batch?.endReason?.trim()) return { kind: 'ended', message: batch.endReason.trim() }
+  if (itemCount > 0) return { kind: 'ended', message: batch?.endReason?.trim() || '暂时没有更多了' }
+  return { kind: 'empty' }
+}
+
 /** Pure session helpers kept small so the cache policy can be tested without React. */
 export function createDiscoveryBatchSession(options: DiscoveryBatchOptions = defaultDiscoveryBatchOptions, seed = 1): DiscoveryBatchSession {
   return {
@@ -185,7 +222,7 @@ export function useDiscoveryBatch(active: boolean) {
       const merged = cursor ? appendDiscoveryBatch(discoverySession.batch, result) : appendDiscoveryBatch(null, result)
       discoverySession.batch = merged
       discoverySession.cursor = result.nextCursor
-      discoverySession.stopped = !result.hasNextBatch || !result.nextCursor
+      discoverySession.stopped = discoveryBatchStopped(result)
       discoverySession.options = { ...nextOptions }
       discoverySession.lastLoadedAt = Date.now()
     } catch (cause) {
@@ -226,9 +263,9 @@ export function useDiscoveryBatch(active: boolean) {
   }, [active, load])
 
   const nextBatch = useCallback(() => {
-    if (!active) return
+    if (!shouldRequestDiscoveryNextBatch(active, discoverySession)) return
     const current = discoverySession.batch; const cursor = discoverySession.cursor ?? current?.nextCursor
-    if (!cursor || discoverySession.loading || discoverySession.stopped) return
+    if (!cursor) return
     discoverySession.unreadIds = current?.items.map(item => item.item.id) ?? []
     void load(discoverySession.options, cursor)
   }, [active, load])

@@ -282,9 +282,10 @@ func (s *BatchService) Create(ctx context.Context, request BatchRequest) (BatchR
 		}
 		add(source, reason, result.feed, source != "subscriptions")
 		// Subscription feeds are already complete snapshots, not page APIs.
-		if source == "subscriptions" || len(result.feed.Items) == 0 || !result.feed.HasMore {
+		if source == "subscriptions" || !result.feed.HasMore {
 			exhausted[source] = true
 		} else {
+			exhausted[source] = false
 			nextPages[source] = 2
 		}
 	}
@@ -433,7 +434,7 @@ func (s *BatchService) extendSnapshot(ctx context.Context, request BatchRequest,
 				newCandidates = append(newCandidates[:before], filtered...)
 			}
 			snapshot.NextPages[source] = page + 1
-			if len(feed.Items) == 0 || !feed.HasMore {
+			if !feed.HasMore {
 				snapshot.Exhausted[source] = true
 			}
 			if len(newCandidates) > before || snapshot.Exhausted[source] {
@@ -569,9 +570,48 @@ func (s *BatchService) page(request BatchRequest, requestKey string, cursor batc
 	if response.HasNextBatch {
 		response.NextCursor = encodeBatchCursor(batchCursor{BatchID: cursor.BatchID, Offset: end, Key: requestKey})
 	} else {
-		response.EndReason = "暂时没有更多了"
+		response.EndReason = batchEndReason(snapshot)
 	}
 	return response
+}
+
+func batchEndReason(snapshot batchSnapshot) string {
+	failed := make([]string, 0)
+	for source, status := range snapshot.Status {
+		if status.Status == "error" || status.Status == "unavailable" {
+			failed = append(failed, source)
+		}
+	}
+	if len(failed) == 0 {
+		return "暂时没有更多了"
+	}
+	sort.Strings(failed)
+	labels := make([]string, 0, len(failed))
+	for _, source := range failed {
+		labels = append(labels, batchSourceLabel(source))
+	}
+	return "部分来源暂不可用（" + strings.Join(labels, "、") + "），暂时没有更多了"
+}
+
+func batchSourceLabel(source string) string {
+	switch source {
+	case "bilibili":
+		return "B站"
+	case "youtube":
+		return "YouTube"
+	case "xiaohongshu":
+		return "小红书"
+	case "linuxdo":
+		return "Linux.do"
+	case "xiaoyuzhou":
+		return "小宇宙"
+	case "douyin":
+		return "抖音"
+	case "huggingface":
+		return "HF 每日论文"
+	default:
+		return source
+	}
 }
 
 func (s *BatchService) applyFeedback(ctx context.Context, candidates []batchCandidate) []batchCandidate {

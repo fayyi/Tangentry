@@ -11,7 +11,7 @@ import { useRecommendationExposure } from './useRecommendationExposure'
 import { MediaFilters } from '../../shared/ui/MediaFilters'
 import { SkeletonGallery } from '../../shared/ui/SkeletonLoading'
 import { openDesktopPlatformLogin, useCapabilities, type PlatformWebView } from '../../shared/api/desktop'
-import { discoveryReasonType, getDiscoverySourceLabel, readDiscoveryFilterState, updateDiscoveryFilterState, useDiscoveryBatch } from './useDiscoveryBatch'
+import { discoveryBottomState, discoveryReasonType, getDiscoverySourceLabel, hasDiscoveryContinuation, readDiscoveryFilterState, updateDiscoveryFilterState, useDiscoveryBatch } from './useDiscoveryBatch'
 import { useDiscoveryTopics } from './useDiscoveryTopics'
 import { feedbackMessage, type DiscoveryFeedbackTarget, type DiscoveryFeedbackType } from './discoveryFeedback'
 import { PaperCard } from '../documents/PaperCard'
@@ -55,11 +55,16 @@ export function DiscoveryGallery({ active, kind, onKind, query, onClearQuery, no
   const setKind = (value: string) => { onKind(value); updateDiscoveryFilterState({ kind: value }) }
 
   useEffect(() => {
-    if (!active || !sentinel.current || !batchState.batch?.hasNextBatch) return
-    const observer = new IntersectionObserver(entries => { if (entries.some(entry => entry.isIntersecting) && !batchState.loading) batchState.nextBatch() }, { rootMargin: '720px 0px' })
-    observer.observe(sentinel.current)
+    const target = sentinel.current
+    if (!active || !target || !hasDiscoveryContinuation(batchState.batch)) return
+    const observer = new IntersectionObserver(entries => { if (entries.some(entry => entry.isIntersecting)) batchState.nextBatch() }, { rootMargin: '720px 0px' })
+    observer.observe(target)
+    // Refresh can leave the sentinel in the same viewport position. Do not
+    // depend on a leave/re-enter event to discover the new continuation.
+    const rect = target.getBoundingClientRect()
+    if (rect.bottom >= -720 && rect.top <= window.innerHeight + 720) batchState.nextBatch()
     return () => observer.disconnect()
-  }, [active, batchState.batch?.hasNextBatch, batchState.loading, batchState.nextBatch])
+  }, [active, batchState.batch, batchState.nextBatch])
 
   useEffect(() => () => {
     if (pollTimer.current !== undefined) window.clearTimeout(pollTimer.current)
@@ -147,6 +152,14 @@ export function DiscoveryGallery({ active, kind, onKind, query, onClearQuery, no
     {savingUnavailable && <p className="field-hint" role="status">资料库暂不可用，收藏操作等待重新连接。</p>}
     {search && <p className="discovery-search-result" role="status">当前已加载内容中找到 {items.length} 条结果<button type="button" className="text-button" onClick={onClearQuery}>清除搜索</button></p>}
     {items.length > 0 ? <CardCollection masonry={!['video', 'audio'].includes(kind)} rowGap={20} data-media={kind} className="mixed-gallery" aria-label="发现内容">{items.map(({ item, source, reason, carriedOver }) => item.paper ? <PaperCard key={item.id} item={item} saved={savedIDs.has(item.id)} pending={savingUnavailable || pending.has(item.id)} onRead={openRecommendation} onSave={onSave} /> : <ModernGalleryCard discovery key={item.id} item={item} origin={getDiscoverySourceLabel(source, reason, carriedOver)} discoveryReason={reason} discoveryType={discoveryReasonType(source, reason, carriedOver)} saved={savedIDs.has(item.id)} pending={savingUnavailable || pending.has(item.id)} onRead={openRecommendation} onSave={onSave} onCreator={item.authorId ? value => onCreator(value.platform, value.authorId) : undefined} onDownload={onDownload} onFeedback={(type, target, value) => void sendFeedback(type, target, value, item)} />)}</CardCollection> : loading ? <SkeletonGallery count={8} /> : search ? <section className="empty-state"><h2>没有找到匹配的内容</h2><p>试试其他关键词，或清除搜索查看当前内容。</p><button type="button" className="button button-secondary" onClick={onClearQuery}>查看全部内容</button></section> : <section className="empty-state"><h2>这里还没有推荐内容</h2><p>添加一个内容链接，或在设置中连接你使用的平台。</p><button className="button button-primary" onClick={onSearch}>添加内容</button><button className="text-button" onClick={onSubscriptions}>管理订阅</button></section>}
-    <div ref={sentinel} className="gallery-load-more discovery-feed-status" aria-live="polite">{batchState.error ? <><span role="alert">{batchState.error}</span><button className="button button-secondary" onClick={batchState.retry}><RefreshCw size={15} />重试</button></> : loading ? <><LoaderCircle size={15} className="spin" />正在加载更多…</> : batchState.batch?.hasNextBatch ? <span>继续下滑加载更多</span> : items.length ? <><span>暂时没有更多了</span><button className="button button-secondary" onClick={batchState.retry}><RefreshCw size={15} />刷新</button></> : null}</div>
+    <div ref={sentinel} className="gallery-load-more discovery-feed-status" aria-live="polite">{(() => {
+      const state = discoveryBottomState(batchState.error, loading, batchState.batch, items.length)
+      if (state.kind === 'error') return <><span role="alert">{state.message}</span><button className="button button-secondary" onClick={batchState.retry}><RefreshCw size={15} />重试</button></>
+      if (state.kind === 'loading') return <><LoaderCircle size={15} className="spin" />正在加载更多…</>
+      if (state.kind === 'more') return <span>继续下滑加载更多</span>
+      if (state.kind === 'filtered') return <span>{state.message}</span>
+      if (state.kind === 'ended') return <><span>{state.message}</span><button className="button button-secondary" onClick={batchState.retry}><RefreshCw size={15} />刷新</button></>
+      return null
+    })()}</div>
   </>
 }
