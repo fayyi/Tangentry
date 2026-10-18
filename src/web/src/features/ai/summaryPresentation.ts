@@ -10,6 +10,12 @@ export function summaryEmptyInputPresentation(context: 'media' | 'pdf' = 'media'
   return context === 'pdf' ? { message: '此 PDF 没有可提取的文字，暂时无法摘要。' } : { message: '当前没有字幕或可用文字。', actionLabel: '先转录再摘要' }
 }
 
+export function pdfSummaryPresentation(extractionComplete: boolean, hasText: boolean): { showControl: boolean; loadingMessage?: string; emptyMessage?: string } {
+  if (!extractionComplete) return { showControl: false, loadingMessage: '正在读取 PDF 文字…' }
+  if (!hasText) return { showControl: true, emptyMessage: summaryEmptyInputPresentation('pdf').message }
+  return { showControl: true }
+}
+
 export function summaryTextFallback(...texts: Array<string | undefined>): string | undefined {
   return texts.find(text => Boolean(text?.trim()))?.trim()
 }

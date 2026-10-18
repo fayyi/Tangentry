@@ -7,7 +7,7 @@ import { pdfSelection, viewportPDFRect } from './pdfAnchors'
 import { pdfSummarySegments } from './pdfAnchors'
 import { useSummary } from '../ai/useSummary'
 import { SummaryControl } from '../ai/SummaryControl'
-import { summaryEmptyInputPresentation } from '../ai/summaryPresentation'
+import { pdfSummaryPresentation } from '../ai/summaryPresentation'
 import { AIInsights } from '../ai/AIInsights'
 import { ReaderActions } from '../../shared/reader/ReaderActions'
 import { useReadingNotebook } from '../../shared/reader/ReadingNotebook'
@@ -30,7 +30,7 @@ export function PDFReader({ id, contentId = id, paper, notes = [], focus, onQuot
   const [page, setPage] = useState(1), [zoom, setZoom] = useState(1), [rotation, setRotation] = useState(0)
   const [width, setWidth] = useState(720), [busy, setBusy] = useState(true), [error, setError] = useState('')
   const [rendered, setRendered] = useState<RenderedPage | null>(null), [attempt, setAttempt] = useState(0)
-  const [summaryPages, setSummaryPages] = useState<Array<{ page: number; text: string }>>([])
+  const [summaryPages, setSummaryPages] = useState<Array<{ page: number; text: string }>>([]), [textExtractionComplete, setTextExtractionComplete] = useState(false)
   const [selection, setSelection] = useState<PDFAnchor | null>(null), [selectionHint, setSelectionHint] = useState('')
   const canvas = useRef<HTMLCanvasElement>(null), container = useRef<HTMLDivElement>(null), layer = useRef<HTMLDivElement>(null)
   const ready = !busy && !error && rendered?.page === page && rendered.rotation === rotation && rendered.zoom === zoom && rendered.width === width
@@ -38,7 +38,7 @@ export function PDFReader({ id, contentId = id, paper, notes = [], focus, onQuot
   useEffect(() => {
     let active = true
     let destroy: (() => void) | undefined
-    setDocument(null); setRendered(null); setError(''); setBusy(true); setPage(1); setSelection(null); setSummaryPages([])
+    setDocument(null); setRendered(null); setError(''); setBusy(true); setPage(1); setSelection(null); setSummaryPages([]); setTextExtractionComplete(false)
     void import('pdfjs-dist').then(pdfjs => {
       if (!active) return
       pdfjs.GlobalWorkerOptions.workerSrc = workerURL
@@ -53,7 +53,7 @@ export function PDFReader({ id, contentId = id, paper, notes = [], focus, onQuot
           const content = await sheet.getTextContent()
           pages.push({ page: number, text: content.items.map(item => 'str' in item ? item.str + (item.hasEOL ? '\n' : ' ') : '').join('') })
         }
-        if (active) setSummaryPages(pages)
+        if (active) { setSummaryPages(pages); setTextExtractionComplete(true) }
       })
     }).catch(() => { if (active) { setError('PDF 无法打开，文件可能损坏、加密或暂时不可用。可下载原文件后检查。'); setBusy(false) } })
     return () => { active = false; destroy?.() }
@@ -140,6 +140,7 @@ export function PDFReader({ id, contentId = id, paper, notes = [], focus, onQuot
   const summaryPagesWithMetadata = useMemo(() => metadataText && summaryPages.length ? summaryPages.map((value, index) => index === 0 ? { ...value, text: metadataText + '\n\n' + value.text } : value) : summaryPages, [metadataText, summaryPages])
   const summarySegments = useMemo(() => pdfSummarySegments(summaryPagesWithMetadata), [summaryPagesWithMetadata])
   const summary = useSummary(contentId, 'pdf', undefined, undefined, undefined, summarySegments)
+  const pdfSummary = pdfSummaryPresentation(textExtractionComplete, summaryPagesWithMetadata.some(value => value.text.trim().length > 0))
   const locatePage = useCallback((target: number) => { if (target >= 1 && target <= (document?.numPages ?? 1)) setPage(target) }, [document])
   useEffect(() => {
     if (!notebook) return
@@ -150,7 +151,7 @@ export function PDFReader({ id, contentId = id, paper, notes = [], focus, onQuot
   return <section className="pdf-reader" aria-label="PDF 阅读器" onMouseUp={event => { event.stopPropagation(); capture() }} onKeyUp={event => event.stopPropagation()}>
     <link rel="stylesheet" href="/pdfjs/text_layer.css" precedence="pdf-text-layer" />
     <div className="pdf-toolbar"><div><button className="icon-button" aria-label="PDF 上一页" disabled={!document || page <= 1} onClick={() => setPage(value => value - 1)}><ChevronLeft size={17}/></button><label>页码<input aria-label="PDF 页码" type="number" min={1} max={document?.numPages ?? 1} value={page} disabled={!document} onChange={event => { const value = Number(event.target.value); if (Number.isInteger(value) && value >= 1 && value <= (document?.numPages ?? 1)) setPage(value) }}/></label><span>/ {document?.numPages ?? '…'}</span><button className="icon-button" aria-label="PDF 下一页" disabled={!document || page >= document.numPages} onClick={() => setPage(value => value + 1)}><ChevronRight size={17}/></button></div><div><button className="icon-button" aria-label="缩小 PDF" disabled={zoom <= .5} onClick={() => setZoom(value => Math.max(.5, value - .25))}><ZoomOut size={17}/></button><span>{Math.round(zoom * 100)}%</span><button className="icon-button" aria-label="放大 PDF" disabled={zoom >= 2} onClick={() => setZoom(value => Math.min(2, value + .25))}><ZoomIn size={17}/></button><button className="icon-button" aria-label="旋转 PDF" onClick={() => setRotation(value => (value + 90) % 360)}><RotateCw size={17}/></button></div></div>
-    {busy && <p className="field-hint" role="status"><LoaderCircle className="spin" size={14}/>正在读取 PDF…</p>}
+    {(!pdfSummary.showControl || busy) && !error && <p className="field-hint" role="status"><LoaderCircle className="spin" size={14}/>{pdfSummary.loadingMessage || '正在读取 PDF 页面…'}</p>}
     {error && <div className="error-panel" role="alert"><p>{error}</p><button className="button button-secondary" onClick={() => setAttempt(value => value + 1)}>重新打开</button></div>}
     <div ref={container} className="pdf-viewport" tabIndex={0} role="region" aria-label="PDF 页面，可滚动查看" aria-busy={!ready}>
       <div className="pdf-page" style={rendered ? { width: rendered.viewport.width, height: rendered.viewport.height } : undefined}>
@@ -166,6 +167,6 @@ export function PDFReader({ id, contentId = id, paper, notes = [], focus, onQuot
     {selection && onQuote && <div className="pdf-selection-tools"><button className="button button-secondary" onMouseDown={event => event.preventDefault()} onClick={() => { onQuote(selection.quote, selection); setSelection(null); window.getSelection()?.removeAllRanges() }}><Quote size={15} aria-hidden="true"/>引用 PDF 选区到批注</button><span>第 {selection.page} 页 · {Array.from(selection.quote).length} 字 · 保存后保留高亮</span></div>}
     {selectionHint && <p className="field-hint" role="status">{selectionHint}</p>}
     {document && <details className="pdf-text"><summary>查看本页文字</summary><p>{!ready ? '正在读取本页文字…' : rendered?.text || '本页未检测到可提取文字，可能是扫描图片。'}</p></details>}
-    <ReaderActions><SummaryControl summary={summary} source={{ contentId: id, title: 'PDF 文档' }} emptyMessage={summaryEmptyInputPresentation('pdf').message} emptyAction={null}/></ReaderActions>
+    {pdfSummary.showControl && !error && <ReaderActions><SummaryControl summary={summary} source={{ contentId: id, title: 'PDF 文档' }} emptyMessage={pdfSummary.emptyMessage} emptyAction={null}/></ReaderActions>}
   </section>
 }
