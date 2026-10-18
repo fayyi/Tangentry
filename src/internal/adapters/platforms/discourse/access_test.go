@@ -168,7 +168,7 @@ func TestPageBridgeAllowsFourMiBTopicResponse(t *testing.T) {
 }
 
 func TestTopicPostsParsesRequestedFloors(t *testing.T) {
-	raw := `{"post_stream":{"posts":[{"id":101,"post_number":2,"username":"回复者","created_at":"2026-01-01T00:00:00Z","cooked":"<p>楼层正文</p>"}]}}`
+	raw := `{"post_stream":{"posts":[{"id":"101","post_number":"2","username":"回复者","created_at":"2026-01-01T00:00:00Z","reply_to_user":{"username":"楼主","name":"楼主名称"},"reply_to_post_number":"1","reply_to_post_id":"99","like_count":"7","cooked":"<p>楼层正文</p>","actions_summary":[],"link_counts":[],"polls":null,"reactions":{"heart":1},"bookmarked":false},{"id":102,"post_number":3,"username":"空回复","reply_to_user":null,"cooked":"<p>第二层</p>","user_title":{"name":"成员"},"flair_url":null}]}}`
 	c := &Client{Page: pageFetcherFunc(func(_ context.Context, platform, path string, request platformfetch.Request) (platformfetch.Response, error) {
 		if platform != "linuxdo" || path != "/t/42/posts.json?post_ids[]=101" || request.Method != http.MethodGet {
 			t.Fatalf("unexpected posts request: %s %s", platform, path)
@@ -176,8 +176,14 @@ func TestTopicPostsParsesRequestedFloors(t *testing.T) {
 		return platformfetch.Response{Status: http.StatusOK, URL: "https://linux.do/t/42/posts.json?post_ids%5B%5D=101", ContentType: "application/json", Body: raw}, nil
 	})}
 	discussion, err := c.TopicPosts(context.Background(), "42", []int64{101})
-	if err != nil || discussion.TopicID != "42" || discussion.LoadedPosts != 1 || len(discussion.Posts) != 1 || discussion.Posts[0].ID != 101 {
+	if err != nil || discussion.TopicID != "42" || discussion.LoadedPosts != 2 || len(discussion.Posts) != 2 || discussion.Posts[0].ID != 101 {
 		t.Fatalf("topic posts not parsed: %+v, %v", discussion, err)
+	}
+	if post := discussion.Posts[0]; post.ReplyToUser != "楼主" || post.ReplyToNumber != 1 || post.ReplyToPostID != 99 || post.LikeCount != 7 {
+		t.Fatalf("reply object was not mapped: %+v", post)
+	}
+	if post := discussion.Posts[1]; post.ReplyToUser != "" || post.LikeCount != 0 {
+		t.Fatalf("null optional fields were not tolerated: %+v", post)
 	}
 }
 
