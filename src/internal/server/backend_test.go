@@ -147,6 +147,68 @@ func TestHeadlessPathPickerIsUnavailable(t *testing.T) {
 	if err := backend.UseDownloadDirectory(t.TempDir()); err != nil || backend.state.DownloadDirectory() != directory {
 		t.Fatal("chosen download directory was replaced", err)
 	}
+	response = httptest.NewRecorder()
+	backend.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "http://localhost/api/desktop/select-path", strings.NewReader(`{"kind":"backup-directory"}`)))
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("headless generic picker status = %d, want %d", response.Code, http.StatusServiceUnavailable)
+	}
+}
+
+func TestPathPickerAllowsBackupDirectoryAndReportsCancellation(t *testing.T) {
+	backend := newTestBackend(t)
+	defer backend.Close()
+	var pickedKind, pickedCurrent string
+	backend.shell.PickPath = func(_ context.Context, kind, current string) (string, error) {
+		pickedKind, pickedCurrent = kind, current
+		if current == "/fixture/old-backup" {
+			return "", nil
+		}
+		return "/fixture/backup", nil
+	}
+	choose := func(current string) *httptest.ResponseRecorder {
+		response := httptest.NewRecorder()
+		body := `{"kind":"backup-directory","current":"` + current + `"}`
+		backend.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "http://localhost/api/desktop/select-path", strings.NewReader(body)))
+		return response
+	}
+	response := choose("")
+	if response.Code != http.StatusOK {
+		t.Fatalf("backup picker status = %d, want %d", response.Code, http.StatusOK)
+	}
+	var selected struct {
+		Path      string `json:"path"`
+		Cancelled bool   `json:"cancelled"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&selected); err != nil {
+		t.Fatal(err)
+	}
+	if pickedKind != "backup-directory" || pickedCurrent != "" || selected.Path != "/fixture/backup" || selected.Cancelled {
+		t.Fatalf("backup picker result = kind %q current %q response %+v", pickedKind, pickedCurrent, selected)
+	}
+	response = choose("/fixture/old-backup")
+	if response.Code != http.StatusOK {
+		t.Fatalf("cancelled backup picker status = %d, want %d", response.Code, http.StatusOK)
+	}
+	if err := json.NewDecoder(response.Body).Decode(&selected); err != nil {
+		t.Fatal(err)
+	}
+	if selected.Path != "" || !selected.Cancelled {
+		t.Fatalf("cancelled backup picker response = %+v", selected)
+	}
+}
+
+func TestPathPickerRejectsUnknownKind(t *testing.T) {
+	backend := newTestBackend(t)
+	defer backend.Close()
+	backend.shell.PickPath = func(context.Context, string, string) (string, error) {
+		t.Fatal("unknown path kind reached shell picker")
+		return "", nil
+	}
+	response := httptest.NewRecorder()
+	backend.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "http://localhost/api/desktop/select-path", strings.NewReader(`{"kind":"unknown-kind","current":"/fixture/path"}`)))
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("unknown path kind status = %d, want %d", response.Code, http.StatusBadRequest)
+	}
 }
 
 func TestBackendReportsUnavailableStateWithoutShellDirectoryPort(t *testing.T) {

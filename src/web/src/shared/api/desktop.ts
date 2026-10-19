@@ -36,7 +36,15 @@ export function useCapabilities() {
   return capabilities
 }
 
-export async function selectDesktopPath(kind: string, current: string) {
+/** Native path-picker kinds understood by the desktop shell. */
+export type DesktopPathKind =
+  | 'whisper-binary'
+  | 'whisper-model'
+  | 'python'
+  | 'model-directory'
+  | 'backup-directory'
+
+export async function selectDesktopPath(kind: DesktopPathKind, current: string) {
   return request<{ path: string; cancelled: boolean }>('/desktop/select-path', {
     method: 'POST', body: JSON.stringify({ kind, current }),
   })

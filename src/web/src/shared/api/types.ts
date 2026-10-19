@@ -244,7 +244,8 @@ export interface ToolReport {
   cookieConfigured: boolean
 }
 
-export interface BackupTarget { id: string; name: string; type: 'local'; path?: string; enabled: boolean }
+export type BackupTargetType = 'local' | 'webdav' | 's3'
+export interface BackupTarget { id: string; name: string; type: BackupTargetType | string; path?: string; enabled: boolean }
 export interface BackupTask { id: string; name: string; targetIds: string[]; includeDownloads: boolean; retention: number; enabled: boolean }
 export interface BackupSnapshot { id: string; taskId?: string; createdAt: string; size: number; status: string }
 export interface BackupValidation { snapshotId: string; size: number; manifest: { formatVersion: number; schemaVersion: number; snapshotID: string; includeDownloads: boolean; files: Array<{ path: string; type: string; size: number; sha256: string }> } }

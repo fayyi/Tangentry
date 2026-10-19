@@ -1,4 +1,4 @@
-import { ChevronRight, Eye, Languages, Mic, HardDrive, RotateCcw, UserRound } from 'lucide-react'
+import { ChevronRight, Eye, Languages, Mic, HardDrive, RotateCcw, UserRound, ShieldCheck } from 'lucide-react'
 import { replacePath } from '../../shared/browser/historyStack'
 import { PageHeader } from '../../shared/ui/PageHeader'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
@@ -14,11 +14,12 @@ import type { Feed } from '../../shared/api/types'
 import { StorageSettings } from './StorageSettings'
 import { DiscoveryFeedback } from './DiscoveryFeedback'
 import { UpdaterSettings } from './UpdaterSettings'
+import { BackupSettings } from './BackupSettings'
 
-type SettingsSection = 'display' | 'accounts' | 'discovery' | 'translation' | 'transcription' | 'storage' | 'about'
+type SettingsSection = 'display' | 'accounts' | 'discovery' | 'translation' | 'transcription' | 'storage' | 'backup' | 'about'
 function sectionFromURL(): SettingsSection {
   const hash = window.location.hash.slice(1)
-  return ['display', 'accounts', 'discovery', 'translation', 'transcription', 'storage', 'about'].includes(hash) ? hash as SettingsSection : 'display'
+  return ['display', 'accounts', 'discovery', 'translation', 'transcription', 'storage', 'backup', 'about'].includes(hash) ? hash as SettingsSection : 'display'
 }
 
 export function ToolsPage({ downloads, onCookieChanged, onYouTubeFeed, onDiscover }: {
@@ -72,6 +73,7 @@ export function ToolsPage({ downloads, onCookieChanged, onYouTubeFeed, onDiscove
     { id: 'translation' as const, label: '翻译与摘要', hint: 'AI 翻译与文章摘要', Icon: Languages },
     { id: 'transcription' as const, label: '字幕转录', hint: '本机或云端识别', Icon: Mic },
     { id: 'storage' as const, label: '下载与存储', hint: '工具与文件位置', Icon: HardDrive },
+    { id: 'backup' as const, label: '备份与恢复', hint: '目标、快照与恢复', Icon: ShieldCheck },
     { id: 'about' as const, label: '关于与更新', hint: '版本与自动更新', Icon: RotateCcw },
   ]
   return <>
@@ -85,6 +87,7 @@ export function ToolsPage({ downloads, onCookieChanged, onYouTubeFeed, onDiscove
       <div id="settings-discovery" className="settings-block settings-block-wide" hidden={section !== 'discovery'}>{visited.has('discovery') && <DiscoveryFeedback/>}</div>
       <div id="settings-translation" className="settings-block settings-block-wide" hidden={section !== 'translation'}>{visited.has('translation') && <AISettings/>}</div>
       <div id="settings-transcription" className="settings-block settings-block-wide" hidden={section !== 'transcription'}>{visited.has('transcription') && <TranscriptionSettings key={modelRevision}/>}</div>
+      <div id="settings-backup" className="settings-block settings-block-wide" hidden={section !== 'backup'}>{visited.has('backup') && <BackupSettings/>}</div>
       <div id="settings-about" className="settings-block settings-block-wide" hidden={section !== 'about'}>{visited.has('about') && <UpdaterSettings/>}</div>
       </div>
     </div>

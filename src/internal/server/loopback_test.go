@@ -64,4 +64,26 @@ func TestLoopbackRequiresSessionAndRejectsForeignOrigins(t *testing.T) {
 	if response.StatusCode != 200 {
 		t.Fatal("trusted picker rejected", response.StatusCode)
 	}
+	request, _ = http.NewRequest("POST", root+"/api/desktop/select-path", strings.NewReader(`{"kind":"backup-directory","current":"/fixture/backup"}`))
+	request.Header.Set("Origin", root)
+	request.Header.Set("Sec-Fetch-Site", "same-origin")
+	response, err = client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatal("trusted backup picker rejected", response.StatusCode)
+	}
+	request, _ = http.NewRequest("POST", root+"/api/desktop/select-path", strings.NewReader(`{"kind":"backup-directory"}`))
+	request.Header.Set("Origin", root)
+	request.Header.Set("Sec-Fetch-Site", "cross-site")
+	response, err = client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusForbidden {
+		t.Fatal("cross-site fetch admitted", response.StatusCode)
+	}
 }
