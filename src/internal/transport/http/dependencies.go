@@ -63,6 +63,7 @@ type Options struct {
 	SubscriptionGroups      GroupService
 	SubscriptionInbox       InboxService
 	SavedViews              SavedViewService
+	Backup                  BackupService
 }
 
 type SavedViewService interface {
@@ -77,14 +78,15 @@ type SavedViewService interface {
 
 type Dependencies struct {
 	Preferences preferences.Store
-	Accounts AccountDependencies
-	Browse   DiscoveryDependencies
-	Library  LibraryDependencies
-	AI       AIDependencies
-	Podcast  PodcastDependencies
-	Media    MediaDependencies
-	Notes    NoteDependencies
-	Feeds    SubscriptionDependencies
+	Accounts    AccountDependencies
+	Browse      DiscoveryDependencies
+	Library     LibraryDependencies
+	AI          AIDependencies
+	Podcast     PodcastDependencies
+	Media       MediaDependencies
+	Notes       NoteDependencies
+	Feeds       SubscriptionDependencies
+	Backup      BackupService
 }
 
 type AccountDependencies struct {

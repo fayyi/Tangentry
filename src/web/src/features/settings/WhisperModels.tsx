@@ -1,6 +1,7 @@
 import { Check, Download, RefreshCw, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { request } from '../../shared/api/client'
+import { listOrEmpty } from '../../shared/api/list'
 
 interface Model { id: string; backend?: string; size: string; description: string; installed: boolean; path?: string; available?: boolean }
 interface Job { id: string; modelId: string; state: string; error?: string; received?: number; total?: number }
@@ -56,7 +57,7 @@ export function WhisperModels({ onInstalled, onChoose, refreshKey, backend = 'fa
     catch (cause) { setError(cause instanceof Error ? cause.message : '取消未能完成。') }
     finally { setPending(false) }
   }
-  const models = catalog?.models.filter(model => (model.backend || 'faster-whisper') === backend) ?? []
+  const models = listOrEmpty(catalog?.models).filter(model => (model.backend || 'faster-whisper') === backend)
   const groups = backend === 'qwen3-asr' ? [
     { label: '识别模型', hint: '识别声音里的文字', models: models.filter(model => model.id !== 'qwen3-aligner-0.6b') },
     { label: '时间对齐', hint: '为每句话标出时间', models: models.filter(model => model.id === 'qwen3-aligner-0.6b') },

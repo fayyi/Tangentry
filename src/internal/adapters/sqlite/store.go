@@ -11,7 +11,11 @@ import (
 	"tangentry/internal/content"
 )
 
-type Store struct{ db *sql.DB }
+type Store struct {
+	db          *sql.DB
+	path        string
+	downloadDir string
+}
 
 func Open(path string) (*Store, error) {
 	db, err := sql.Open("sqlite", path)
@@ -29,8 +33,10 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
-	return &Store{db: db}, nil
+	return &Store{db: db, path: path}, nil
 }
+
+func (s *Store) SetBackupDownloadDirectory(directory string) { s.downloadDir = directory }
 
 func (s *Store) Close() error { return s.db.Close() }
 

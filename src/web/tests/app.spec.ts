@@ -159,6 +159,28 @@ test('empty app and mobile navigation are usable', async ({ page }) => {
   expect(overflow).toBe(false)
 })
 
+test('empty data opens every settings section without page load errors', async ({ page }) => {
+  const pageErrors: string[] = []
+  page.on('pageerror', error => pageErrors.push(error.message))
+  await page.goto('/tools')
+  await expect(page.getByRole('heading', { name: '设置', exact: true })).toBeVisible()
+  const navigation = page.getByRole('navigation', { name: '设置类别' })
+  for (const [label, sectionHeading] of [
+    [/外观/, '显示'],
+    [/账号与来源/, '账号登录'],
+    [/发现偏好/, '发现偏好'],
+    [/翻译与摘要/, '翻译摘要'],
+    [/字幕转录/, '字幕转录'],
+    [/下载与存储/, '文件位置'],
+    [/关于与更新/, '关于与更新'],
+  ] as const) {
+    await navigation.getByRole('button', { name: label }).click()
+    await expect(page.locator('.settings-block:not([hidden])')).toContainText(sectionHeading)
+    await expect(page.getByRole('alert').filter({ hasText: '页面未能加载' })).toHaveCount(0)
+  }
+  expect(pageErrors).toEqual([])
+})
+
 test('navigation replaces the active page without stacking titles', async ({ page }) => {
   await page.goto('/')
   const mainNav = page.getByRole('navigation', { name: '主导航', exact: true })

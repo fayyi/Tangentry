@@ -48,7 +48,7 @@ func (b *Backend) routePathSelection(w http.ResponseWriter, r *http.Request) boo
 	} else {
 		// A second download request may have waited while the first chose a folder.
 		if r.URL.Path == "/api/downloads" && b.state != nil && b.state.DownloadDirectorySelected() {
-			b.handler.ServeHTTP(w, r)
+			b.applicationHandler().ServeHTTP(w, r)
 			return true
 		}
 		path, err = b.chooseDirectory(r)

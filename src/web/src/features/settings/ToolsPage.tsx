@@ -76,7 +76,6 @@ export function ToolsPage({ downloads, onCookieChanged, onYouTubeFeed, onDiscove
   ]
   return <>
     <PageHeader className="settings-page-heading" title="设置" summary="账号与推荐来源、翻译和转录服务、下载与文件位置。更改只保存在这台设备。"/>
-    {downloads.error && <p role="alert" className="error-panel">{downloads.error}</p>}
     <div className="settings-layout">
       <nav ref={categories} className="settings-nav" aria-label="设置类别">{sections.map(({ id, label, hint, Icon }) => <button type="button" key={id} className={section === id ? 'active' : ''} aria-current={section === id ? 'page' : undefined} aria-controls={`settings-${id}`} onClick={() => selectSection(id)}><span className="settings-category-icon" data-category={id}><Icon size={17} strokeWidth={1.7} aria-hidden="true"/></span><span><strong>{label}</strong><small>{hint}</small></span><ChevronRight size={14} className="settings-nav-chevron" aria-hidden="true"/></button>)}</nav>
       <div className="settings-workspace">

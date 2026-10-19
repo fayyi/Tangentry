@@ -1,6 +1,7 @@
 import { Check, Cloud, Cpu, RefreshCw, Save } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { request } from '../../shared/api/client'
+import { listOrEmpty } from '../../shared/api/list'
 import { WhisperModels } from './WhisperModels'
 import { PathInput } from './PathInput'
 
@@ -29,7 +30,7 @@ function isLocal(backend: Backend) {
 }
 interface Status { ready: boolean; missing: string[]; config: Config; models?: Model[]; groqKeyConfigured?: boolean; cloudflareTokenConfigured?: boolean; siliconflowKeyConfigured?: boolean; maiCookieConfigured?: boolean; modelDownload?: string }
 function normalizedStatus(value: Status): Status {
-  return {...value,config:{...value.config,backend:value.config.backend || 'whisper.cpp',python:value.config.python || 'python3'}}
+  return {...value,missing:listOrEmpty(value.missing),models:listOrEmpty(value.models),config:{...value.config,backend:value.config.backend || 'whisper.cpp',python:value.config.python || 'python3'}}
 }
 export function TranscriptionSettings() {
   const localDrafts = useRef<Partial<Record<Backend, LocalDraft>>>({})
@@ -60,7 +61,7 @@ export function TranscriptionSettings() {
     finally { setPending(false) }
   }
   const dirty=status && (JSON.stringify(config)!==JSON.stringify(status.config) || groqKey || cloudflareToken || siliconflowKey || maiCookie || clearMAI || clearGroq || clearCloudflare || clearSiliconflow)
-  const models=(status?.models ?? []).filter(model => model.backend === config.backend)
+  const models=listOrEmpty(status?.models).filter(model => model.backend === config.backend)
   const selected=models.some(model => model.path===config.model) ? config.model : ''
   function selectBackend(backend: Backend, modelPath?: string) {
     if (isLocal(config.backend)) localDrafts.current[config.backend] = localDraft(config)

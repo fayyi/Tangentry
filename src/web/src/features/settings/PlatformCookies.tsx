@@ -1,6 +1,7 @@
 import { BookOpen, Check, ChevronDown, CirclePlay, Headphones, LoaderCircle, LogIn, MessagesSquare, Music2, Trash2, TvMinimal, Upload } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { request } from '../../shared/api/client'
+import { listOrEmpty } from '../../shared/api/list'
 import { openDesktopPlatformLogin, useCapabilities, type PlatformWebView } from '../../shared/api/desktop'
 import './settings.css'
 import { BilibiliLogin } from './BilibiliLogin'
@@ -45,7 +46,7 @@ export function PlatformCookies({ onChanged }: { onChanged: (platform: string) =
     const controller = new AbortController(); read.current = controller; setError('')
     try {
       const result = await request<{ platforms: CookieState[] }>('/settings/cookies', { signal: controller.signal })
-      if (!controller.signal.aborted) setStates(result.platforms)
+      if (!controller.signal.aborted) setStates(listOrEmpty(result.platforms))
     } catch (cause) { if (!controller.signal.aborted) { setStates(null); setError(cause instanceof Error ? cause.message : '登录配置暂不可用。') } }
   }
   useEffect(() => { void reload(); return () => { read.current?.abort(); write.current?.abort(); generation.current++ } }, [])
@@ -58,7 +59,7 @@ export function PlatformCookies({ onChanged }: { onChanged: (platform: string) =
         method: remove ? 'DELETE' : 'PUT', ...(remove ? {} : { body: JSON.stringify({ format, value }) }), signal: controller.signal,
       })
       if (!controller.signal.aborted) {
-        setStates(result.platforms); reset(); setNotice(remove ? '已清除，此平台将使用匿名访问。' : '已保存，下次请求生效。账号是否有效需在获取内容时确认。'); onChanged(platform)
+        setStates(listOrEmpty(result.platforms)); reset(); setNotice(remove ? '已清除，此平台将使用匿名访问。' : '已保存，下次请求生效。账号是否有效需在获取内容时确认。'); onChanged(platform)
       }
     } catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : '保存失败，请重试。') }
     finally { if (write.current === controller) write.current = null; if (!controller.signal.aborted) setPending(false) }
@@ -79,8 +80,9 @@ export function PlatformCookies({ onChanged }: { onChanged: (platform: string) =
         if (attempts++ >= 120) return
         try {
           const result = await request<{ platforms: CookieState[] }>('/settings/cookies')
-          setStates(result.platforms)
-          const state = result.platforms.find(value => value.platform === platform)
+          const platforms = listOrEmpty(result.platforms)
+          setStates(platforms)
+          const state = platforms.find(value => value.platform === platform)
           // A re-validation starts with an already configured account. Wait
           // for its persisted revision to move instead of treating that old
           // state as a successful login immediately.
