@@ -43,7 +43,7 @@ func TestDouyinPlaybackErrorCarriesSanitizedDiagnosticDetails(t *testing.T) {
 	service := playback.New(func(ctx context.Context, _ string) (playback.Source, error) {
 		trace := playback.DiagnosticsFromContext(ctx)
 		status := http.StatusForbidden
-		page := "https://www.douyin.com/aweme/v1/web/aweme/detail/?msToken=fixture-secret"
+		page := "https://www.douyin.com/video/abcdefghijklmnopqrstuvwxyzABCDEF/detail?msToken=fixture-secret"
 		contentType := "application/json; charset=utf-8"
 		trace.Add(playback.DiagnosticStage{Stage: "webview_detail_fetch", Outcome: playback.OutcomeHTTPError, HTTPStatus: &status, ContentType: &contentType, PageURL: &page, IsDouyinContext: playback.IsDouyinContext(&page)})
 		return playback.Source{}, playback.WrapDiagnostic(errors.New("fixture failure"), trace, playback.DiagnosticSummary(trace.Snapshot().Stages))
@@ -56,13 +56,16 @@ func TestDouyinPlaybackErrorCarriesSanitizedDiagnosticDetails(t *testing.T) {
 	if w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), "抖音视频解析失败：应用内页面详情接口返回 HTTP 403") || !strings.Contains(w.Body.String(), `"details"`) {
 		t.Fatalf("diagnostic response: %d %s", w.Code, w.Body.String())
 	}
-	if strings.Contains(w.Body.String(), "msToken") || strings.Contains(w.Body.String(), "fixture-secret") || strings.Contains(w.Body.String(), "?") {
+	if strings.Contains(w.Body.String(), "msToken") || strings.Contains(w.Body.String(), "fixture-secret") || strings.Contains(w.Body.String(), "abcdefghijklmnopqrstuvwxyzABCDEF") || strings.Contains(w.Body.String(), "?") {
 		t.Fatalf("unsafe diagnostic escaped: %s", w.Body.String())
 	}
 	for _, value := range []string{`"frontend_request"`, `"api_code":"playback_unavailable"`, `"is_douyin_context":true`} {
 		if !strings.Contains(w.Body.String(), value) {
 			t.Fatalf("missing diagnostic field %s in %s", value, w.Body.String())
 		}
+	}
+	if !strings.Contains(w.Body.String(), "www.douyin.com/video/<redacted>/detail") && !strings.Contains(w.Body.String(), `www.douyin.com/video/\u003credacted\u003e/detail`) {
+		t.Fatalf("redacted diagnostic path missing: %s", w.Body.String())
 	}
 }
 

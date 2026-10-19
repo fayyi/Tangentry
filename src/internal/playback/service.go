@@ -348,7 +348,15 @@ func (s *Service) getEntry(token string) (entry, bool) {
 	return value, ok
 }
 
-func (s *Service) Release(token string) { s.mu.Lock(); delete(s.sessions, token); s.mu.Unlock() }
+func (s *Service) Release(token string) {
+	s.mu.Lock()
+	value, ok := s.sessions[token]
+	delete(s.sessions, token)
+	s.mu.Unlock()
+	if ok && value.source.Platform == "douyin" && value.diagnostics != nil && !value.diagnostics.IsLogged() {
+		value.diagnostics.Log(FinalOutcome(nil, value.diagnostics.Snapshot().Stages))
+	}
+}
 
 var singleRange = regexp.MustCompile(`^bytes=(?:[0-9]+-[0-9]*|-[0-9]+)$`)
 
@@ -530,7 +538,6 @@ func (s *Service) ReportMediaReady(token string) AttemptDiagnostics {
 	code := 0
 	message := ""
 	trace.Add(DiagnosticStage{Stage: "frontend_media", Outcome: OutcomeOK, FrontendMediaCode: &code, FrontendMessage: &message, Reason: stringPointer(frontendMediaReason(code)), Attempted: intPointer(0)})
-	trace.Log(OutcomeOK)
 	return trace.Snapshot()
 }
 

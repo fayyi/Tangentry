@@ -41,4 +41,20 @@ describe('Douyin playback diagnostics', () => {
     expect(diagnosticStageFacts(stage!)).toEqual(['passport.douyin.com/login', '已阻止导航：passport.douyin.com/login', '页面状态 complete'])
     expect(JSON.stringify(stage)).not.toContain('next=private')
   })
+
+  it('redacts sensitive path segments and limits Douyin CDN paths', () => {
+    const [page, cdn] = parseDouyinDiagnostics([
+      { stage: 'webview_page_load', outcome: 'ok', page_url: 'https://www.douyin.com/video/abcdefghijklmnopqrstuvwxyzABCDEF/detail' },
+      { stage: 'session_media_fetch', outcome: 'ok', page_url: 'https://v1.douyinvod.com/video/segment/abcdefghijklmnopqrstuvwxyzABCDEF/signed.mp4?signature=fixture' },
+    ])
+    expect(page?.page_url).toBe('www.douyin.com/video/<redacted>/detail')
+    expect(cdn?.page_url).toBe('v1.douyinvod.com/video/segment')
+    expect(JSON.stringify([page, cdn])).not.toMatch(/abcdefghijklmnopqrstuvwxyzABCDEF|signature=fixture/)
+  })
+
+  it('keeps the lead-approved cookie configuration boolean without exposing content', () => {
+    const [stage] = parseDouyinDiagnostics([{ stage: 'ytdlp', outcome: 'exception', cookie_configured: true }])
+    expect(diagnosticStageFacts(stage!)).toContain('Cookie 已配置：是')
+    expect(JSON.stringify(stage)).not.toContain('cookie-secret')
+  })
 })

@@ -43,6 +43,19 @@ func TestDiagnosticURLRejectsUnsafePortsAndOversizedPaths(t *testing.T) {
 	}
 }
 
+func TestDiagnosticURLRedactsSensitivePathSegmentsAndCapsDouyinCDNPath(t *testing.T) {
+	page := "https://www.douyin.com/video/7340916925458779430/abcdefghijklmnopqrstuvwxyzABCDEF/detail"
+	got := SanitizeURL(&page)
+	if got == nil || *got != "www.douyin.com/video/7340916925458779430/<redacted>/detail" {
+		t.Fatalf("redacted page path = %v", got)
+	}
+	cdn := "https://v1.douyinvod.com/video/segment/abcdefghijklmnopqrstuvwxyzABCDEF/signed.mp4?signature=fixture"
+	got = SanitizeURL(&cdn)
+	if got == nil || *got != "v1.douyinvod.com/video/segment" {
+		t.Fatalf("redacted CDN path = %v", got)
+	}
+}
+
 func TestDiagnosticStageSanitizesAndSerializesNullableMetadata(t *testing.T) {
 	page := "https://www.douyin.com/aweme/v1/web/aweme/detail/?a_bogus=fixture"
 	typeValue := "application/json; charset=utf-8"

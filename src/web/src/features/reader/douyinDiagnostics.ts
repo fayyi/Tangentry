@@ -77,10 +77,34 @@ export function safeDiagnosticURL(value: unknown): string | null {
   try {
     const url = new URL(raw.includes('://') ? raw : `https://${raw}`)
     if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || (url.port && !['80', '443'].includes(url.port))) return null
-    return `${url.hostname.toLowerCase()}${url.pathname}`.slice(0, 1100)
+    const host = url.hostname.toLowerCase()
+    const path = sanitizeDiagnosticPath(host, url.pathname)
+    return path ? `${host}${path}`.slice(0, 1100) : null
   } catch {
     return null
   }
+}
+
+function sanitizeDiagnosticPath(host: string, pathname: string): string | null {
+  if (!pathname) return '/'
+  const leading = pathname.startsWith('/')
+  const trailing = pathname.endsWith('/')
+  let parts = pathname.split('/').filter(Boolean)
+  if (host === 'douyinvod.com' || host.endsWith('.douyinvod.com')) parts = parts.slice(0, 2)
+  try {
+    parts = parts.map(part => {
+      const decoded = decodeURIComponent(part)
+      const lower = decoded.trim().toLowerCase()
+      if (decoded === '<redacted>') return decoded
+      return decoded.length >= 24 || lower.includes('token') || lower.includes('signature') || lower.includes('sign=') || lower.startsWith('sig') || lower.startsWith('sign') || lower.startsWith('token') || lower.includes('a_bogus') || lower.includes('ms_token') || lower.includes('x-bogus') ? '<redacted>' : part
+    })
+  } catch {
+    return null
+  }
+  let result = parts.join('/')
+  if (leading) result = `/${result}`
+  if (trailing && result !== '/') result += '/'
+  return result || '/'
 }
 
 export function safeDiagnosticText(value: unknown): string | null {

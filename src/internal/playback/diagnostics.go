@@ -310,15 +310,73 @@ func SanitizeURL(value *string) *string {
 	if strings.ContainsAny(host, " /\\%\r\n\t") || len(host) > 253 {
 		return nil
 	}
-	path := u.EscapedPath()
+	path := sanitizeDiagnosticPath(host, u.EscapedPath())
 	if path == "" {
-		path = "/"
+		return nil
+	}
+	if len(u.EscapedPath()) > 1024 {
+		return nil
 	}
 	if len(path) > 1024 {
 		return nil
 	}
 	result := host + path
 	return &result
+}
+
+func sanitizeDiagnosticPath(host, escapedPath string) string {
+	if escapedPath == "" {
+		return "/"
+	}
+	leading := strings.HasPrefix(escapedPath, "/")
+	trailing := strings.HasSuffix(escapedPath, "/")
+	parts := strings.Split(strings.Trim(escapedPath, "/"), "/")
+	if len(parts) == 1 && parts[0] == "" {
+		return "/"
+	}
+	if isDouyinCDNHost(host) && len(parts) > 2 {
+		parts = parts[:2]
+		trailing = false
+	}
+	for index, part := range parts {
+		decoded, err := url.PathUnescape(part)
+		if err != nil {
+			return ""
+		}
+		if decoded == "<redacted>" {
+			parts[index] = decoded
+			continue
+		}
+		if sensitivePathSegment(decoded) {
+			parts[index] = "<redacted>"
+		}
+	}
+	path := strings.Join(parts, "/")
+	if leading {
+		path = "/" + path
+	}
+	if trailing && path != "/" {
+		path += "/"
+	}
+	if path == "" {
+		return "/"
+	}
+	return path
+}
+
+func isDouyinCDNHost(host string) bool {
+	return host == "douyinvod.com" || strings.HasSuffix(host, ".douyinvod.com")
+}
+
+func sensitivePathSegment(value string) bool {
+	lower := strings.ToLower(strings.TrimSpace(value))
+	if lower == "" {
+		return false
+	}
+	if len(value) >= 24 {
+		return true
+	}
+	return strings.Contains(lower, "token") || strings.Contains(lower, "signature") || strings.Contains(lower, "sign=") || strings.HasPrefix(lower, "sig") || strings.HasPrefix(lower, "sign") || strings.HasPrefix(lower, "token") || strings.Contains(lower, "a_bogus") || strings.Contains(lower, "ms_token") || strings.Contains(lower, "x-bogus")
 }
 
 func IsDouyinContext(value *string) *bool {

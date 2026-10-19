@@ -1,10 +1,12 @@
 package playback
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
@@ -247,8 +249,54 @@ func TestDouyinFrontendMediaReadyDoesNotCloseTraceThroughCodeZeroReport(t *testi
 		t.Fatal(err)
 	}
 	ready := service.ReportMediaReady(session.ID)
-	if ready.FinalOutcome != OutcomeOK || !trace.IsLogged() {
-		t.Fatalf("explicit ready signal did not log success: %+v logged=%v", ready, trace.IsLogged())
+	if ready.FinalOutcome != "" || trace.IsLogged() {
+		t.Fatalf("explicit ready signal closed trace too early: %+v logged=%v", ready, trace.IsLogged())
+	}
+	failed = service.ReportFrontendMediaFailure(session.ID, 4, "media failed after ready", 0)
+	if failed.FinalOutcome != OutcomeException || !trace.IsLogged() {
+		t.Fatalf("media failure after ready did not close trace: %+v logged=%v", failed, trace.IsLogged())
+	}
+
+	trace = NewDiagnosticTrace()
+	session, err = service.OpenDouyin(ContextWithDiagnostics(context.Background(), trace), "7340916925458779430")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.ReportMediaReady(session.ID)
+	service.Release(session.ID)
+	if !trace.IsLogged() || trace.Snapshot().FinalOutcome != OutcomeOK {
+		t.Fatalf("successful release did not close trace: %+v logged=%v", trace.Snapshot(), trace.IsLogged())
+	}
+}
+
+func TestDouyinDiagnosticLogRedactsPathAndUsesFailureAsFinalOutcome(t *testing.T) {
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	service := New(func(context.Context, string) (Source, error) {
+		return Source{URL: "https://v1.douyinvod.com/video.mp4", Platform: "douyin"}, nil
+	}, &http.Client{Transport: roundTrip(func(*http.Request) (*http.Response, error) {
+		return rangeResponse(http.StatusOK, "", "", "video/mp4"), nil
+	})})
+	trace := NewDiagnosticTrace()
+	session, err := service.OpenDouyin(ContextWithDiagnostics(context.Background(), trace), "7340916925458779430")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := "https://www.douyin.com/video/abcdefghijklmnopqrstuvwxyzABCDEF/detail"
+	trace.Add(DiagnosticStage{Stage: "webview_page_load", Outcome: OutcomeOK, PageURL: &page})
+	service.ReportMediaReady(session.ID)
+	if logs.Len() != 0 {
+		t.Fatalf("metadata-ready logged before terminal outcome: %s", logs.String())
+	}
+	service.ReportMediaStreamFailure(session.ID, http.StatusForbidden, "video/mp4; charset=utf-8", 128, errors.New("fixture stream failure"))
+	output := logs.String()
+	if !strings.Contains(output, "douyin playback diagnostic") || !strings.Contains(output, "final_outcome=exception") {
+		t.Fatalf("missing terminal desktop diagnostic: %s", output)
+	}
+	if strings.Contains(output, "abcdefghijklmnopqrstuvwxyzABCDEF") || strings.Contains(output, "?signature") {
+		t.Fatalf("desktop diagnostic leaked sensitive path data: %s", output)
 	}
 }
 
