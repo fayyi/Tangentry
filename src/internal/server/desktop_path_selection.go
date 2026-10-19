@@ -39,7 +39,7 @@ func (b *Backend) routePathSelection(w http.ResponseWriter, r *http.Request) boo
 			return true
 		}
 		switch input.Kind {
-		case "whisper-binary", "whisper-model", "python", "model-directory":
+		case "whisper-binary", "whisper-model", "python", "model-directory", "backup-directory":
 		default:
 			desktopJSON(w, http.StatusBadRequest, map[string]string{"message": "路径类型无效。"})
 			return true

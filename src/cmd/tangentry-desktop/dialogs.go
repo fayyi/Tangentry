@@ -11,7 +11,7 @@ func pickPath(ctx context.Context, kind, current string) (string, error) {
 		return "", err
 	}
 	title := "选择文件"
-	directory := kind == "download-directory" || kind == "model-directory"
+	directory := kind == "download-directory" || kind == "model-directory" || kind == "backup-directory"
 	switch kind {
 	case "download-directory":
 		title = "选择下载目录"
@@ -23,6 +23,8 @@ func pickPath(ctx context.Context, kind, current string) (string, error) {
 		title = "选择 Python 程序"
 	case "model-directory":
 		title = "选择模型目录"
+	case "backup-directory":
+		title = "选择备份目录"
 	}
 	paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
 		Parent: mygo.FocusedWindow(), Title: title, DefaultPath: current,
