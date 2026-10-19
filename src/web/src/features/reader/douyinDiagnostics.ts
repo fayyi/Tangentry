@@ -90,7 +90,8 @@ function sanitizeDiagnosticPath(host: string, pathname: string): string | null {
   const leading = pathname.startsWith('/')
   const trailing = pathname.endsWith('/')
   let parts = pathname.split('/').filter(Boolean)
-  if (host === 'douyinvod.com' || host.endsWith('.douyinvod.com')) parts = parts.slice(0, 2)
+  const douyinCDNSuffixes = ['.douyinvod.com', '.douyinvod.net', '.bytecdn.cn', '.zjcdn.com', '.amemv.com']
+  if (douyinCDNSuffixes.some(suffix => host.endsWith(suffix) && host !== suffix.slice(1))) parts = parts.slice(0, 2)
   try {
     parts = parts.map(part => {
       const decoded = decodeURIComponent(part)

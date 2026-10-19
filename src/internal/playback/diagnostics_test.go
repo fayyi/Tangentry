@@ -49,10 +49,12 @@ func TestDiagnosticURLRedactsSensitivePathSegmentsAndCapsDouyinCDNPath(t *testin
 	if got == nil || *got != "www.douyin.com/video/7340916925458779430/<redacted>/detail" {
 		t.Fatalf("redacted page path = %v", got)
 	}
-	cdn := "https://v1.douyinvod.com/video/segment/abcdefghijklmnopqrstuvwxyzABCDEF/signed.mp4?signature=fixture"
-	got = SanitizeURL(&cdn)
-	if got == nil || *got != "v1.douyinvod.com/video/segment" {
-		t.Fatalf("redacted CDN path = %v", got)
+	for _, host := range []string{"v1.douyinvod.com", "cdn.douyinvod.net", "media.bytecdn.cn", "v2.zjcdn.com", "v3.amemv.com"} {
+		cdn := "https://" + host + "/video/segment/abcdefghijklmnopqrstuvwxyzABCDEF/signed.mp4?signature=fixture"
+		got = SanitizeURL(&cdn)
+		if got == nil || *got != host+"/video/segment" {
+			t.Errorf("redacted CDN path for %s = %v", host, got)
+		}
 	}
 }
 

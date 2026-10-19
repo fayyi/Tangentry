@@ -365,7 +365,12 @@ func sanitizeDiagnosticPath(host, escapedPath string) string {
 }
 
 func isDouyinCDNHost(host string) bool {
-	return host == "douyinvod.com" || strings.HasSuffix(host, ".douyinvod.com")
+	for _, cdn := range compatibilityCDNSuffixes {
+		if cdn.douyin && strings.HasSuffix(host, cdn.suffix) && host != cdn.suffix[1:] {
+			return true
+		}
+	}
+	return false
 }
 
 func sensitivePathSegment(value string) bool {

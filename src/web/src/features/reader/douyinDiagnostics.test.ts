@@ -43,12 +43,13 @@ describe('Douyin playback diagnostics', () => {
   })
 
   it('redacts sensitive path segments and limits Douyin CDN paths', () => {
-    const [page, cdn] = parseDouyinDiagnostics([
+    const hosts = ['v1.douyinvod.com', 'cdn.douyinvod.net', 'media.bytecdn.cn', 'v2.zjcdn.com', 'v3.amemv.com']
+    const [page, ...cdn] = parseDouyinDiagnostics([
       { stage: 'webview_page_load', outcome: 'ok', page_url: 'https://www.douyin.com/video/abcdefghijklmnopqrstuvwxyzABCDEF/detail' },
-      { stage: 'session_media_fetch', outcome: 'ok', page_url: 'https://v1.douyinvod.com/video/segment/abcdefghijklmnopqrstuvwxyzABCDEF/signed.mp4?signature=fixture' },
+      ...hosts.map(host => ({ stage: 'session_media_fetch', outcome: 'ok', page_url: `https://${host}/video/segment/abcdefghijklmnopqrstuvwxyzABCDEF/signed.mp4?signature=fixture` })),
     ])
     expect(page?.page_url).toBe('www.douyin.com/video/<redacted>/detail')
-    expect(cdn?.page_url).toBe('v1.douyinvod.com/video/segment')
+    expect(cdn.map(stage => stage.page_url)).toEqual(hosts.map(host => `${host}/video/segment`))
     expect(JSON.stringify([page, cdn])).not.toMatch(/abcdefghijklmnopqrstuvwxyzABCDEF|signature=fixture/)
   })
 
