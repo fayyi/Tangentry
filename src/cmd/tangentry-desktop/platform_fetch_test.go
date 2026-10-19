@@ -142,6 +142,46 @@ func TestDouyinVideoMediaScriptUsesBoundedPageContextReads(t *testing.T) {
 	}
 }
 
+func TestDouyinDetailFetchOutcomeDistinguishesFailureKinds(t *testing.T) {
+	tests := []struct {
+		name, contentType, wantOutcome, wantReason string
+		status                                     int
+		restricted, timedOut, tooLarge             bool
+		networkError, jsonInvalid, hasURL          bool
+	}{
+		{name: "403", status: 403, contentType: "application/json", wantOutcome: "http_error", wantReason: "http_status"},
+		{name: "verification", status: 200, contentType: "application/json", restricted: true, wantOutcome: "restricted", wantReason: "business_verification"},
+		{name: "non-json", status: 200, contentType: "text/html", wantOutcome: "exception", wantReason: "non_json"},
+		{name: "timeout", timedOut: true, wantOutcome: "timeout", wantReason: "timeout"},
+		{name: "oversized", tooLarge: true, wantOutcome: "too_large", wantReason: "response_too_large"},
+		{name: "network", networkError: true, wantOutcome: "exception", wantReason: "network_error"},
+		{name: "invalid json", contentType: "application/json", jsonInvalid: true, wantOutcome: "exception", wantReason: "invalid_json"},
+		{name: "no url", contentType: "application/json", wantOutcome: "no_url", wantReason: "media_not_found"},
+		{name: "success", status: 200, contentType: "application/json", hasURL: true, wantOutcome: "ok", wantReason: "detail_success"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			outcome, reason := douyinDetailFetchOutcome(test.status, test.contentType, test.restricted, test.timedOut, test.tooLarge, test.networkError, test.jsonInvalid, test.hasURL)
+			if outcome != test.wantOutcome || reason != test.wantReason {
+				t.Fatalf("outcome = %s/%s, want %s/%s", outcome, reason, test.wantOutcome, test.wantReason)
+			}
+		})
+	}
+}
+
+func TestSafePageURLStripsQueryAndRejectsUnsafeAuthorities(t *testing.T) {
+	for _, raw := range []string{"https://passport.douyin.com/login?next=fixture", "https://user:pass@fixture.example/private", "https://fixture.example:8443/private"} {
+		got := safePageURL(raw)
+		if raw == "https://passport.douyin.com/login?next=fixture" {
+			if got == nil || *got != "passport.douyin.com/login" {
+				t.Fatalf("safe page URL = %v", got)
+			}
+		} else if got != nil {
+			t.Fatalf("unsafe page URL retained: %q", *got)
+		}
+	}
+}
+
 func TestSearchDOMReadScriptMapsAuthorLinks(t *testing.T) {
 	for _, part := range []string{"authorIDFrom", "/user\\/profile", "authorID", "cards"} {
 		if !strings.Contains(searchDomReadScript, part) {

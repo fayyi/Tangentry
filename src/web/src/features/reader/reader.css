@@ -435,6 +435,16 @@
 .error-panel.reader-source-error { flex-direction: column; gap: 12px; }
 .reader-source-error > p { width: 100%; }
 .reader-source-error-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.douyin-playback-details { width: 100%; min-width: 0; border-top: 1px solid color-mix(in srgb, var(--danger) 24%, var(--line)); }
+.douyin-playback-details summary { width: fit-content; min-height: 36px; padding-top: 7px; cursor: pointer; color: var(--ink); font-weight: 600; }
+.douyin-playback-details summary:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; border-radius: 2px; }
+.douyin-playback-details ol { display: grid; gap: 8px; margin: 0; padding: 2px 0 0 20px; }
+.douyin-playback-details li { padding-left: 3px; min-width: 0; }
+.douyin-diagnostic-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; color: var(--ink); }
+.douyin-diagnostic-heading span { color: var(--muted); font-size: 12px; }
+.douyin-diagnostic-heading span[data-outcome='ok'] { color: var(--success, #28734c); }
+.douyin-diagnostic-heading span:not([data-outcome='ok']) { color: var(--danger); }
+.douyin-playback-details li p { margin: 2px 0 0; color: var(--muted); overflow-wrap: anywhere; font-size: 12px; line-height: 1.55; }
 .experience-reading .reading-notes { border-left: 1px solid var(--line); padding-left: 20px; }
 .experience-reading .reading-focus-toggle[aria-pressed='true'] { background: var(--surface); border-color: var(--ink); }
 .experience-reading .media-reader[data-focus-reading='true'] .reading-notes { display: none; }

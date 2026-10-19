@@ -72,6 +72,9 @@ func (s *Service) refreshSession(ctx context.Context, token string, observed ent
 	}
 	resolveCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
+	if current.diagnostics != nil {
+		resolveCtx = ContextWithDiagnostics(resolveCtx, current.diagnostics)
+	}
 	source, err := s.resolve(resolveCtx, current.videoID)
 	if err == nil {
 		source, err = normalizeSource(source)
@@ -95,10 +98,16 @@ func (s *Service) refreshSession(ctx context.Context, token string, observed ent
 	if err != nil {
 		value.refreshAfter = time.Now().Add(30 * time.Second)
 		s.sessions[token] = value
+		if value.diagnostics != nil && value.source.Platform == "douyin" {
+			value.diagnostics.Add(DiagnosticStage{Stage: "session_media_fetch", Outcome: OutcomeForError(err), Reason: stringPointer("signature_refresh"), Refreshed: boolPointer(true)})
+		}
 		return entry{}, err
 	}
 	value.source, value.sourceExpires, value.revision = source, deadline, value.revision+1
 	value.refreshAfter = time.Time{}
 	s.sessions[token] = value
+	if value.diagnostics != nil && value.source.Platform == "douyin" {
+		value.diagnostics.Add(DiagnosticStage{Stage: "session_media_fetch", Outcome: OutcomeOK, Reason: stringPointer("signature_refresh"), Refreshed: boolPointer(true), SignatureDeadlineUnix: deadlinePointer(source.URL)})
+	}
 	return value, nil
 }

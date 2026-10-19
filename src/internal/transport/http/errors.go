@@ -29,6 +29,11 @@ type apiError struct {
 	Message string `json:"message"`
 }
 
+type apiDiagnosticError struct {
+	apiError
+	Details []playback.DiagnosticStage `json:"details"`
+}
+
 func write(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
@@ -151,6 +156,51 @@ func fail(w http.ResponseWriter, err error) {
 	slog.Error("request failed", "error", err)
 	write(w, http.StatusInternalServerError, apiError{"internal_error", "操作未能完成，请重试。"})
 }
+
+func failDouyinPlayback(w http.ResponseWriter, err error, logAttempt bool) {
+	var diagnostic *playback.DiagnosticError
+	if !errors.As(err, &diagnostic) {
+		fail(w, err)
+		return
+	}
+	status, code := http.StatusBadGateway, "playback_unavailable"
+	switch {
+	case errors.Is(err, playback.ErrInvalid):
+		status, code = http.StatusBadRequest, "invalid_playback"
+	case errors.Is(err, playback.ErrBusy):
+		status, code = http.StatusTooManyRequests, "playback_busy"
+	case errors.Is(err, playback.ErrExpired):
+		status, code = http.StatusGone, "playback_expired"
+	case errors.Is(err, context.DeadlineExceeded):
+		status, code = http.StatusGatewayTimeout, "playback_timeout"
+	}
+	if code == "playback_unavailable" {
+		var restricted *discovery.PlatformError
+		if errors.As(err, &restricted) && restricted.Restricted {
+			status, code = http.StatusTooManyRequests, "platform_restricted"
+		}
+	}
+	stages := diagnostic.Diagnostics().Stages
+	if trace := diagnostic.Trace(); trace != nil {
+		reason := "api_error"
+		apiCode := code
+		trace.Add(playback.DiagnosticStage{Stage: "frontend_request", Outcome: playback.OutcomeHTTPError, HTTPStatus: intPointer(status), APICode: &apiCode, Reason: &reason})
+		stages = trace.Snapshot().Stages
+		if logAttempt {
+			trace.Log(playback.FinalOutcome(err, stages))
+		}
+	}
+	message := diagnostic.Error()
+	if !errors.Is(err, playback.ErrInvalid) && !errors.Is(err, playback.ErrBusy) && !errors.Is(err, playback.ErrExpired) {
+		message = "抖音视频解析失败：" + playback.DiagnosticSummary(stages)
+	}
+	if status == http.StatusTooManyRequests {
+		w.Header().Set("Retry-After", "60")
+	}
+	write(w, status, apiDiagnosticError{apiError: apiError{Code: code, Message: message}, Details: stages})
+}
+
+func intPointer(value int) *int { return &value }
 
 func articleUnavailable(w http.ResponseWriter, err error) {
 	message := "未能获取原站全文，可继续阅读订阅文字或打开原内容。"

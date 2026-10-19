@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -199,20 +200,30 @@ func douyinVideoMediaScript(id string) string {
 	return `(async function(){
   const id=` + string(encoded) + `;
   const absolute = raw => { try { return new URL(String(raw || ''), location.href).href; } catch (_) { return ''; } };
+  const safeURL = raw => { try { const url=new URL(String(raw || ''), location.href); if(url.username||url.password||(url.port&&url.port!=='443'&&url.port!=='80')) return ''; return url.hostname.toLowerCase()+url.pathname; } catch (_) { return ''; } };
   const urls = [];
   const add = value => { if (Array.isArray(value)) value.forEach(add); else if (typeof value === 'string') urls.push(absolute(value)); };
   const businessRestricted = value => { let blocked=false; const scan = node => { if (!node || typeof node !== 'object' || blocked) return; const message=String(node.status_msg || node.statusMsg || node.status_message || node.message || ''); const code=Number(node.status_code ?? node.statusCode ?? 0) || 0; if (code !== 0 && (code === 401 || code === 403 || code === 429 || /login|登录|captcha|验证码|verify|验证|challenge|passport|risk[ -]?control|风控|滑块|人机/i.test(message))) { blocked=true; return; } Object.keys(node).slice(0, 200).forEach(key => scan(node[key])); }; scan(value); return blocked; };
   const walk = value => { if (!value || typeof value !== 'object') return; if (value.play_addr) add(value.play_addr.url_list || value.play_addr.urlList); if (value.url_list) add(value.url_list); Object.keys(value).slice(0, 200).forEach(key => { if (key !== 'url_list') walk(value[key]); }); };
-	let status=0, restricted=false, networkError=false, timedOut=false, tooLarge=false;
+	let status=0, restricted=false, networkError=false, timedOut=false, tooLarge=false, businessStatus=0, contentType='', detailUrl='', responseBytes=0, detailUrlCount=0, videoSourceCount=0, outcome='ok', reason='http_status', jsonInvalid=false;
   const controller=new AbortController(), timer=setTimeout(()=>controller.abort(),` + timeout + `);
-  try { const response = await fetch('/aweme/v1/web/aweme/detail/?aweme_id=' + encodeURIComponent(id), {credentials:'include', headers:{accept:'application/json'}, signal:controller.signal}); status=response.status; const responseURL=new URL(response.url || location.href, location.href); if (responseURL.hostname !== 'www.douyin.com' || !responseURL.pathname.startsWith('/aweme/v1/web/aweme/detail')) restricted=true; if (!response.ok) restricted = restricted || response.status === 401 || response.status === 403 || response.status === 429; const type=(response.headers.get('content-type')||'').toLowerCase(); if (!type.includes('json')) { if (type.includes('html') || response.status >= 400) restricted=true; } else { const length=Number(response.headers.get('content-length')||0); if (length > ` + limit + ` || (!response.body && !length)) { tooLarge=length > ` + limit + ` || !response.body; restricted=!tooLarge; if (tooLarge) controller.abort(); } else if (!response.body) { const body=await response.text(); try { const parsed=JSON.parse(body); if (businessRestricted(parsed)) restricted=true; else walk(parsed); } catch (_) { restricted=true; } } else { const reader=response.body.getReader(); const decoder=new TextDecoder(); let body='', bytes=0; try { for (;;) { const part=await reader.read(); if (part.done) break; bytes += part.value.byteLength; if (bytes > ` + limit + `) { tooLarge=true; controller.abort(); await reader.cancel(); break; } body += decoder.decode(part.value, {stream:true}); } body += decoder.decode(); } finally { reader.releaseLock(); } if (!restricted && !tooLarge) { try { const parsed=JSON.parse(body); if (businessRestricted(parsed)) restricted=true; else walk(parsed); } catch (_) { restricted=true; } } } } } catch (error) { timedOut=error && error.name === 'AbortError'; networkError=!timedOut; } finally { clearTimeout(timer); }
-  document.querySelectorAll('video').forEach(node => add(node.currentSrc || node.src));
+	try { const response = await fetch('/aweme/v1/web/aweme/detail/?aweme_id=' + encodeURIComponent(id), {credentials:'include', headers:{accept:'application/json'}, signal:controller.signal}); status=response.status; const responseURL=new URL(response.url || location.href, location.href); detailUrl=safeURL(responseURL.href); const pageHost=new URL(location.href).hostname.toLowerCase(); if (!['www.douyin.com','douyin.com'].includes(pageHost) || responseURL.hostname !== 'www.douyin.com' || !responseURL.pathname.startsWith('/aweme/v1/web/aweme/detail')) restricted=true; if (!response.ok) { outcome='http_error'; reason='http_status'; } contentType=(response.headers.get('content-type')||'').split(';',1)[0].trim().slice(0,128).toLowerCase(); if (!contentType.includes('json')) { if (response.ok) { outcome='exception'; reason='non_json'; } } else { const length=Number(response.headers.get('content-length')||0); if (Number.isSafeInteger(length)&&length>0) responseBytes=length; if (length > ` + limit + ` || (!response.body && !length)) { tooLarge=length > ` + limit + ` || !response.body; if (tooLarge) controller.abort(); } else if (!response.body) { const body=await response.text(); responseBytes=new TextEncoder().encode(body).length; if (responseBytes > ` + limit + `) { tooLarge=true; } else { try { const parsed=JSON.parse(body); businessStatus=Number(parsed && (parsed.status_code ?? parsed.statusCode)) || 0; if (businessRestricted(parsed)) restricted=true; else walk(parsed); } catch (_) { jsonInvalid=true; } } } else { const reader=response.body.getReader(); const decoder=new TextDecoder(); let body='', bytes=0; try { for (;;) { const part=await reader.read(); if (part.done) break; bytes += part.value.byteLength; responseBytes=bytes; if (bytes > ` + limit + `) { tooLarge=true; controller.abort(); await reader.cancel(); break; } body += decoder.decode(part.value, {stream:true}); } body += decoder.decode(); } finally { reader.releaseLock(); } if (!tooLarge) { try { const parsed=JSON.parse(body); businessStatus=Number(parsed && (parsed.status_code ?? parsed.statusCode)) || 0; if (businessRestricted(parsed)) restricted=true; else walk(parsed); } catch (_) { jsonInvalid=true; } } } } } catch (error) { timedOut=error && error.name === 'AbortError'; networkError=!timedOut; outcome=timedOut?'timeout':'exception'; reason=timedOut?'timeout':'network_error'; } finally { clearTimeout(timer); }
+  detailUrlCount=urls.length;
+  const videos=document.querySelectorAll('video'); videos.forEach(node => { if (node.currentSrc || node.src) videoSourceCount++; add(node.currentSrc || node.src); });
   const pageUrl=location.href, title=document.title||'';
   if (!/^https:\/\/(?:www\.)?douyin\.com\/video\/` + id + `(?:[/?#]|$)/i.test(pageUrl)) restricted=true;
   const pageText=(document.body && (document.body.innerText || document.body.textContent) || '').slice(0,4096);
   if (/login|登录|captcha|验证码|验证|verify|challenge|passport|risk[ -]?control|风控|滑块|人机/i.test(pageUrl+' '+title+' '+pageText)) restricted=true;
   if (restricted || tooLarge) urls.length = 0;
-  return {status:status, restricted:restricted, networkError:networkError, timedOut:timedOut, tooLarge:tooLarge, pageUrl:pageUrl, title:title, urls:urls.slice(0,32)};
+	if (tooLarge) { outcome='too_large'; reason='response_too_large'; }
+  else if (restricted && (outcome === 'ok' || outcome === 'no_url')) { outcome='restricted'; reason='business_verification'; }
+  else if (jsonInvalid) { outcome='exception'; reason='invalid_json'; }
+	else if (status >= 400 && outcome === 'ok') { outcome='http_error'; reason='http_status'; }
+	else if (!urls.length && outcome === 'ok') { outcome='no_url'; reason='media_not_found'; }
+	if (outcome === 'ok') reason='detail_success';
+  const pageHost=new URL(location.href).hostname.toLowerCase();
+  const isDouyinContext=pageHost==='douyin.com'||pageHost.endsWith('.douyin.com');
+  return {status:status, businessStatus:businessStatus, contentType:contentType, detailUrl:detailUrl, responseBytes:responseBytes, detailUrlCount:detailUrlCount, videoSourceCount:videoSourceCount, readyState:document.readyState, restricted:restricted, networkError:networkError, timedOut:timedOut, tooLarge:tooLarge, outcome:outcome, reason:reason, jsonInvalid:jsonInvalid, pageUrl:safeURL(pageUrl), isDouyinContext:isDouyinContext, title:title, videoCount:videos.length, urls:urls.slice(0,32)};
 })();`
 }
 
@@ -335,60 +346,222 @@ func (b *platformPageBridge) Fetch(ctx context.Context, platform, path string, r
 
 func (b *platformPageBridge) ResolveVideoMedia(ctx context.Context, id string) (platformfetch.VideoMediaResponse, error) {
 	if !regexp.MustCompile(`^[1-9][0-9]{15,19}$`).MatchString(id) {
-		return platformfetch.VideoMediaResponse{}, errors.New("抖音视频 ID 无效")
+		return platformfetch.VideoMediaResponse{}, platformfetch.WrapVideoMediaError(errors.New("抖音视频 ID 无效"), platformfetch.VideoMediaDiagnostic{Stage: "webview_session", Outcome: "exception", Reason: "invalid_id"})
 	}
+	var diagnostics []platformfetch.VideoMediaDiagnostic
+	b.mu.Lock()
+	reused := b.sessions["douyin"] != nil && !b.sessions["douyin"].window.IsDestroyed()
+	b.mu.Unlock()
 	session, err := b.session("douyin", "https://www.douyin.com/")
 	if err != nil {
-		return platformfetch.VideoMediaResponse{}, err
+		return platformfetch.VideoMediaResponse{}, platformfetch.WrapVideoMediaError(err, platformfetch.VideoMediaDiagnostic{Stage: "webview_session", Outcome: "exception", Reason: "session_destroyed"})
 	}
 	session.mu.Lock()
 	defer session.mu.Unlock()
-	if err := waitPlatformPage(ctx, session.ready); err != nil {
-		return platformfetch.VideoMediaResponse{}, err
+	reason := "session_created"
+	if reused {
+		reason = "session_reused"
 	}
+	diagnostics = append(diagnostics, platformfetch.VideoMediaDiagnostic{Stage: "webview_session", Outcome: "ok", Reason: reason})
+	session.blockedNavigation.Store("")
+	if err := waitPlatformPage(ctx, session.ready); err != nil {
+		outcome := "exception"
+		if errors.Is(err, context.DeadlineExceeded) {
+			outcome = "timeout"
+		}
+		diagnostics = append(diagnostics, platformfetch.VideoMediaDiagnostic{Stage: "webview_session", Outcome: outcome, Reason: "dom_ready"})
+		return platformfetch.VideoMediaResponse{}, platformfetch.WrapVideoMediaError(err, diagnostics...)
+	}
+	diagnostics = append(diagnostics, platformfetch.VideoMediaDiagnostic{Stage: "webview_session", Outcome: "ok", Reason: "dom_ready"})
 	session.lastUsed = time.Now()
 	if err := session.window.Page().LoadURL("https://www.douyin.com/video/" + id); err != nil {
-		return platformfetch.VideoMediaResponse{}, err
+		blockedTarget := ""
+		if value, ok := session.blockedNavigation.Load().(string); ok {
+			blockedTarget = value
+		}
+		blocked := "page_load_error"
+		outcome := "exception"
+		if blockedTarget != "" {
+			blocked, outcome = "navigation_blocked", "restricted"
+		}
+		diagnostics = append(diagnostics, platformfetch.VideoMediaDiagnostic{Stage: "webview_page_load", Outcome: outcome, Reason: blocked, PageURL: safePageURL(blockedTarget), BlockedNavigationURL: safePageURL(blockedTarget), IsDouyinContext: boolPtr(isDouyinPageContext(blockedTarget))})
+		return platformfetch.VideoMediaResponse{}, platformfetch.WrapVideoMediaError(err, diagnostics...)
 	}
 	if err := waitForPageReady(ctx, session.window.Page(), "video"); err != nil {
-		return platformfetch.VideoMediaResponse{}, err
+		outcome := "exception"
+		if errors.Is(err, context.DeadlineExceeded) {
+			outcome = "timeout"
+		}
+		diagnostics = append(diagnostics, platformfetch.VideoMediaDiagnostic{Stage: "webview_page_load", Outcome: outcome, Reason: "page_load_error", PageURL: safePageURL(session.window.Page().URL()), IsDouyinContext: boolPtr(isDouyinPageContext(session.window.Page().URL()))})
+		return platformfetch.VideoMediaResponse{}, platformfetch.WrapVideoMediaError(err, diagnostics...)
 	}
+	pageURL := session.window.Page().URL()
+	pageOutcome, pageReason := "ok", "resolver_success"
+	if blocked := blockedPageNavigation(session); blocked != "" {
+		pageOutcome, pageReason = "restricted", blocked
+	}
+	if !isDouyinPageContext(pageURL) {
+		pageOutcome, pageReason = "restricted", "navigation_blocked"
+	}
+	diagnostics = append(diagnostics, platformfetch.VideoMediaDiagnostic{Stage: "webview_page_load", Outcome: pageOutcome, Reason: pageReason, PageURL: safePageURL(pageURL), IsDouyinContext: boolPtr(isDouyinPageContext(pageURL))})
 	raw, err := evalPageWithRetry(ctx, session.window.Page(), douyinVideoMediaScript(id))
 	if err != nil {
-		return platformfetch.VideoMediaResponse{}, err
+		diagnostics = append(diagnostics, platformfetch.VideoMediaDiagnostic{Stage: "webview_detail_fetch", Outcome: "exception", Reason: "javascript_error", PageURL: safePageURL(pageURL), IsDouyinContext: boolPtr(isDouyinPageContext(pageURL))})
+		return platformfetch.VideoMediaResponse{}, platformfetch.WrapVideoMediaError(err, diagnostics...)
 	}
 	encoded, err := json.Marshal(raw)
 	if err != nil {
-		return platformfetch.VideoMediaResponse{}, err
+		diagnostics = append(diagnostics, platformfetch.VideoMediaDiagnostic{Stage: "webview_detail_fetch", Outcome: "exception", Reason: "javascript_error", PageURL: safePageURL(pageURL), IsDouyinContext: boolPtr(isDouyinPageContext(pageURL))})
+		return platformfetch.VideoMediaResponse{}, platformfetch.WrapVideoMediaError(err, diagnostics...)
 	}
 	var result struct {
-		Status       int      `json:"status"`
-		Restricted   bool     `json:"restricted"`
-		NetworkError bool     `json:"networkError"`
-		TimedOut     bool     `json:"timedOut"`
-		TooLarge     bool     `json:"tooLarge"`
-		PageURL      string   `json:"pageUrl"`
-		URLs         []string `json:"urls"`
+		Status           int      `json:"status"`
+		BusinessStatus   int      `json:"businessStatus"`
+		ContentType      string   `json:"contentType"`
+		DetailURL        string   `json:"detailUrl"`
+		Restricted       bool     `json:"restricted"`
+		NetworkError     bool     `json:"networkError"`
+		TimedOut         bool     `json:"timedOut"`
+		TooLarge         bool     `json:"tooLarge"`
+		Outcome          string   `json:"outcome"`
+		Reason           string   `json:"reason"`
+		JSONInvalid      bool     `json:"jsonInvalid"`
+		PageURL          string   `json:"pageUrl"`
+		IsDouyinContext  bool     `json:"isDouyinContext"`
+		ResponseBytes    int64    `json:"responseBytes"`
+		DetailURLCount   int      `json:"detailUrlCount"`
+		VideoSourceCount int      `json:"videoSourceCount"`
+		ReadyState       string   `json:"readyState"`
+		URLs             []string `json:"urls"`
+		VideoCount       int      `json:"videoCount"`
 	}
 	if err := json.Unmarshal(encoded, &result); err != nil {
-		return platformfetch.VideoMediaResponse{}, err
+		diagnostics = append(diagnostics, platformfetch.VideoMediaDiagnostic{Stage: "webview_detail_fetch", Outcome: "exception", Reason: "invalid_json"})
+		return platformfetch.VideoMediaResponse{}, platformfetch.WrapVideoMediaError(err, diagnostics...)
+	}
+	finalPageURL := result.PageURL
+	if finalPageURL == "" {
+		finalPageURL = pageURL
+	}
+	detailPageURL := result.DetailURL
+	if detailPageURL == "" {
+		detailPageURL = finalPageURL
+	}
+	detailStatus := result.Status
+	detailType := result.ContentType
+	detailOutcome, detailReason := douyinDetailFetchOutcome(result.Status, result.ContentType, result.Restricted, result.TimedOut, result.TooLarge, result.NetworkError, result.JSONInvalid, len(result.URLs) > 0)
+	var detailStatusValue *int
+	if detailStatus > 0 {
+		detailStatusValue = &detailStatus
+	}
+	diagnostics = append(diagnostics, platformfetch.VideoMediaDiagnostic{Stage: "webview_detail_fetch", Outcome: detailOutcome, Reason: detailReason, HTTPStatus: detailStatusValue, ContentType: &detailType, PageURL: safePageURL(detailPageURL), PageReadyState: &result.ReadyState, IsDouyinContext: boolPtr(result.IsDouyinContext), BusinessStatus: intPtr(result.BusinessStatus), ResponseBytes: int64Ptr(result.ResponseBytes), DetailURLCount: intPtr(result.DetailURLCount)})
+	if blocked := blockedPageNavigation(session); blocked != "" {
+		blockedTarget, _ := session.blockedNavigation.Load().(string)
+		diagnostics = append(diagnostics, platformfetch.VideoMediaDiagnostic{Stage: "webview_page_load", Outcome: "restricted", Reason: "navigation_blocked", PageURL: safePageURL(finalPageURL), BlockedNavigationURL: safePageURL(blockedTarget), IsDouyinContext: boolPtr(result.IsDouyinContext)})
 	}
 	if result.NetworkError {
-		return platformfetch.VideoMediaResponse{}, errors.New("应用内抖音页面媒体请求失败")
+		return platformfetch.VideoMediaResponse{Diagnostics: diagnostics}, platformfetch.WrapVideoMediaError(errors.New("应用内抖音页面媒体请求失败"), diagnostics...)
 	}
 	if result.TimedOut {
-		return platformfetch.VideoMediaResponse{}, context.DeadlineExceeded
+		return platformfetch.VideoMediaResponse{Diagnostics: diagnostics}, platformfetch.WrapVideoMediaError(context.DeadlineExceeded, diagnostics...)
 	}
 	if result.TooLarge {
-		return platformfetch.VideoMediaResponse{}, errors.New("应用内抖音页面响应超过 4 MiB 限制")
+		return platformfetch.VideoMediaResponse{Diagnostics: diagnostics}, platformfetch.WrapVideoMediaError(errors.New("应用内抖音页面响应超过 4 MiB 限制"), diagnostics...)
 	}
 	media := safeDouyinMedia(result.URLs)
+	candidates, accepted, videoCount := len(result.URLs), len(media), result.VideoCount
+	extractOutcome, extractReason := "ok", "media_found"
+	if result.Restricted {
+		extractOutcome, extractReason = "restricted", "business_verification"
+	}
+	if accepted == 0 && extractOutcome == "ok" {
+		extractOutcome, extractReason = "no_url", "media_not_found"
+	}
+	diagnostics = append(diagnostics, platformfetch.VideoMediaDiagnostic{Stage: "webview_media_extract", Outcome: extractOutcome, Reason: extractReason, PageURL: safePageURL(finalPageURL), PageReadyState: &result.ReadyState, IsDouyinContext: boolPtr(result.IsDouyinContext), CandidateCount: intPtr(candidates), AcceptedCount: intPtr(accepted), VideoElementCount: intPtr(videoCount), VideoSourceCount: intPtr(result.VideoSourceCount)})
+	if result.Restricted {
+		return platformfetch.VideoMediaResponse{Status: result.Status, Restricted: true, PageURL: safeCaptureURL(finalPageURL), Diagnostics: diagnostics}, nil
+	}
 	primary := ""
 	backups := []string{}
 	if len(media) > 0 {
 		primary, backups = media[0], media[1:]
 	}
-	return platformfetch.VideoMediaResponse{Status: result.Status, Restricted: result.Restricted, PageURL: safeCaptureURL(result.PageURL), URL: primary, Backups: backups}, nil
+	if accepted == 0 {
+		return platformfetch.VideoMediaResponse{Status: result.Status, PageURL: safeCaptureURL(finalPageURL), Diagnostics: diagnostics}, nil
+	}
+	return platformfetch.VideoMediaResponse{Status: result.Status, Restricted: result.Restricted, PageURL: safeCaptureURL(finalPageURL), URL: primary, Backups: backups, Diagnostics: diagnostics}, nil
+}
+
+func douyinDetailFetchOutcome(status int, contentType string, restricted, timedOut, tooLarge, networkError, jsonInvalid, hasURL bool) (string, string) {
+	switch {
+	case timedOut:
+		return "timeout", "timeout"
+	case tooLarge:
+		return "too_large", "response_too_large"
+	case networkError:
+		return "exception", "network_error"
+	case status >= http.StatusBadRequest:
+		return "http_error", "http_status"
+	case restricted:
+		return "restricted", "business_verification"
+	case !strings.Contains(strings.ToLower(contentType), "json"):
+		return "exception", "non_json"
+	case jsonInvalid:
+		return "exception", "invalid_json"
+	case !hasURL:
+		return "no_url", "media_not_found"
+	default:
+		return "ok", "detail_success"
+	}
+}
+
+func safePageURL(raw string) *string {
+	if len(raw) > 2048 {
+		return nil
+	}
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.User != nil || u.Opaque != "" {
+		return nil
+	}
+	if u.Scheme == "" {
+		u, err = url.Parse("https://" + raw)
+		if err != nil {
+			return nil
+		}
+	}
+	if u.Scheme != "https" && u.Scheme != "http" {
+		return nil
+	}
+	if port := u.Port(); port != "" && !((u.Scheme == "https" && port == "443") || (u.Scheme == "http" && port == "80")) {
+		return nil
+	}
+	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+	path := u.EscapedPath()
+	if host == "" || strings.ContainsAny(host, " /\\%\r\n\t") || len(host) > 253 || len(path) > 1024 {
+		return nil
+	}
+	if path == "" {
+		path = "/"
+	}
+	value := host + path
+	return &value
+}
+func isDouyinPageContext(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.User != nil {
+		return false
+	}
+	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+	return host == "douyin.com" || strings.HasSuffix(host, ".douyin.com")
+}
+func boolPtr(value bool) *bool    { return &value }
+func intPtr(value int) *int       { return &value }
+func int64Ptr(value int64) *int64 { return &value }
+func blockedPageNavigation(session *platformPageSession) string {
+	if blocked, ok := session.blockedNavigation.Load().(string); ok && blocked != "" {
+		return "navigation_blocked"
+	}
+	return ""
 }
 
 func firstSafeDouyinMedia(values []string) string {

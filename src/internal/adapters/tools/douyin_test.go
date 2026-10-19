@@ -165,6 +165,53 @@ func TestDouyinErrorsDoNotExposeToolOutput(t *testing.T) {
 	}
 }
 
+func TestDouyinPlaybackCapturesYTDLPFailureMetadataWithoutSecrets(t *testing.T) {
+	if os.PathSeparator != '/' {
+		t.Skip("POSIX fixture")
+	}
+	path := filepath.Join(t.TempDir(), "tool")
+	script := "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo fixture-version; exit 0; fi\necho 'WARNING: ignored' >&2\necho 'ERROR: HTTP Error 403 https://fixture.example/path?token=private Cookie: cookie-private a_bogus=sign-private' >&2\nexit 7\n"
+	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	tk := New(config.Config{YTDLPPath: path})
+	trace := playback.NewDiagnosticTrace()
+	ctx := playback.ContextWithDiagnostics(context.Background(), trace)
+	_, err := tk.DouyinPlayback(ctx, "https://www.douyin.com/video/6961737553342991651")
+	if err == nil {
+		t.Fatal("expected fixture failure")
+	}
+	stages := trace.Snapshot().Stages
+	var ytdlp *playback.DiagnosticStage
+	for index := range stages {
+		if stages[index].Stage == "ytdlp" {
+			ytdlp = &stages[index]
+		}
+	}
+	if ytdlp == nil || ytdlp.YTDLPVersion == nil || *ytdlp.YTDLPVersion != "fixture-version" || ytdlp.YTDLPExitCode == nil || *ytdlp.YTDLPExitCode != 7 || ytdlp.YTDLPStderrFirstErrorRedacted == nil {
+		t.Fatalf("incomplete yt-dlp diagnostics: %+v", ytdlp)
+	}
+	text := *ytdlp.YTDLPStderrFirstErrorRedacted
+	for _, secret := range []string{"token=private", "cookie-private", "sign-private", "https://"} {
+		if strings.Contains(text, secret) {
+			t.Fatalf("stderr leaked %q: %s", secret, text)
+		}
+	}
+}
+
+func TestFirstErrorLineBufferKeepsOnlyFirstErrorAndBoundsPartialLine(t *testing.T) {
+	var buffer firstErrorLineBuffer
+	buffer.Write([]byte("NOTICE: one\nERROR: first\nERROR: second\n"))
+	if got := buffer.String(); got != "ERROR: first" {
+		t.Fatalf("first error = %q", got)
+	}
+	var partial firstErrorLineBuffer
+	partial.Write([]byte("ERROR: " + strings.Repeat("x", 5000)))
+	if got := partial.String(); len(got) != 4096 {
+		t.Fatalf("partial error line length = %d", len(got))
+	}
+}
+
 func TestVideoMetadataDurationDoesNotInheritTranscriptionLimit(t *testing.T) {
 	if os.PathSeparator != '/' {
 		t.Skip("POSIX fixture")

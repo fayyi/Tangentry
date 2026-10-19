@@ -14,6 +14,7 @@ import (
 	"tangentry/internal/content"
 	"tangentry/internal/discovery"
 	"tangentry/internal/platformfetch"
+	"tangentry/internal/playback"
 	"time"
 )
 
@@ -270,23 +271,57 @@ func (c *Client) Recommendations(ctx context.Context, page int) (discovery.Feed,
 // ResolveVideoMedia asks the authenticated WebView to resolve the video in
 // page context. It is intentionally called only with a canonical video ID.
 func (c *Client) ResolveVideoMedia(ctx context.Context, id string) (platformfetch.VideoMediaResponse, error) {
+	trace := playback.DiagnosticsFromContext(ctx)
 	ref, err := discovery.ParseDouyin("https://www.douyin.com/video/" + strings.TrimSpace(id))
 	if err != nil || ref.ID != id {
+		recordDouyinDiagnostic(ctx, platformfetch.VideoMediaDiagnostic{Stage: "webview_session", Outcome: "exception", Reason: "invalid_id"})
 		return platformfetch.VideoMediaResponse{}, discovery.ErrInvalidQuery
 	}
 	bridge, ok := c.Page.(platformfetch.VideoMediaFetcher)
 	if !ok {
-		return platformfetch.VideoMediaResponse{}, discovery.ErrUnavailable
+		recordDouyinDiagnostic(ctx, platformfetch.VideoMediaDiagnostic{Stage: "webview_session", Outcome: "exception", Reason: "session_destroyed"})
+		recordDouyinDiagnostic(ctx, platformfetch.VideoMediaDiagnostic{Stage: "webview_page_load", Outcome: "exception", Reason: "page_load_error"})
+		recordDouyinDiagnostic(ctx, platformfetch.VideoMediaDiagnostic{Stage: "webview_detail_fetch", Outcome: "exception", Reason: "javascript_error"})
+		recordDouyinDiagnostic(ctx, platformfetch.VideoMediaDiagnostic{Stage: "webview_media_extract", Outcome: "no_url", Reason: "media_not_found"})
+		return platformfetch.VideoMediaResponse{}, playback.WrapDiagnostic(&platformfetch.VideoMediaError{Cause: discovery.ErrUnavailable}, trace, "应用内抖音页面不可用。")
 	}
 	result, err := bridge.ResolveVideoMedia(ctx, id)
+	var bridgeError *platformfetch.VideoMediaError
+	if errors.As(err, &bridgeError) {
+		for _, diagnostic := range bridgeError.Diagnostics {
+			recordDouyinDiagnostic(ctx, diagnostic)
+		}
+	} else {
+		for _, diagnostic := range result.Diagnostics {
+			recordDouyinDiagnostic(ctx, diagnostic)
+		}
+	}
 	if err != nil {
-		return platformfetch.VideoMediaResponse{}, err
+		var mediaError *platformfetch.VideoMediaError
+		if errors.As(err, &mediaError) {
+			return platformfetch.VideoMediaResponse{}, playback.WrapDiagnostic(err, trace, playback.DiagnosticSummary(trace.Snapshot().Stages))
+		}
+		last := trace.Snapshot().Stages
+		if len(last) == 0 {
+			recordDouyinDiagnostic(ctx, platformfetch.VideoMediaDiagnostic{Stage: "webview_detail_fetch", Outcome: "exception", Reason: "javascript_error"})
+		}
+		return platformfetch.VideoMediaResponse{}, playback.WrapDiagnostic(&platformfetch.VideoMediaError{Cause: err}, trace, playback.DiagnosticSummary(trace.Snapshot().Stages))
 	}
 	if result.Restricted {
-		return platformfetch.VideoMediaResponse{}, &discovery.PlatformError{Restricted: true, Message: "应用内抖音页面需要验证，请在应用内完成登录或验证码验证后重试。"}
+		if !hasDiagnosticStage(result.Diagnostics, "webview_media_extract") {
+			recordDouyinDiagnostic(ctx, platformfetch.VideoMediaDiagnostic{Stage: "webview_media_extract", Outcome: "restricted", Reason: "business_verification"})
+		}
+		return platformfetch.VideoMediaResponse{}, playback.WrapDiagnostic(&discovery.PlatformError{Restricted: true, Message: "应用内抖音页面需要验证，请在应用内完成登录或验证码验证后重试。"}, trace, "应用内页面要求登录或完成验证。")
+	}
+	if !hasDiagnosticStage(result.Diagnostics, "webview_media_extract") && result.URL != "" {
+		recordDouyinDiagnostic(ctx, platformfetch.VideoMediaDiagnostic{Stage: "webview_media_extract", Outcome: "ok", Reason: "media_found", CandidateCount: intPtr(1 + len(result.Backups)), AcceptedCount: intPtr(1 + len(result.Backups))})
 	}
 	candidates := make([]string, 0, 3)
+	inputCount := 0
 	for _, candidate := range append([]string{result.URL}, result.Backups...) {
+		if candidate != "" {
+			inputCount++
+		}
 		if PlaybackURL(candidate) && playbackURLLive(candidate, time.Now()) {
 			candidates = append(candidates, candidate)
 			if len(candidates) == 3 {
@@ -295,11 +330,42 @@ func (c *Client) ResolveVideoMedia(ctx context.Context, id string) (platformfetc
 		}
 	}
 	if len(candidates) == 0 {
-		return platformfetch.VideoMediaResponse{}, discovery.ErrUnavailable
+		reason := "media_not_found"
+		if inputCount > 0 {
+			reason = "candidate_filtered"
+		}
+		if !hasDiagnosticStage(result.Diagnostics, "webview_media_extract") {
+			recordDouyinDiagnostic(ctx, platformfetch.VideoMediaDiagnostic{Stage: "webview_media_extract", Outcome: "no_url", Reason: reason, CandidateCount: intPtr(inputCount), AcceptedCount: intPtr(0)})
+		}
+		return platformfetch.VideoMediaResponse{}, playback.WrapDiagnostic(discovery.ErrUnavailable, trace, playback.DiagnosticSummary(trace.Snapshot().Stages))
 	}
+	recordDouyinDiagnostic(ctx, platformfetch.VideoMediaDiagnostic{Stage: "webview_media_extract", Outcome: "ok", Reason: "media_found", CandidateCount: intPtr(inputCount), AcceptedCount: intPtr(len(candidates))})
 	result.URL, result.Backups = candidates[0], candidates[1:]
 	return result, nil
 }
+
+func hasDiagnosticStage(values []platformfetch.VideoMediaDiagnostic, target string) bool {
+	for _, value := range values {
+		if value.Stage == target {
+			return true
+		}
+	}
+	return false
+}
+
+func recordDouyinDiagnostic(ctx context.Context, diagnostic platformfetch.VideoMediaDiagnostic) {
+	outcome := playback.DiagnosticOutcome(diagnostic.Outcome)
+	stage := playback.DiagnosticStage{Stage: diagnostic.Stage, Outcome: outcome, Reason: stringPtr(diagnostic.Reason), HTTPStatus: diagnostic.HTTPStatus, ContentType: diagnostic.ContentType, PageURL: diagnostic.PageURL, BlockedNavigationURL: diagnostic.BlockedNavigationURL, PageReadyState: diagnostic.PageReadyState, IsDouyinContext: diagnostic.IsDouyinContext, BusinessStatus: diagnostic.BusinessStatus, CandidateCount: diagnostic.CandidateCount, AcceptedCount: diagnostic.AcceptedCount, VideoElementCount: diagnostic.VideoElementCount, DetailURLCount: diagnostic.DetailURLCount, VideoSourceCount: diagnostic.VideoSourceCount, ResponseBytes: diagnostic.ResponseBytes}
+	playback.RecordDiagnostic(ctx, stage)
+}
+
+func stringPtr(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
+}
+func intPtr(value int) *int { return &value }
 
 func captureAPIStatus(responses []platformfetch.FeedResponse) int {
 	for _, response := range responses {
