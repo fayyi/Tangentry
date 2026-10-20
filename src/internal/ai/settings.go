@@ -78,6 +78,7 @@ type Config struct {
 	ChatTemplate         PromptTemplate `json:"chatTemplate,omitempty"`
 	SummaryContextBudget int            `json:"summaryContextBudget,omitempty"`
 	Key                  string         `json:"key"`
+	TranslationTarget    string         `json:"-"`
 	Revision             int64          `json:"revision"`
 }
 type Status struct {

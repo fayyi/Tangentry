@@ -92,6 +92,50 @@ func TestTranslationRecoversOnlyOnceWithSmallerMultiSegmentBatches(t *testing.T)
 	}
 }
 
+func TestTranslationTargetHasDistinctPersistentCacheIdentity(t *testing.T) {
+	var targets []string
+	s, input, root := configured(t, translatorFunc(func(_ context.Context, config Config, segments []Segment) ([]Segment, error) {
+		targets = append(targets, config.TranslationTarget)
+		return translations(segments), nil
+	}))
+	input.Track = source(2).Track
+	input.TargetLanguage = "en"
+	english, err := s.Inspect(context.Background(), input)
+	if err != nil || english.Result.TargetLanguage != "en" || english.Result.Key == "" {
+		t.Fatalf("English target identity was not returned: %+v %v", english, err)
+	}
+	if _, err := s.Translate(context.Background(), input); err != nil {
+		t.Fatal(err)
+	}
+	input.TargetLanguage = "ja"
+	japanese, err := s.Inspect(context.Background(), input)
+	if err != nil || japanese.Result.TargetLanguage != "ja" || japanese.Result.Key == english.Result.Key || len(japanese.Result.Texts) != 0 {
+		t.Fatalf("Japanese reused a different target cache: %+v %v", japanese, err)
+	}
+	if _, err := s.Translate(context.Background(), input); err != nil {
+		t.Fatal(err)
+	}
+	input.TargetLanguage = "en"
+	if cached, err := s.Inspect(context.Background(), input); err != nil || cached.Result.Key != english.Result.Key || len(cached.Result.Texts) != 2 {
+		t.Fatalf("English cache was not retained: %+v %v", cached, err)
+	}
+	if fmt.Sprint(targets) != "[en ja]" {
+		t.Fatalf("provider received wrong translation targets or cache was not reused: %v", targets)
+	}
+	reopened, err := New(root, storeFor(root), translatorFunc(func(context.Context, Config, []Segment) ([]Segment, error) {
+		t.Fatal("persisted target cache invoked provider")
+		return nil, ErrProvider
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	input.TargetLanguage = "ja"
+	if cached, err := reopened.Inspect(context.Background(), input); err != nil || cached.Result.TargetLanguage != "ja" || len(cached.Result.Texts) != 2 {
+		t.Fatalf("target language did not survive cache roundtrip: %+v %v", cached, err)
+	}
+}
+
 func TestTranslationSmallerBatchFailureStopsAndPreservesCommittedHalf(t *testing.T) {
 	calls := 0
 	s, in, root := configured(t, translatorFunc(func(_ context.Context, _ Config, segments []Segment) ([]Segment, error) {

@@ -14,10 +14,12 @@ import (
 const playerTrackLimit = 200
 
 type CaptionTrack struct {
-	Language string
-	Label    string
-	URL      string
-	Kind     string
+	Language       string
+	Label          string
+	URL            string
+	Kind           string
+	Translated     bool
+	SourceLanguage string
 }
 
 type PlayerResult struct {
@@ -163,11 +165,24 @@ func (p *Player) Fetch(ctx context.Context, videoID, cookie string) PlayerResult
 			continue
 		}
 		query, err := url.ParseQuery(parsed.RawQuery)
-		if err != nil || len(query["tlang"]) != 0 || len(query["lang"]) != 1 || query.Get("lang") != language || len(query["v"]) != 1 || query.Get("v") != videoID {
+		if err != nil || len(query["lang"]) != 1 || len(query["v"]) != 1 || query.Get("v") != videoID {
 			continue
 		}
-		label := captionTrackLabel(track, language)
-		tracks = append(tracks, CaptionTrack{Language: language, Label: label, URL: parsed.String(), Kind: kind})
+		displayLanguage, sourceLanguage := language, ""
+		translated := false
+		if len(query["tlang"]) > 0 {
+			if len(query["tlang"]) != 1 || !bcp47Language.MatchString(query.Get("tlang")) || len(query.Get("tlang")) > 35 || !bcp47Language.MatchString(query.Get("lang")) || query.Get("lang") != language {
+				continue
+			}
+			displayLanguage, sourceLanguage, translated = query.Get("tlang"), query.Get("lang"), true
+		} else if query.Get("lang") != language {
+			continue
+		}
+		label := captionTrackLabel(track, displayLanguage)
+		if translated {
+			label = displayLanguage
+		}
+		tracks = append(tracks, CaptionTrack{Language: displayLanguage, Label: label, URL: parsed.String(), Kind: kind, Translated: translated, SourceLanguage: sourceLanguage})
 	}
 	return PlayerResult{Tracks: tracks}
 }

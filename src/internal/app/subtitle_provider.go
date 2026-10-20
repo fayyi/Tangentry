@@ -15,7 +15,7 @@ type subtitleProvider struct {
 
 func (p subtitleProvider) ReadSubtitles(ctx context.Context, id string) (subtitles.Document, error) {
 	doc, err := p.bilibili.ReadSubtitles(ctx, id)
-	if p.ytdlp == nil || err == nil && len(doc.Tracks) > 0 {
+	if p.ytdlp == nil || err == nil && (len(doc.Tracks) > 0 || len(doc.Languages) > 0) {
 		return doc, err
 	}
 	if err == nil && (doc.Status == "login_required" || doc.Status == "rate_limited" || doc.Status == "error" || doc.Status == "api_empty") {
@@ -30,6 +30,13 @@ func (p subtitleProvider) ReadSubtitles(ctx context.Context, id string) (subtitl
 		return doc, err
 	}
 	return p.replaceWithYTDLP(doc, fallback, id), nil
+}
+
+func (p subtitleProvider) ReadSubtitlesLanguage(ctx context.Context, id, language string) (subtitles.Document, error) {
+	if reader, ok := p.bilibili.(subtitles.LanguageProvider); ok {
+		return reader.ReadSubtitlesLanguage(ctx, id, language)
+	}
+	return subtitles.Document{}, subtitles.ErrTools
 }
 
 func (p subtitleProvider) replaceWithYTDLP(doc, fallback subtitles.Document, id string) subtitles.Document {

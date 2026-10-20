@@ -42,7 +42,7 @@ func (s *SavedService) List(ctx context.Context, id string) ([]SavedTrack, error
 	return s.repository.ListSavedSubtitles(ctx, id)
 }
 func (s *SavedService) Save(ctx context.Context, id string, track Track, revision int64) (SavedTrack, error) {
-	if !content.SpeechID(id) || !savedLanguage.MatchString(track.Language) || revision < 0 || revision >= MaxSavedRevision || (track.Source != "" && track.Source != "cc" && track.Source != "ai" && track.Source != "yt-dlp") || (track.Mismatch && track.Source != "ai") || !utf8.ValidString(track.Label) || strings.TrimSpace(track.Label) == "" || len(track.Cues) == 0 || len(track.Cues) > 10000 {
+	if !content.SpeechID(id) || !savedLanguage.MatchString(track.Language) || revision < 0 || revision >= MaxSavedRevision || (track.Source != "" && track.Source != "cc" && track.Source != "ai" && track.Source != "yt-dlp" && track.Source != "youtube") || (track.Mismatch && track.Source != "ai") || !utf8.ValidString(track.Label) || strings.TrimSpace(track.Label) == "" || len(track.Cues) == 0 || len(track.Cues) > 10000 {
 		return SavedTrack{}, ErrSavedInvalid
 	}
 	total, previous := 0, -1.0

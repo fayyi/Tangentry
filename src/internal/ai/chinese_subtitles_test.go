@@ -14,7 +14,7 @@ func TestChineseSubtitlesNeverCallProviderOrDuplicateCache(t *testing.T) {
 		return translations(segments), nil
 	}))
 	in.Track.Cues = in.Track.Cues[:1]
-	for _, lang := range []string{"zh-Hans", "zh-CN", "zh-Hant", "ai-zh", "cmn", "und", "en"} {
+	for _, lang := range []string{"zh-Hans", "zh-CN"} {
 		in.Track.Language = lang
 		in.Track.Cues[0].Text = "这是原来的中文字幕，API 和 AI 名称保持原样。"
 		inspection, err := s.Inspect(context.Background(), in)
@@ -29,7 +29,25 @@ func TestChineseSubtitlesNeverCallProviderOrDuplicateCache(t *testing.T) {
 	if storeFor(root).Count() != 0 {
 		t.Fatal("Chinese source should not store duplicate translations")
 	}
+	in.TargetLanguage = "zh-Hans"
+	for _, lang := range []string{"zh-Hant", "zh", "ai-zh", "cmn", "zho", "chi"} {
+		in.Track.Language = lang
+		in.Track.Cues[0].Text += " " + lang
+		if _, err := s.Translate(context.Background(), in); err != nil || calls == 0 {
+			t.Fatal("Traditional or ambiguous Chinese source should be translated for a Simplified target", lang, err, calls)
+		}
+	}
+	in.Track.Language = "zh-Hant"
+	in.TargetLanguage = "zh-Hant"
+	if result, err := s.Translate(context.Background(), in); err != nil || len(result.Texts) != 1 || result.Texts[0] != in.Track.Cues[0].Text {
+		t.Fatal("Traditional Chinese source should be reused for a Traditional target", result, err)
+	}
 	in.Track.Language = "en"
+	in.TargetLanguage = "zh-Hans"
+	in.Track.Cues[0].Text = "这是英语内容中的中文引用部分。"
+	if _, err := s.Translate(context.Background(), in); err != nil || calls == 0 {
+		t.Fatal("explicit English language must not be classified by Chinese text alone", err, calls)
+	}
 	for _, text := range []string{"An English sentence about 中文.", "これは日本語の字幕です。"} {
 		in.Track.Cues[0].Text = text
 		if chineseSubtitles(in) {

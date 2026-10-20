@@ -11,16 +11,17 @@ func (h *mediaHandler) subtitleRead(w http.ResponseWriter, r *http.Request) {
 		fail(w, subtitles.ErrTools)
 		return
 	}
-	doc, err := h.media.Subtitles.Read(r.Context(), r.URL.Query().Get("q"))
+	query, language := r.URL.Query().Get("q"), r.URL.Query().Get("language")
+	var doc subtitles.Document
+	var err error
+	if language != "" {
+		doc, err = h.media.Subtitles.ReadLanguage(r.Context(), query, language)
+	} else {
+		doc, err = h.media.Subtitles.Read(r.Context(), query)
+	}
 	if err != nil {
 		fail(w, err)
 		return
-	}
-	if h.media.SavedSubtitles != nil {
-		if err := h.media.SavedSubtitles.Capture(r.Context(), "bilibili:"+doc.VideoID, doc); err != nil {
-			fail(w, err)
-			return
-		}
 	}
 	write(w, http.StatusOK, doc)
 }
@@ -34,12 +35,6 @@ func (h *mediaHandler) youtubeSubtitleRead(w http.ResponseWriter, r *http.Reques
 	if err != nil {
 		fail(w, err)
 		return
-	}
-	if h.media.SavedSubtitles != nil {
-		if err := h.media.SavedSubtitles.Capture(r.Context(), "youtube:"+doc.VideoID, doc); err != nil {
-			fail(w, err)
-			return
-		}
 	}
 	write(w, http.StatusOK, doc)
 }

@@ -4,10 +4,12 @@ import type { SavedSubtitle, SubtitleDocument, SubtitleTrack } from '../../share
 import { cachedSubtitles, cacheSubtitles, clearSubtitleCache } from './platformCache'
 
 export function subtitlePriority(track: { language: string; automatic?: boolean; source?: string }) {
-  const language = track.language.toLowerCase().replace(/^ai-/, '').replace(/-orig$/, '').replaceAll('_', '-')
-  const chinese = /^zh(?:-|$)/.test(language)
-  if (chinese && track.source === 'cc') return 0
-  if (chinese && (track.source === 'ai' || track.automatic)) return 1
+  const rawLanguage = track.language.toLowerCase().replaceAll('_', '-')
+  const language = rawLanguage.replace(/^ai-/, '').replace(/-orig$/, '')
+  const simplifiedChinese = ['zh-hans', 'zh-cn', 'zh-sg'].some(code => language === code || language.startsWith(`${code}-`))
+  if (simplifiedChinese && track.source !== 'ai' && !track.automatic) return 0
+  if (simplifiedChinese && (track.source === 'ai' || track.automatic)) return 1
+  if (/^ai-(?:zh|cmn|zho|chi)$/.test(rawLanguage) && (track.source === 'ai' || track.automatic)) return 1
   return 2
 }
 
@@ -23,6 +25,7 @@ export function useSubtitles(videoId: string, source: 'bilibili' | 'youtube' | '
   const [localError, setLocalError] = useState('')
   const [writeError, setWriteError] = useState('')
   const [notice, setNotice] = useState('')
+  const [languageRead, setLanguageRead] = useState<{ language: string; status: 'loading' | 'loaded' | 'error'; error?: string } | null>(null)
   const controller = useRef<AbortController | null>(null)
   const localReader = useRef<AbortController | null>(null)
   const mutation = useRef<AbortController | null>(null)
@@ -34,23 +37,46 @@ export function useSubtitles(videoId: string, source: 'bilibili' | 'youtube' | '
     controller.current = current
     setLoading(true)
     setError('')
+    if (language) setLanguageRead({ language, status: 'loading' })
+    else setLanguageRead(null)
     try {
       const query = source === 'youtube' ? 'https://www.youtube.com/watch?v=' + videoId : videoId
-      const endpoint = source === 'local' ? `/subtitles/local-media?contentId=${encodeURIComponent(contentId)}` : source === 'podcast' ? `/subtitles/podcast?contentId=${encodeURIComponent(contentId)}` : `/subtitles/${source}?q=${encodeURIComponent(query)}` + (source === 'youtube' && language ? '&language=' + encodeURIComponent(language) : '')
+      const endpoint = source === 'local' ? `/subtitles/local-media?contentId=${encodeURIComponent(contentId)}` : source === 'podcast' ? `/subtitles/podcast?contentId=${encodeURIComponent(contentId)}` : `/subtitles/${source}?q=${encodeURIComponent(query)}` + (language ? '&language=' + encodeURIComponent(language) : '')
       if (!reuse) clearSubtitleCache(videoId)
       const cached = reuse ? cachedSubtitles(endpoint, videoId) : undefined
-      const data = cached ?? await request<SubtitleDocument>(endpoint, { signal: current.signal })
+      // Persistent browser entries intentionally contain metadata only. They
+      // can answer a confirmed empty result, but never replace a body read.
+      const cachedEmpty = cached?.status === 'none' && !cached.languages?.length && !cached.tracks.length && !cached.parts?.some(part => part.languages.length || part.tracks.length)
+      const data = cachedEmpty ? cached : await request<SubtitleDocument>(endpoint, { signal: current.signal })
       if (!current.signal.aborted) {
         if (!cached) cacheSubtitles(endpoint, data)
-        setPlatform(previous => source === 'youtube' && language && previous?.videoId === data.videoId ? { ...data, tracks: [...previous.tracks.filter(track => track.language !== language), ...data.tracks] } : data)
+        setPlatform(previous => language && previous?.videoId === data.videoId ? {
+          ...previous,
+          ...data,
+          languages: data.languages?.length ? data.languages : previous.languages,
+          tracks: data.tracks.length ? [...previous.tracks.filter(track => track.language !== language), ...data.tracks] : previous.tracks,
+          parts: previous.parts?.map((part, index) => index === 0 ? {
+            ...part,
+            languages: data.languages?.length ? data.languages : part.languages,
+            tracks: data.tracks.length ? [...part.tracks.filter(track => track.language !== language), ...data.tracks] : part.tracks,
+          } : part),
+        } : data)
         setOrigin(keepSaved ? 'saved' : 'platform'); setNotice('')
+        if (language) {
+          const loaded = data.tracks.some(track => track.language === language)
+          setLanguageRead({ language, status: loaded ? 'loaded' : 'error', ...(loaded ? {} : { error: data.errorMessage || '这条字幕正文暂时无法读取。' }) })
+        }
         if (!cached && data.tracks.length > 0) {
           const local = await request<{ tracks: SavedSubtitle[] }>(`/saved-subtitles?contentId=${encodeURIComponent(contentId)}`, { signal: current.signal })
           if (!current.signal.aborted) { setSaved(local.tracks); setLocalKnown(true) }
         }
       }
     } catch (cause) {
-      if (!current.signal.aborted) setError(cause instanceof Error ? cause.message : '暂时无法获取字幕，请重试。')
+      if (!current.signal.aborted) {
+        const message = cause instanceof Error ? cause.message : '暂时无法获取字幕，请重试。'
+        setError(message)
+        if (language) setLanguageRead({ language, status: 'error', error: message })
+      }
     } finally {
       if (!current.signal.aborted) setLoading(false)
     }
@@ -132,5 +158,5 @@ export function useSubtitles(videoId: string, source: 'bilibili' | 'youtube' | '
   const document: SubtitleDocument | null = origin === 'platform' ? platform : saved.length ? {
     ...(platform ?? {}), videoId, part: 1, status: platform?.status ?? 'available', tracks: saved.map(value => value.track),
   } : null
-  return { document, saved, origin, loading: loading || localLoading, localLoading, localKnown, pending, error, localError, writeError, notice, read, cancel, save, remove, useSaved, reloadSaved }
+  return { document, saved, origin, loading: loading || localLoading, localLoading, localKnown, pending, error, localError, writeError, notice, languageRead, read, cancel, save, remove, useSaved, reloadSaved }
 }

@@ -1,18 +1,20 @@
 import { Languages } from 'lucide-react'
 import { useRef } from 'react'
 import type { useSubtitleTranslation } from './useSubtitleTranslation'
+import { translationTargets } from '../subtitles/subtitleLanguageMatch'
 import './ai.css'
-export function SubtitleTranslation({ translation }: { translation: ReturnType<typeof useSubtitleTranslation> }) {
+export function SubtitleTranslation({ translation, targetLabel = '简体中文', nativeTarget, targetLanguage = 'zh-Hans', onTargetLanguageChange, hasSourceTrack = true }: { translation: ReturnType<typeof useSubtitleTranslation>; targetLabel?: string; nativeTarget?: { label: string; language: string; source?: string }; targetLanguage?: string; onTargetLanguageChange?: (language: string) => void; hasSourceTrack?: boolean }) {
   const { inspection, loading, pending, error, notice } = translation
   const done = inspection?.result.texts.length ?? 0, total = inspection?.result.total ?? 0
   const options = useRef<HTMLDetailsElement>(null)
-  if (translation.alreadyChinese) return null
+  const targetSelector = <label className="subtitle-translation-target">翻译目标<select aria-label="翻译目标语言" value={targetLanguage} onChange={event => onTargetLanguageChange?.(event.target.value)}>{translationTargets.map(([code, label]) => <option key={code} value={code}>{label}</option>)}</select></label>
+  const showAIControls = hasSourceTrack && !nativeTarget && !translation.alreadyTarget
   return <div className="subtitle-translation">
-    <div className="subtitle-translation-bar">
-      {!pending && <details ref={options} className="subtitle-translation-options"><summary><Languages size={14} aria-hidden="true" />双语翻译{done > 0 && <span>{done === total ? '已保存' : `${done}/${total}`}</span>}</summary>
+    <div className="subtitle-translation-bar">{targetSelector}
+      {showAIControls && !pending && <details ref={options} className="subtitle-translation-options"><summary><Languages size={14} aria-hidden="true" />双语翻译{done > 0 && <span>{done === total ? '已保存' : `${done}/${total}`}</span>}</summary>
         <div className="subtitle-translation-body">
           {loading && !inspection ? <p role="status">正在读取本机译文…</p> : inspection && <>
-            {inspection.settings.ready ? <p>{done < total ? `将这份字幕的 ${total} 段译为简体中文。` : '本机已有完整的简体中文译文。'}服务：<span className="ai-provider-address">{new URL(inspection.settings.baseUrl).host}</span>，模型：{inspection.settings.model}。</p> : <p>先到工具设置填写自己的翻译接口与模型。</p>}
+            {inspection.settings.ready ? <p>{done < total ? `将这份字幕的 ${total} 段译为${targetLabel}。` : `本机已有完整的${targetLabel}译文。`}服务：<span className="ai-provider-address">{new URL(inspection.settings.baseUrl).host}</span>，模型：{inspection.settings.model}。</p> : <p>先到工具设置填写自己的翻译接口与模型。</p>}
             <div className="subtitle-translation-actions">
               {done < total && <button className="button button-secondary" disabled={!inspection.settings.ready || loading || inspection.active || inspection.settings.translating} onClick={() => { if (options.current) options.current.open = false; void translation.translate() }}>{done ? '继续翻译' : '开始翻译整份字幕'}</button>}
               {total > 0 && done === total && inspection.settings.ready && <button className="text-button" title={`现有译文由 ${inspection.result.model} 生成`} disabled={loading || inspection.active || inspection.settings.translating} onClick={() => { if (options.current) options.current.open = false; void translation.translate(true) }}>用当前模型重新翻译</button>}
@@ -23,9 +25,9 @@ export function SubtitleTranslation({ translation }: { translation: ReturnType<t
           {!inspection && !loading && <button className="text-button" onClick={() => void translation.reload()}>重新读取翻译设置</button>}
         </div>
       </details>}
-      {pending && <><span role="status">正在翻译，已完成 {done} / {total} 段</span><button className="text-button" onClick={translation.cancel}>取消翻译</button></>}
-      {done > 0 && <label className="subtitle-show-translation"><input type="checkbox" checked={translation.show} onChange={event => translation.setShow(event.target.checked)} />显示简体中文译文</label>}
+      {showAIControls && pending && <><span role="status">正在翻译，已完成 {done} / {total} 段</span><button className="text-button" onClick={translation.cancel}>取消翻译</button></>}
+      {showAIControls && done > 0 && <label className="subtitle-show-translation"><input type="checkbox" checked={translation.show} onChange={event => translation.setShow(event.target.checked)} />显示{targetLabel}译文</label>}
     </div>
-    {notice && <p className="ai-translation-feedback" role="status">{notice}</p>}{error && <p className="ai-translation-feedback" role="alert">{error}</p>}
+    {showAIControls && notice && <p className="ai-translation-feedback" role="status">{notice}</p>}{showAIControls && error && <p className="ai-translation-feedback" role="alert">{error}</p>}
   </div>
 }

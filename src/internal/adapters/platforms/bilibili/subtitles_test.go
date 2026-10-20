@@ -2,6 +2,7 @@ package bilibili
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -295,9 +296,81 @@ func TestSubtitleCDNRedirectIsNotFollowed(t *testing.T) {
 	}
 }
 
+func TestReadSubtitlesCapsPrefetchAndLoadsSelectedTrackOnDemand(t *testing.T) {
+	bodyReads := map[string]int{}
+	var payload strings.Builder
+	payload.WriteString(`{"code":0,"data":{"subtitle":{"list":[`)
+	for i := 0; i < maxSubtitleTracks; i++ {
+		if i > 0 {
+			payload.WriteByte(',')
+		}
+		language, label := fmt.Sprintf("lang-%02d", i), fmt.Sprintf("Language %02d", i)
+		switch i {
+		case 0:
+			language, label = "zh-Hans", "简体中文 CC"
+		case 1:
+			language, label = "ai-zh", "简体中文 AI"
+		case 20:
+			language, label = "ai-en", "英语 AI"
+		case 21:
+			language, label = "ai-ja", "日语 AI"
+		}
+		fmt.Fprintf(&payload, `{"lan":%q,"lan_doc":%q,"subtitle_url":"https://subtitle.hdslb.com/%02d.json"}`, language, label, i)
+	}
+	payload.WriteString(`]}}}`)
+	validBody := `{"body":[{"from":0,"to":1,"content":"on demand"}]}`
+	validBody += strings.Repeat(" ", (900<<10)-len(validBody))
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/x/web-interface/view":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"title":"Fixture","cid":111,"pages":[]}}`))
+		case "/x/player/v2":
+			_, _ = w.Write([]byte(payload.String()))
+		default:
+			bodyReads[r.URL.Path]++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(validBody))
+		}
+	})
+	client := NewClient(subtitleFixtureClient(handler), "")
+	client.baseURL = "https://api.fixture.invalid"
+	doc, err := client.ReadSubtitles(context.Background(), "BV17x411w7KC")
+	if err != nil || len(doc.Languages) != maxSubtitleTracks || len(doc.Tracks) != 18 || bodyReads["/00.json"] != 1 || bodyReads["/20.json"] != 0 {
+		t.Fatalf("prefetch budget or metadata contract failed: tracks=%d langs=%d reads=%v err=%v", len(doc.Tracks), len(doc.Languages), bodyReads, err)
+	}
+	if doc.Tracks[0].Language != "zh-Hans" || doc.Tracks[1].Language != "ai-zh" {
+		t.Fatalf("default language priority did not select Simplified CC then AI: %+v", doc.Tracks[:2])
+	}
+	if !hasSubtitleLanguage(doc.Languages, "ai-en") || !hasSubtitleLanguage(doc.Languages, "ai-ja") {
+		t.Fatal("AI language metadata was omitted after the body budget")
+	}
+	selected, err := client.ReadSubtitlesLanguage(context.Background(), "BV17x411w7KC", "ai-en")
+	if err != nil || len(selected.Tracks) != 1 || selected.Tracks[0].Language != "ai-en" || selected.Tracks[0].Cues[0].Text != "on demand" {
+		t.Fatalf("selected track was not loaded: %+v %v", selected, err)
+	}
+	if bodyReads["/00.json"] != 1 || bodyReads["/20.json"] != 1 || len(bodyReads) != 19 {
+		t.Fatalf("on-demand read repeated prefetched tracks or the budget blocked the selected language: %v", bodyReads)
+	}
+	if _, err := client.ReadSubtitlesLanguage(context.Background(), "BV17x411w7KC", "../private"); err == nil {
+		t.Fatal("unsafe language selector accepted")
+	}
+}
+
+func hasSubtitleLanguage(values []subtitles.Language, language string) bool {
+	for _, value := range values {
+		if value.Language == language {
+			return true
+		}
+	}
+	return false
+}
+
 func TestSubtitlePriorityAndMismatchArePure(t *testing.T) {
 	if subtitlePriority("zh-CN", "cc") >= subtitlePriority("zh-Hans", "ai") || subtitlePriority("zh-Hans", "ai") >= subtitlePriority("en", "cc") {
 		t.Fatal("subtitle priority is not CC zh, AI zh, then other")
+	}
+	if subtitlePriority("zh-TW", "cc") <= subtitlePriority("zh-Hans", "ai") || subtitlePriority("zh", "cc") <= subtitlePriority("zh-Hans", "ai") || subtitlePriority("ai-zh", "ai") != subtitlePriority("zh-Hans", "ai") || subtitlePriority("ai-zh", "ai") >= subtitlePriority("en", "cc") {
+		t.Fatal("Simplified Chinese must outrank unspecified or Traditional Chinese, and ai-zh must remain ahead of other languages")
 	}
 	for _, language := range []string{"ai-zh", "zh-CN", "zh-Hans", "zh-Hant"} {
 		if !isChineseSubtitleLanguage(language) {

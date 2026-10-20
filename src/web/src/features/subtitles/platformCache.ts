@@ -16,10 +16,10 @@ function validDocument(value: unknown): value is SubtitleDocument {
   if (doc.errorCode !== undefined && (!Number.isInteger(doc.errorCode) || Math.abs(doc.errorCode) > 100000) ||
       doc.errorMessage !== undefined && (typeof doc.errorMessage !== 'string' || doc.errorMessage.length > 160 || unsafeErrorText.test(doc.errorMessage))) return false
   let total = 0
-  const validLanguage = (value: { language: string; label: string; automatic?: boolean; source?: string; hasUrl?: boolean }) =>
+  const validLanguage = (value: { language: string; label: string; automatic?: boolean; source?: string; hasUrl?: boolean; translated?: boolean; sourceLanguage?: string }) =>
     value && typeof value.language === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value.language) &&
     typeof value.label === 'string' && value.label.length <= 200 && (value.automatic === undefined || typeof value.automatic === 'boolean') &&
-    (value.source === undefined || value.source === 'cc' || value.source === 'ai' || value.source === 'yt-dlp') && (value.hasUrl === undefined || typeof value.hasUrl === 'boolean')
+    (value.source === undefined || value.source === 'cc' || value.source === 'ai' || value.source === 'yt-dlp' || value.source === 'youtube') && (value.hasUrl === undefined || typeof value.hasUrl === 'boolean') && (value.translated === undefined || typeof value.translated === 'boolean') && (value.sourceLanguage === undefined || typeof value.sourceLanguage === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value.sourceLanguage))
   const validTrack = (track: SubtitleDocument['tracks'][number], requireCues: boolean) => {
     if (!validLanguage(track) || (track.mismatch !== undefined && typeof track.mismatch !== 'boolean') || !Array.isArray(track.cues) || requireCues && !track.cues.length) return false
     let previous = -1
@@ -46,9 +46,13 @@ function validDocument(value: unknown): value is SubtitleDocument {
     })
   }))
   return validParts && doc.tracks.every(track => {
-    if (!validTrack(track, true) || (total += track.cues.length) > 10000) return false
+    if (!validTrack(track, false) || (total += track.cues.length) > 10000) return false
     return true
   })
+}
+
+function hasCaptionBodies(document: SubtitleDocument) {
+  return document.tracks.some(track => track.cues.length > 0) || document.parts?.some(part => part.tracks.some(track => track.cues.length > 0)) === true
 }
 
 function cache(): Map<string, Entry> {
@@ -63,7 +67,7 @@ function cache(): Map<string, Entry> {
       if (!Array.isArray(value) || value.length !== 2) continue
       const [key, entry] = value
       if (typeof key !== 'string' || !key.startsWith('/subtitles/') || key.length > 1024 || !entry ||
-          !Number.isFinite(entry.expires) || entry.expires <= Date.now() || entry.expires > Date.now() + lifetime || !validDocument(entry.document)) continue
+          !Number.isFinite(entry.expires) || entry.expires <= Date.now() || entry.expires > Date.now() + lifetime || !validDocument(entry.document) || hasCaptionBodies(entry.document)) continue
       entries.set(key, entry)
     }
   } catch { /* Storage denial or malformed data must not prevent reading. */ }
@@ -101,15 +105,15 @@ export function cacheSubtitles(key: string, document: SubtitleDocument) {
   if (!validDocument(document)) return
   if (document.status === 'rate_limited' || document.parts?.some(part => part.status === 'rate_limited')) return
   // Store only the public caption contract, never arbitrary response fields.
-  const language = (value: { language: string; label: string; automatic?: boolean; source?: 'cc' | 'ai' | 'yt-dlp'; hasUrl?: boolean }) =>
-    ({ language: value.language, label: value.label, automatic: value.automatic ?? false, ...(value.source ? { source: value.source } : {}), ...(value.hasUrl !== undefined ? { hasUrl: value.hasUrl } : {}) })
-  const track = (value: SubtitleDocument['tracks'][number]) => ({ ...language(value), ...(value.mismatch !== undefined ? { mismatch: value.mismatch } : {}), cues: value.cues.map(cue => ({ start: cue.start, end: cue.end, text: cue.text })) })
+  const language = (value: { language: string; label: string; automatic?: boolean; source?: 'cc' | 'ai' | 'yt-dlp' | 'youtube'; hasUrl?: boolean; translated?: boolean; sourceLanguage?: string }) =>
+    ({ language: value.language, label: value.label, automatic: value.automatic ?? false, ...(value.source ? { source: value.source } : {}), ...(value.hasUrl !== undefined ? { hasUrl: value.hasUrl } : {}), ...(value.translated ? { translated: true } : {}), ...(value.sourceLanguage ? { sourceLanguage: value.sourceLanguage } : {}) })
+  const metadataTrack = (value: SubtitleDocument['tracks'][number]) => ({ ...language(value), ...(value.mismatch !== undefined ? { mismatch: value.mismatch } : {}), cues: [] })
   const clean: SubtitleDocument = {
     videoId: document.videoId, part: document.part, status: document.status,
     ...(document.errorCode !== undefined ? { errorCode: document.errorCode } : {}), ...(document.errorMessage ? { errorMessage: document.errorMessage } : {}),
     languages: document.languages?.map(language),
-    parts: document.parts?.map(part => ({ cid: part.cid, page: part.page, ...(part.title ? { title: part.title } : {}), status: part.status, ...(part.aiMismatch ? { aiMismatch: true } : {}), ...(part.errorCode !== undefined ? { errorCode: part.errorCode } : {}), ...(part.errorMessage ? { errorMessage: part.errorMessage } : {}), languages: part.languages.map(language), tracks: part.tracks.map(track) })),
-    tracks: document.tracks.map(track),
+    parts: document.parts?.map(part => ({ cid: part.cid, page: part.page, ...(part.title ? { title: part.title } : {}), status: part.status, ...(part.aiMismatch ? { aiMismatch: true } : {}), ...(part.errorCode !== undefined ? { errorCode: part.errorCode } : {}), ...(part.errorMessage ? { errorMessage: part.errorMessage } : {}), languages: part.languages.map(language), tracks: part.tracks.map(metadataTrack) })),
+    tracks: document.tracks.map(metadataTrack),
   }
   cache().delete(key)
   cache().set(key, { document: clean, expires: Date.now() + lifetime })

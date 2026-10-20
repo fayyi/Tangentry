@@ -1,6 +1,7 @@
 import { openSubtitleSettings } from './subtitle-settings'
 import { expect, test, type APIRequestContext } from './e2e'
 import AxeBuilder from '@axe-core/playwright'
+import type { Page } from '@playwright/test'
 import type { SubtitleTrack } from '../src/shared/api/types'
 
 const id = 'bilibili:BVaitest0001'
@@ -58,10 +59,19 @@ async function save(request: APIRequestContext, track: SubtitleTrack) {
   const response = await request.put(`/api/saved-subtitles/${encodeURIComponent(id)}/${track.language}`, { data: { track, revision: existing?.revision ?? 0 } })
   expect(response.ok()).toBe(true)
 }
-async function inspect(request: APIRequestContext, track: SubtitleTrack) {
-  const result = await request.post('/api/ai/subtitles/inspect', { data: { contentId: id, track, revision: 0 } })
+async function inspect(request: APIRequestContext, track: SubtitleTrack, targetLanguage = 'zh-Hant') {
+  const result = await request.post('/api/ai/subtitles/inspect', { data: { contentId: id, track, targetLanguage, revision: 0 } })
   expect(result.ok()).toBe(true)
   return result.json()
+}
+async function prepareAITranslation(page: Page, language = 'en', target = 'zh-Hant') {
+  await openSubtitleSettings(page)
+  await page.getByLabel('翻译目标语言', { exact: true }).selectOption(target)
+  await page.getByLabel('字幕语言', { exact: true }).selectOption(language)
+}
+async function selectSubtitleLanguage(page: Page, language: string) {
+  await openSubtitleSettings(page)
+  await page.getByLabel('字幕语言', { exact: true }).selectOption(language)
 }
 test('Chinese subtitles skip AI requests and duplicate translations; English still exposes translation', async ({ page }) => {
   const requests: string[] = []
@@ -83,20 +93,90 @@ test('Chinese subtitles skip AI requests and duplicate translations; English sti
     const cues = page.getByRole('list', { name: '字幕段落' })
     await expect(cues).toContainText(chinese.cues[0].text)
     if (intro) await expect(cues).toContainText(chinese.cues[199].text)
-    await expect(page.locator('.subtitle-translation')).toHaveCount(0)
+    await openSubtitleSettings(page)
+    await expect(page.getByLabel('翻译目标语言', { exact: true })).toBeVisible()
+    await expect(page.locator('.subtitle-translation summary')).toHaveCount(0)
     await expect(cues.locator('.subtitle-translated')).toHaveCount(0)
     expect(requests.length).toBe(before)
     if (!multilingual) continue
     await openSubtitleSettings(page)
     await page.getByLabel('字幕语言', { exact: true }).selectOption('en')
+    await page.getByLabel('翻译目标语言', { exact: true }).selectOption('fr')
     await expect(page.locator('.subtitle-translation summary')).toBeVisible()
     await expect.poll(() => requests.length).toBeGreaterThan(before)
     await openSubtitleSettings(page)
     await page.getByLabel('字幕语言', { exact: true }).selectOption(language)
-    await expect(page.locator('.subtitle-translation')).toHaveCount(0)
+    await page.getByLabel('翻译目标语言', { exact: true }).selectOption('zh-Hans')
+    await expect(page.locator('.subtitle-translation summary')).toHaveCount(0)
     await expect(cues).toContainText(chinese.cues[0].text)
     await expect(cues.locator('.subtitle-translated')).toHaveCount(0)
   }
+})
+
+test('native platform targets use their own timeline and AI fallback keeps the selected target', async ({ page }) => {
+  const english = { language: 'en', label: '英语', automatic: false, source: 'cc', cues: [{ start: 0, end: 4, text: 'Original source sentence.' }] }
+  const japanese = { language: 'ja', label: '日语', automatic: false, source: 'cc', cues: [{ start: 20, end: 23, text: '日本語の字幕。' }, { start: 30, end: 33, text: '別の時間軸。' }] }
+  const traditional = { language: 'zh-TW', label: '繁体中文', automatic: false, source: 'cc', cues: [{ start: 40, end: 43, text: '繁體原生字幕。' }] }
+  const languages = [
+    { language: 'en', label: '英语', automatic: false, source: 'cc', hasUrl: true },
+    { language: 'ja', label: '日语', automatic: false, source: 'cc', hasUrl: true },
+    { language: 'zh-TW', label: '繁体中文', automatic: false, source: 'cc', hasUrl: true },
+    { language: 'fr', label: '法语', automatic: false, source: 'cc', hasUrl: false },
+  ]
+  const inspections: string[] = [], translations: string[] = []
+  const reads: string[] = []
+  await page.route('**/api/subtitles/bilibili?**', route => {
+    const language = new URL(route.request().url()).searchParams.get('language')
+    if (language) reads.push(language)
+    const track = language === 'ja' ? japanese : language === 'zh-TW' ? traditional : english
+    return route.fulfill({ json: { videoId: 'BVnative0001', part: 1, status: 'available', tracks: [track], languages } })
+  })
+  await page.route('**/api/ai/subtitles/inspect', route => {
+    const body = route.request().postDataJSON()
+    inspections.push(body.targetLanguage)
+    return route.fulfill({ json: { settings: { ready: true, baseUrl: 'https://ai-fixture.example/v1', model: 'fixture-model', revision: 1, translating: false }, result: { key: 'a'.repeat(64), contentId: body.contentId, language: body.track.language, targetLanguage: body.targetLanguage, baseUrl: 'https://ai-fixture.example/v1', model: 'fixture-model', total: body.track.cues.length, texts: [], updatedAt: 0 }, active: false } })
+  })
+  await page.route('**/api/ai/subtitles/translate', route => {
+    const body = route.request().postDataJSON()
+    translations.push(body.targetLanguage)
+    return route.fulfill({ json: { key: 'a'.repeat(64), contentId: body.contentId, language: body.track.language, targetLanguage: body.targetLanguage, baseUrl: 'https://ai-fixture.example/v1', model: 'fixture-model', total: body.track.cues.length, texts: body.track.cues.map((_cue: unknown, index: number) => `Fixture translation ${body.targetLanguage} ${index + 1}.`), updatedAt: 0 } })
+  })
+
+  await page.goto('/reader?video=BVnative0001')
+  const cues = page.getByRole('list', { name: '字幕段落' })
+  await expect(cues).toContainText('Original source sentence.')
+  const initialInspections = inspections.length
+  await openSubtitleSettings(page)
+  await page.getByLabel('翻译目标语言', { exact: true }).selectOption('ja')
+  await expect(cues).toContainText('日本語の字幕。')
+  await expect(cues).toContainText('別の時間軸。')
+  await expect(cues.locator('.subtitle-translated')).toHaveCount(0)
+  await expect(page.locator('.subtitle-native-source').last()).toContainText('B 站 CC 提供的日语字幕 · 当前显示平台单语字幕')
+  expect(translations).toEqual([])
+  expect(inspections).toHaveLength(initialInspections)
+  const nativeCueStarts = await cues.locator('[data-cue-start]').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-cue-start')))
+  expect(nativeCueStarts).toEqual(['20', '30'])
+
+  await page.getByLabel('翻译目标语言', { exact: true }).selectOption('zh-Hans')
+  await expect(cues).toContainText('Original source sentence.')
+  await expect.poll(() => inspections.includes('zh-Hans')).toBe(true)
+  const unmatchedInspectionCount = inspections.length
+  await page.getByLabel('翻译目标语言', { exact: true }).selectOption('zh-Hant')
+  await expect(cues).toContainText('繁體原生字幕。')
+  await expect(cues).not.toContainText('日本語の字幕。')
+  await expect(cues.locator('.subtitle-translated')).toHaveCount(0)
+  expect(translations).toEqual([])
+  expect(inspections).toHaveLength(unmatchedInspectionCount)
+
+  await page.getByLabel('翻译目标语言', { exact: true }).selectOption('fr')
+  await expect(cues).toContainText('Original source sentence.')
+  await expect.poll(() => inspections.includes('fr')).toBe(true)
+  await page.locator('.subtitle-translation summary').click()
+  await page.getByRole('button', { name: '开始翻译整份字幕', exact: true }).click()
+  await expect.poll(() => translations).toContain('fr')
+  await page.getByLabel('翻译目标语言', { exact: true }).selectOption('en')
+  await expect(cues).toContainText('Original source sentence.')
+  expect(translations).toEqual(['fr'])
 })
 test('AI settings explicitly select a model, retain private keys only for the same endpoint, and never start translation', async ({ page, request }) => {
   let starts = 0; page.on('request', r => { if (r.url().endsWith('/api/ai/subtitles/translate')) starts++ })
@@ -131,11 +211,13 @@ test('AI settings explicitly select a model, retain private keys only for the sa
   await configure(request, 'fixture-translation')
 })
 
-test('explicit full-track translation keeps original timings, simplifies output, supports bilingual search/study and persists across reload', async ({ page, request }) => {
+test('explicit full-track translation keeps original timings, uses the selected target, supports bilingual search/study and persists across reload', async ({ page, request }) => {
   await configure(request, 'fixture-bilingual'); const track = source(4); await save(request, track)
   let starts = 0; page.on('request', r => { if (r.url().endsWith('/api/ai/subtitles/translate')) starts++ })
   await page.goto('/reader?video=BVaitest0001')
   const cues = page.getByRole('list', { name: '字幕段落' })
+  await selectSubtitleLanguage(page, 'en')
+  await page.getByLabel('翻译目标语言', { exact: true }).selectOption('zh-Hant')
   await expect(cues).toContainText('Original sentence 1.'); expect(starts).toBe(0)
   await page.getByRole('button', { name: '播放视频 BVaitest0001', exact: true }).click()
   const video = page.getByLabel('B站在线视频播放器', { exact: true })
@@ -144,8 +226,9 @@ test('explicit full-track translation keeps original timings, simplifies output,
   await openSubtitleSettings(page)
   await page.locator('.subtitle-translation summary').click()
   await page.getByRole('button', { name: '开始翻译整份字幕', exact: true }).click()
-  await expect(page.locator('.subtitle-translation').getByRole('status')).toContainText('简体中文译文已保存到本机')
-  await expect(cues).toContainText('这是第1句的中文译文。')
+  await expect(page.locator('.subtitle-translation').getByRole('status')).toContainText('繁体中文译文已保存到本机')
+  await expect(cues).toContainText('Fixture translation zh-Hant 1.')
+  await expect(cues.locator('.subtitle-translated').first()).toHaveAttribute('lang', 'zh-Hant')
   await expect(cues.locator('.subtitle-translated')).toHaveCount(4)
   const original = (await (await request.get('/api/saved-subtitles?contentId=' + encodeURIComponent(id))).json()).tracks.find((value: { track: SubtitleTrack }) => value.track.language === 'en').track
   expect(original).toEqual(track)
@@ -155,13 +238,13 @@ test('explicit full-track translation keeps original timings, simplifies output,
   await expect(cues).toContainText('Original sentence 3.')
   await cues.getByRole('button', { name: '跳转播放时间 00:02', exact: true }).click()
   await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.currentTime)).toBeCloseTo(2.125, 2)
-  await expect(cues.locator('[aria-current=true]')).toContainText('这是第3句的中文译文。')
+  await expect(cues.locator('[aria-current=true]')).toContainText('Fixture translation zh-Hant 3.')
   await openSubtitleSettings(page)
   await page.getByLabel('搜索字幕', { exact: true }).fill('')
   await cues.getByRole('button', { name: '跳转播放时间 00:00', exact: true }).click()
   await openSubtitleSettings(page)
   await page.getByRole('button', { name: '语言学习', exact: true }).click()
-  await expect(page.getByLabel('逐句学习')).toContainText('这是第1句的中文译文。')
+  await expect(page.getByLabel('逐句学习')).toContainText('Fixture translation zh-Hant 1.')
   await page.getByRole('button', { name: '隐藏原文', exact: true }).click()
   await expect(page.getByLabel('逐句学习').locator('.subtitle-translated')).toHaveCount(0)
   await page.getByRole('button', { name: '显示原文', exact: true }).click()
@@ -187,12 +270,15 @@ test('explicit full-track translation keeps original timings, simplifies output,
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([])
   await openSubtitleSettings(page)
   await page.locator('.subtitle-translation').scrollIntoViewIfNeeded()
-  await page.reload(); await expect(cues).toContainText('这是第1句的中文译文。'); expect(starts).toBe(1)
+  await page.reload()
+  await prepareAITranslation(page, 'en', 'zh-Hant')
+  await expect(cues).toContainText('Fixture translation zh-Hant 1.'); expect(starts).toBe(1)
 })
 
 test('failed batch retains committed translations and manual continuation does not overwrite source and survives timestamp changes', async ({ page, request }) => {
   await configure(request, 'fixture-partial'); const track = source(40); await save(request, track)
   await page.goto('/reader?video=BVaitest0001')
+  await prepareAITranslation(page)
   await expect(page.getByRole('list', { name: '字幕段落' })).toContainText('Original sentence 40.')
   await openSubtitleSettings(page)
   await page.locator('.subtitle-translation summary').click()
@@ -202,11 +288,12 @@ test('failed batch retains committed translations and manual continuation does n
   await openSubtitleSettings(page)
   await page.locator('.subtitle-translation summary').click()
   await page.getByRole('button', { name: '继续翻译', exact: true }).click()
-  await expect(page.locator('.subtitle-translation').getByRole('status')).toContainText('简体中文译文已保存到本机')
+  await expect(page.locator('.subtitle-translation').getByRole('status')).toContainText('繁体中文译文已保存到本机')
   expect((await inspect(request, track)).result.texts).toHaveLength(40)
   // Translations follow the text, so retimed cues keep them without new calls.
   track.cues[0].start += 0.1; await save(request, track); await page.reload()
-  await expect(page.locator('.subtitle-cues .subtitle-translated').first()).toContainText('这是第1句的中文译文。')
+  await prepareAITranslation(page)
+  await expect(page.locator('.subtitle-cues .subtitle-translated').first()).toContainText('Fixture translation zh-Hant 1.')
   expect((await inspect(request, track)).result.texts).toHaveLength(40)
   await openSubtitleSettings(page)
   await page.locator('.subtitle-translation summary').click()
@@ -230,8 +317,7 @@ test('changing subtitle language during translation cancels the old scope and pe
     } else await route.continue()
   })
   await page.goto('/reader?video=BVaitest0001')
-  await openSubtitleSettings(page)
-  await page.getByLabel('字幕语言', { exact: true }).selectOption('en')
+  await prepareAITranslation(page, 'en', 'ja')
   await openSubtitleSettings(page)
   await page.locator('.subtitle-translation summary').click()
   await page.getByRole('button', { name: '开始翻译整份字幕', exact: true }).click()
@@ -253,7 +339,7 @@ test('changing subtitle language during translation cancels the old scope and pe
 test('cancel or navigating away aborts the provider request, leaves partial cache, and a configuration change requires renewed explicit action', async ({ page, request }) => {
   await configure(request, 'fixture-cancel'); const track = source(40); await save(request, track)
   await page.goto('/reader?video=BVaitest0001')
-  await openSubtitleSettings(page)
+  await prepareAITranslation(page)
   await page.locator('.subtitle-translation summary').click()
   await page.getByRole('button', { name: '开始翻译整份字幕', exact: true }).click()
   await expect.poll(async () => (await inspect(request, track)).result.texts.length).toBe(32)
@@ -291,6 +377,7 @@ test('YouTube and RSS podcast readers receive the same isolated bilingual assist
     try {
       await page.goto('/reader?contentId=' + encodeURIComponent(item.id))
       const cues = page.getByRole('list', { name: '字幕段落' })
+      await prepareAITranslation(page)
       await expect(cues).toContainText('Original sentence 1.')
       // The second source has the same text and reuses the first translation.
       if (index === 0) {
@@ -298,12 +385,14 @@ test('YouTube and RSS podcast readers receive the same isolated bilingual assist
         await page.locator('.subtitle-translation summary').click()
         await page.getByRole('button', { name: '开始翻译整份字幕', exact: true }).click()
       }
-      await expect(cues).toContainText('这是第1句的中文译文。')
+      await expect(cues).toContainText('Fixture translation zh-Hant 1.')
       const records = (await (await request.get('/api/saved-subtitles?contentId=' + encodeURIComponent(item.id))).json()).tracks
       expect(records.map((value: { track: SubtitleTrack }) => value.track)).toEqual([track])
-      const result = await request.post('/api/ai/subtitles/inspect', { data: { contentId: item.id, track, revision: 0 } })
+      const result = await request.post('/api/ai/subtitles/inspect', { data: { contentId: item.id, track, targetLanguage: 'zh-Hant', revision: 0 } })
       expect((await result.json()).result.contentId).toBe(item.id)
-      await page.reload(); await expect(cues).toContainText('这是第1句的中文译文。')
+      await page.reload()
+      await prepareAITranslation(page)
+      await expect(cues).toContainText('Fixture translation zh-Hant 1.')
     } finally {
       await page.goto('/notes')
       await request.delete(`/api/saved-subtitles/${encodeURIComponent(item.id)}/en?revision=1`)

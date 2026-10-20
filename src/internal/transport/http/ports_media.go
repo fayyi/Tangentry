@@ -37,6 +37,7 @@ type CompatibilityService interface {
 
 type SubtitleService interface {
 	Read(context.Context, string) (subtitles.Document, error)
+	ReadLanguage(context.Context, string, string) (subtitles.Document, error)
 	ReadYouTube(context.Context, string, string) (subtitles.Document, error)
 }
 

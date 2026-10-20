@@ -2,13 +2,15 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { request } from '../../shared/api/client'
 import type { SubtitleTrack } from '../../shared/api/types'
 import type { TranslationInspection, TranslationResult } from './types'
-import { isChineseTrack } from '../../shared/text/chineseText'
 import { usePageVisibility } from '../../shared/hooks/usePageVisibility'
+import { preferredSubtitleLanguage, subtitleTargetLabel, subtitleTrackMatchesTarget } from '../subtitles/subtitleLanguageMatch'
+import type { SubtitleLanguage } from '../../shared/api/types'
 
-export function useSubtitleTranslation(contentId: string, track?: SubtitleTrack, source?: 'title' | 'article') {
+export function useSubtitleTranslation(contentId: string, track?: SubtitleTrack, source?: 'title' | 'article', targetLanguage = 'zh-Hans', platformLanguages: readonly SubtitleLanguage[] = [], platformLanguagesReady = true) {
   const visible = usePageVisibility()
-  const alreadyChinese = useMemo(() => source !== 'article' && isChineseTrack(track), [track, source])
-  const scope = useMemo(() => track ? JSON.stringify([contentId, track.language, track.cues]) : '', [contentId, track])
+  const nativeAvailable = source !== 'article' && Boolean(preferredSubtitleLanguage(platformLanguages, targetLanguage))
+  const alreadyTarget = useMemo(() => Boolean(track && source !== 'article' && subtitleTrackMatchesTarget(track, targetLanguage)), [track, source, targetLanguage])
+  const scope = useMemo(() => track ? JSON.stringify([contentId, track.language, targetLanguage, track.cues]) : '', [contentId, track, targetLanguage])
   const liveScope = useRef(scope); liveScope.current = scope
   const [inspection, setInspection] = useState<TranslationInspection | null>(null)
   const [dataScope, setDataScope] = useState('')
@@ -20,11 +22,11 @@ export function useSubtitleTranslation(contentId: string, track?: SubtitleTrack,
     if (track && !mutation.current && !reader.current) void reload()
   }
   async function reload() {
-    if (!track || alreadyChinese) return
+    if (!track || alreadyTarget) return
     reader.current?.abort(); const current = new AbortController(); reader.current = current
     const requestedScope = scope; if (dataScope !== requestedScope) setLoading(true)
     try {
-      const value = await request<TranslationInspection>('/ai/subtitles/inspect', { method: 'POST', signal: current.signal, body: JSON.stringify({ contentId, track, source, revision: 0 }) })
+      const value = await request<TranslationInspection>('/ai/subtitles/inspect', { method: 'POST', signal: current.signal, body: JSON.stringify({ contentId, track, source, targetLanguage, revision: 0 }) })
       if (!current.signal.aborted && liveScope.current === requestedScope) { setDataScope(requestedScope); setInspection(value); setError('') }
     } catch (cause) { if (!current.signal.aborted && liveScope.current === requestedScope) setError(cause instanceof Error ? cause.message : '本机译文暂不可用。') }
     finally {
@@ -34,9 +36,15 @@ export function useSubtitleTranslation(contentId: string, track?: SubtitleTrack,
   }
   useEffect(() => {
     setInspection(null); setError(''); setNotice(''); setPending(false); setLoading(false); setShow(true)
-    if (track && !alreadyChinese) void reload()
-    return () => { reader.current?.abort(); reader.current = null; mutation.current?.abort(); mutation.current = null }
-  }, [scope, alreadyChinese])
+    const shouldLoad = track && platformLanguagesReady && !alreadyTarget && !nativeAvailable
+    const timer = shouldLoad ? setTimeout(() => void reload(), 0) : undefined
+    return () => {
+      if (timer) clearTimeout(timer)
+      reader.current?.abort(); reader.current = null
+      mutation.current?.abort(); mutation.current = null
+      setPending(false)
+    }
+  }, [scope, alreadyTarget, nativeAvailable])
   useEffect(() => {
     if (!scope) return
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -56,16 +64,16 @@ export function useSubtitleTranslation(contentId: string, track?: SubtitleTrack,
     }
   }, [scope])
   useEffect(() => {
-    if (!visible || pending || loading || error || dataScope !== scope || (!inspection?.active && !inspection?.settings.translating)) return
+    if (nativeAvailable || !visible || pending || loading || error || dataScope !== scope || (!inspection?.active && !inspection?.settings.translating)) return
     // A canceled request can outlive its browser connection while the server
     // finishes a batch. Inspect its lock until release; never restart the model.
     // Each inspection is a new object, so every answer re-arms the next check.
     const timer = setTimeout(() => void reload(), 1000)
     return () => clearTimeout(timer)
-  }, [visible, pending, loading, error, dataScope, scope, inspection])
+  }, [nativeAvailable, visible, pending, loading, error, dataScope, scope, inspection])
   // regenerate replaces the stored translation with one from the current model.
   async function translate(regenerate = false) {
-    if (alreadyChinese || !track || !inspection || dataScope !== scope || pending || mutation.current || inspection.active || inspection.settings.translating) return
+    if (alreadyTarget || nativeAvailable || !track || !inspection || dataScope !== scope || pending || mutation.current || inspection.active || inspection.settings.translating) return
     const current = new AbortController(); mutation.current = current
     const requestedScope = scope, snapshot = inspection
     setPending(true); setError(''); setNotice(''); setShow(true)
@@ -81,8 +89,8 @@ export function useSubtitleTranslation(contentId: string, track?: SubtitleTrack,
     }
     timer = setTimeout(() => void progress(), 700)
     try {
-      const value = await request<TranslationResult>('/ai/subtitles/translate', { method: 'POST', signal: current.signal, body: JSON.stringify({ contentId, track, source, revision: snapshot.settings.revision, ...(regenerate ? { regenerate } : {}) }) })
-      if (!current.signal.aborted && liveScope.current === requestedScope) { setInspection({ ...snapshot, result: value, active: false }); setNotice('简体中文译文已保存到本机。') }
+      const value = await request<TranslationResult>('/ai/subtitles/translate', { method: 'POST', signal: current.signal, body: JSON.stringify({ contentId, track, source, targetLanguage, revision: snapshot.settings.revision, ...(regenerate ? { regenerate } : {}) }) })
+      if (!current.signal.aborted && liveScope.current === requestedScope) { setInspection({ ...snapshot, result: value, active: false }); setNotice(`${subtitleTargetLabel(targetLanguage)}译文已保存到本机。`) }
     } catch (cause) {
       if (!current.signal.aborted && liveScope.current === requestedScope) {
         // Recover only already committed batches. Never retry the model call.
@@ -99,5 +107,5 @@ export function useSubtitleTranslation(contentId: string, track?: SubtitleTrack,
     mutation.current?.abort(); mutation.current = null; setPending(false)
     setNotice('已取消翻译，已完成部分保留。'); void reload()
   }
-  return { alreadyChinese, inspection: !alreadyChinese && dataScope === scope ? inspection : null, loading, pending, error, notice, show: show && !alreadyChinese, setShow, reload, translate, cancel }
+  return { alreadyChinese: alreadyTarget, alreadyTarget, nativeAvailable, targetLanguage, inspection: !alreadyTarget && !nativeAvailable && dataScope === scope ? inspection : null, loading: loading && !nativeAvailable, pending: pending && !nativeAvailable, error: nativeAvailable ? '' : error, notice: nativeAvailable ? '' : notice, show: show && !alreadyTarget && !nativeAvailable, setShow, reload, translate, cancel }
 }

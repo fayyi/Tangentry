@@ -65,7 +65,7 @@ func (s *Service) Inspect(ctx context.Context, in Input) (Inspection, error) {
 	s.mu.Lock()
 	c, active := s.config, s.active
 	s.mu.Unlock()
-	if chineseSubtitles(in) {
+	if subtitleAlreadyTarget(in) {
 		status := s.publicStatus(c)
 		status.Translating = active != ""
 		return Inspection{Settings: status, Result: originalSubtitleResult(in, c)}, nil
@@ -110,11 +110,12 @@ func (s *Service) Translate(parent context.Context, in Input) (Result, error) {
 		return Result{}, ErrStorage
 	}
 	c := s.config
+	c.TranslationTarget = inputTargetLanguage(in)
 	if in.Revision != c.Revision {
 		s.mu.Unlock()
 		return Result{}, ErrConflict
 	}
-	if chineseSubtitles(in) {
+	if subtitleAlreadyTarget(in) {
 		s.mu.Unlock()
 		return originalSubtitleResult(in, c), nil
 	}
@@ -165,9 +166,13 @@ func (s *Service) Translate(parent context.Context, in Input) (Result, error) {
 	if err := s.write(ctx, kind, result); err != nil {
 		return Result{}, err
 	}
-	converter, err := opencc.New("t2s")
-	if err != nil {
-		return Result{}, ErrFormat
+	var converter *opencc.OpenCC
+	if result.TargetLanguage == targetChinese {
+		var err error
+		converter, err = opencc.New("t2s")
+		if err != nil {
+			return Result{}, ErrFormat
+		}
 	}
 	// One smaller-batch recovery per explicit operation. Successful halves use
 	// the same prefix cache, so cancellation never discards committed progress.
@@ -219,8 +224,14 @@ func (s *Service) Translate(parent context.Context, in Input) (Result, error) {
 			if out.Index < start || out.Index >= end || seen[out.Index] || !utf8.ValidString(out.Text) || len(out.Text) > 24000 || strings.TrimSpace(out.Text) == "" {
 				return Result{}, ErrFormat
 			}
-			converted, err := converter.Convert(strings.TrimSpace(out.Text))
-			if err != nil || len(converted) > 24000 {
+			converted := strings.TrimSpace(out.Text)
+			if converter != nil {
+				converted, err = converter.Convert(converted)
+				if err != nil {
+					return Result{}, ErrFormat
+				}
+			}
+			if len(converted) > 24000 {
 				return Result{}, ErrFormat
 			}
 			seen[out.Index] = true

@@ -28,20 +28,24 @@ type Cue struct {
 }
 
 type Track struct {
-	Language  string `json:"language"`
-	Label     string `json:"label"`
-	Automatic bool   `json:"automatic"`
-	Source    string `json:"source,omitempty"`
-	Mismatch  bool   `json:"mismatch,omitempty"`
-	Cues      []Cue  `json:"cues"`
+	Language       string `json:"language"`
+	Label          string `json:"label"`
+	Automatic      bool   `json:"automatic"`
+	Source         string `json:"source,omitempty"`
+	Translated     bool   `json:"translated,omitempty"`
+	SourceLanguage string `json:"sourceLanguage,omitempty"`
+	Mismatch       bool   `json:"mismatch,omitempty"`
+	Cues           []Cue  `json:"cues"`
 }
 
 type Language struct {
-	Language  string `json:"language"`
-	Label     string `json:"label"`
-	Automatic bool   `json:"automatic"`
-	Source    string `json:"source,omitempty"`
-	HasURL    bool   `json:"hasUrl"`
+	Language       string `json:"language"`
+	Label          string `json:"label"`
+	Automatic      bool   `json:"automatic"`
+	Source         string `json:"source,omitempty"`
+	HasURL         bool   `json:"hasUrl"`
+	Translated     bool   `json:"translated,omitempty"`
+	SourceLanguage string `json:"sourceLanguage,omitempty"`
 }
 
 type Part struct {
@@ -72,6 +76,10 @@ type Provider interface {
 	ReadSubtitles(context.Context, string) (Document, error)
 }
 
+type LanguageProvider interface {
+	ReadSubtitlesLanguage(context.Context, string, string) (Document, error)
+}
+
 type YouTubeProvider interface {
 	ReadYouTubeSubtitles(context.Context, string, string) (Document, error)
 }
@@ -97,6 +105,18 @@ func (s *Service) Read(ctx context.Context, query string) (Document, error) {
 		return Document{}, ErrInvalid
 	}
 	return s.withReader(ctx, func(ctx context.Context) (Document, error) { return s.provider.ReadSubtitles(ctx, id) })
+}
+
+func (s *Service) ReadLanguage(ctx context.Context, query, language string) (Document, error) {
+	kind, id, err := discovery.ParseQuery(query)
+	if err != nil || kind != "video" || len(query) > 500 || !savedLanguage.MatchString(language) {
+		return Document{}, ErrInvalid
+	}
+	provider, ok := s.provider.(LanguageProvider)
+	if !ok {
+		return Document{}, ErrTools
+	}
+	return s.withReader(ctx, func(ctx context.Context) (Document, error) { return provider.ReadSubtitlesLanguage(ctx, id, language) })
 }
 
 func (s *Service) ReadYouTube(ctx context.Context, query, language string) (Document, error) {

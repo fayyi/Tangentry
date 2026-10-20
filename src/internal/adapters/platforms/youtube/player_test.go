@@ -37,12 +37,12 @@ func TestPlayerUsesSignedSessionAndFiltersTracks(t *testing.T) {
 		if json.Unmarshal(body, &payload) != nil || payload["videoId"] != "jNQXAC9IVRw" {
 			t.Fatal("invalid player payload")
 		}
-		return playerResponse(200, `{"playabilityStatus":{"status":"OK"},"videoDetails":{"videoId":"jNQXAC9IVRw"},"captions":{"playerCaptionsTracklistRenderer":{"captionTracks":[{"baseUrl":"https://www.youtube.com/api/timedtext?lang=en&v=jNQXAC9IVRw","languageCode":"en","name":{"simpleText":"English"}},{"baseUrl":"https://www.youtube.com/api/timedtext?lang=zh-Hans&v=jNQXAC9IVRw","languageCode":"zh-Hans","kind":"asr"},{"baseUrl":"https://evil.example/api/timedtext?lang=ja&v=jNQXAC9IVRw","languageCode":"ja"},{"baseUrl":"https://www.youtube.com/api/timedtext?lang=ja&tlang=en&v=jNQXAC9IVRw","languageCode":"ja"}]}}}`, req), nil
+		return playerResponse(200, `{"playabilityStatus":{"status":"OK"},"videoDetails":{"videoId":"jNQXAC9IVRw"},"captions":{"playerCaptionsTracklistRenderer":{"captionTracks":[{"baseUrl":"https://www.youtube.com/api/timedtext?lang=en&v=jNQXAC9IVRw","languageCode":"en","name":{"simpleText":"English"}},{"baseUrl":"https://www.youtube.com/api/timedtext?lang=zh-Hans&v=jNQXAC9IVRw","languageCode":"zh-Hans","kind":"asr"},{"baseUrl":"https://evil.example/api/timedtext?lang=ja&v=jNQXAC9IVRw","languageCode":"ja"},{"baseUrl":"https://www.youtube.com/api/timedtext?lang=ja&tlang=en&v=jNQXAC9IVRw","languageCode":"ja"},{"baseUrl":"https://www.youtube.com/api/timedtext?lang=ja&tlang=en&v=jNQXAC9IVRw","languageCode":"en"}]}}}`, req), nil
 	})}
 	player := NewPlayer(client)
 	player.Now = func() time.Time { return time.Unix(1_800_000_000, 0) }
 	result := player.Fetch(context.Background(), "jNQXAC9IVRw", cookie)
-	if result.Error != "" || len(result.Tracks) != 2 || result.Tracks[1].Kind != "asr" {
+	if result.Error != "" || len(result.Tracks) != 3 || result.Tracks[1].Kind != "asr" || !result.Tracks[2].Translated || result.Tracks[2].Language != "en" || result.Tracks[2].SourceLanguage != "ja" {
 		t.Fatalf("unexpected tracks: %+v", result)
 	}
 	if !bootstrapSeen || seen.URL.Path != "/youtubei/v1/player" || seen.Header.Get("Cookie") != cookie || !strings.HasPrefix(seen.Header.Get("Authorization"), "SAPISIDHASH ") {
