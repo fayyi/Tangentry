@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net/http"
 	"reflect"
+	"regexp"
+	"strings"
 
 	"tangentry/internal/articles"
 	"tangentry/internal/content"
@@ -287,9 +289,27 @@ func platformUnavailable(w http.ResponseWriter, err error) {
 		return
 	}
 	status, code := http.StatusBadGateway, "platform_unavailable"
+	if platform.Code != "" {
+		code = platform.Code
+	}
 	if platform.Restricted {
-		status, code = http.StatusTooManyRequests, "platform_restricted"
+		status = http.StatusTooManyRequests
+		if platform.Code == "" {
+			code = "platform_restricted"
+		}
 		w.Header().Set("Retry-After", "60")
 	}
-	write(w, status, apiError{code, platform.Message})
+	message := platform.Message
+	if strings.HasPrefix(platform.Code, "xiaohongshu_") {
+		message = redactXiaohongshuError(message)
+	}
+	write(w, status, apiError{code, message})
+}
+
+var xiaohongshuSensitivePattern = regexp.MustCompile(`(?i)((?:[?&]|\b)(?:xsec_token|xsec_source|access_token|web_session|session|sid|token|sign|signature|auth|authorization|cookie)=)[^&#\s"'<>]*`)
+var xiaohongshuSensitiveFieldPattern = regexp.MustCompile(`(?i)(["']?(?:xsec_token|xsec_source|token|sign|signature|authorization|cookie|web_session|session)["']?\s*[:=]\s*["']?)[^"'&,}\s<>]+`)
+
+func redactXiaohongshuError(message string) string {
+	message = xiaohongshuSensitivePattern.ReplaceAllString(message, "$1[已脱敏]")
+	return xiaohongshuSensitiveFieldPattern.ReplaceAllString(message, "$1[已脱敏]")
 }

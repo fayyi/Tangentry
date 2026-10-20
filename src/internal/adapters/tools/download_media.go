@@ -156,6 +156,11 @@ func (t *Toolkit) DownloadMedia(ctx context.Context, rawURL, directory string, h
 	if err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
 		return downloads.Result{}, errors.New("下载未产生完整的媒体文件。")
 	}
+	if options.Mode != "audio" {
+		if platform, _, _, parseErr := discovery.VideoURL(rawURL); parseErr == nil && platform == "xiaohongshu" && info.Size() < 100<<10 {
+			return downloads.Result{}, errors.New("小红书视频文件过小，疑似触发风控。请稍后重试，或在工具设置配置小红书 Cookie。")
+		}
+	}
 	result := downloads.Result{FileName: filepath.Base(abs), FileSize: info.Size(), OriginalSize: info.Size()}
 	if options.Mode != "audio" && (options.VideoOnly || options.Compress) {
 		return t.optimizeVideo(ctx, abs, options, result)

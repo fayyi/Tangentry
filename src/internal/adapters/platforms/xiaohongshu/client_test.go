@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"tangentry/internal/content"
 	"tangentry/internal/discovery"
@@ -212,7 +213,7 @@ func TestCookieDoesNotFollowRedirectAndFailuresAreSafe(t *testing.T) {
 			}
 			return response(r, 200, fixturePage("normal"), nil), nil
 		})}}
-		_, err := c.Note(context.Background(), "https://www.xiaohongshu.com/explore/"+noteID)
+		_, err := c.Note(context.Background(), "https://www.xiaohongshu.com/explore/"+noteID+"?xsec_token=fixture-access")
 		if err == nil || strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "127.0.0.1") {
 			t.Fatal(err)
 		}
@@ -220,20 +221,20 @@ func TestCookieDoesNotFollowRedirectAndFailuresAreSafe(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	c := &Client{HTTP: &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) { return nil, r.Context().Err() })}}
-	if _, err := c.Note(ctx, "https://www.xiaohongshu.com/explore/"+noteID); err != context.Canceled {
+	if _, err := c.Note(ctx, "https://www.xiaohongshu.com/explore/"+noteID+"?xsec_token=fixture-access"); err != context.Canceled {
 		t.Fatal("cancellation not preserved", err)
 	}
 	c.HTTP.Transport = roundTrip(func(r *http.Request) (*http.Response, error) {
 		return response(r, 200, strings.Repeat("x", (4<<20)+1), nil), nil
 	})
-	if _, err := c.Note(context.Background(), "https://www.xiaohongshu.com/explore/"+noteID); err == nil {
+	if _, err := c.Note(context.Background(), "https://www.xiaohongshu.com/explore/"+noteID+"?xsec_token=fixture-access"); err == nil {
 		t.Fatal("oversize accepted")
 	}
 }
 
 func TestNoteRateLimitsAreClassifiedAtShareAndDetailBoundaries(t *testing.T) {
-	for _, raw := range []string{"https://xhslink.com/a/Fixture", "https://www.xiaohongshu.com/explore/" + noteID} {
-		for _, status := range []int{429, 401, 403, 404, 500} {
+	for _, raw := range []string{"https://xhslink.com/a/Fixture", "https://www.xiaohongshu.com/explore/" + noteID + "?xsec_token=fixture-access"} {
+		for _, status := range []int{429, 401, 403, 404, 461, 471, 500} {
 			calls := 0
 			c := &Client{Cookie: func(string) string { return "session=private-fixture" }, HTTP: &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
 				calls++
@@ -241,7 +242,15 @@ func TestNoteRateLimitsAreClassifiedAtShareAndDetailBoundaries(t *testing.T) {
 			})}}
 			_, err := c.Note(context.Background(), raw)
 			var platform *discovery.PlatformError
-			if !errors.As(err, &platform) || platform.Restricted != (status == 429) || calls != 1 {
+			wantCode := "xiaohongshu_page_unavailable"
+			if status == 429 || status == 461 || status == 471 {
+				wantCode = "xiaohongshu_restricted"
+			} else if status == 404 {
+				wantCode = "xiaohongshu_note_unavailable"
+			} else if status == 401 || status == 403 {
+				wantCode = "xiaohongshu_access_denied"
+			}
+			if !errors.As(err, &platform) || platform.Code != wantCode || platform.Restricted != (status == 429 || status == 461 || status == 471) || calls != 1 {
 				t.Fatal("wrong status or retry", status, calls, err)
 			}
 			if strings.Contains(err.Error(), "private") || strings.Contains(err.Error(), "session=") {
@@ -251,21 +260,154 @@ func TestNoteRateLimitsAreClassifiedAtShareAndDetailBoundaries(t *testing.T) {
 	}
 }
 
+func TestDirectNoteWithoutShareTokenExplainsHowToRecover(t *testing.T) {
+	calls := 0
+	c := &Client{HTTP: &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		calls++
+		return response(r, 200, fixturePage("normal"), nil), nil
+	})}}
+	_, err := c.Note(context.Background(), "https://www.xiaohongshu.com/explore/"+noteID)
+	var platform *discovery.PlatformError
+	if !errors.As(err, &platform) || platform.Code != "xiaohongshu_share_token_missing" || !strings.Contains(err.Error(), "完整分享链接") || calls != 0 {
+		t.Fatalf("missing token was not classified: calls=%d err=%v", calls, err)
+	}
+}
+
+func TestShortShareWithoutExpandedTokenExplainsHowToRecover(t *testing.T) {
+	calls := 0
+	c := &Client{HTTP: &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		calls++
+		return response(r, 302, "", http.Header{"Location": {"https://www.xiaohongshu.com/explore/" + noteID}}), nil
+	})}}
+	_, err := c.Note(context.Background(), "https://xhslink.com/a/Fixture")
+	var platform *discovery.PlatformError
+	if !errors.As(err, &platform) || platform.Code != "xiaohongshu_share_token_missing" || !strings.Contains(err.Error(), "完整分享链接") || calls != 1 {
+		t.Fatalf("short share without token was not classified: calls=%d err=%v", calls, err)
+	}
+}
+
+func TestStructureDiagnosticsRedactAccessParametersAndCookies(t *testing.T) {
+	secret := "fixture-token-secret"
+	logged := ""
+	c := &Client{HTTP: &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		return response(r, 200, `<html>拦截页面 xsec_token=`+secret+` cookie=session=private-secret</html>`, http.Header{"Content-Type": {"text/html; charset=utf-8"}}), nil
+	})}}
+	_, err := c.Note(context.Background(), "https://www.xiaohongshu.com/explore/"+noteID+"?xsec_token="+secret)
+	if err != nil {
+		logged = err.Error()
+	}
+	if err == nil || !strings.Contains(err.Error(), "__INITIAL_STATE__") || strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "private-secret") || strings.Contains(logged, secret) || strings.Contains(logged, "private-secret") || len(err.Error()) > 600 {
+		t.Fatalf("unsafe structure diagnostic: %v", err)
+	}
+}
+
+func TestStructureDiagnosticsClipSafePageText(t *testing.T) {
+	body := "<html><head><script>window.token='script-secret'</script></head><body>" + strings.Repeat("页面片段 ", 100) + "</body></html>"
+	finalURL, _ := url.Parse("https://www.xiaohongshu.com/explore/" + noteID + "?xsec_token=fixture-secret&xsec_source=share")
+	message := pageStructureError([]byte(body), http.StatusOK, "text/html; charset=utf-8", finalURL).Error()
+	if len([]rune(message)) > 400 || strings.Contains(message, "script-secret") || strings.Contains(message, "fixture-secret") || strings.Contains(message, "xsec_source=share") || !strings.Contains(message, "?[参数已省略]") || !strings.Contains(message, "页面片段") {
+		t.Fatalf("page snippet was not clipped safely: length=%d message=%s", len([]rune(message)), message)
+	}
+}
+
+func TestVideoWithoutSafeMediaKeepsNoteBodyAndMetadata(t *testing.T) {
+	ref, _ := discovery.ParseXiaohongshu("https://www.xiaohongshu.com/explore/" + noteID + "?xsec_token=fixture")
+	item, err := Parse([]byte(fixturePage("video")), ref)
+	if err != nil || item.Kind != "video" || item.MediaURL != "" || item.Description == "" || item.Title == "" || item.PlatformID != noteID {
+		t.Fatalf("note without safe video media was not retained: %#v %v", item, err)
+	}
+}
+
+func TestNoteUserAgentFallbackOnlyAppliesToFinalAnonymousPage(t *testing.T) {
+	var agents []string
+	c := &Client{HTTP: &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		agents = append(agents, r.Header.Get("User-Agent"))
+		if r.URL.Hostname() == "xhslink.com" {
+			return response(r, 302, "", http.Header{"Location": {"https://www.xiaohongshu.com/explore/" + noteID + "?xsec_token=fresh"}}), nil
+		}
+		return response(r, 200, fixturePage("normal"), nil), nil
+	})}}
+	if _, err := c.Note(context.Background(), "https://xhslink.com/a/Fixture"); err != nil {
+		t.Fatal(err)
+	}
+	if len(agents) != 2 || agents[0] == anonymousNoteUserAgent || agents[1] != anonymousNoteUserAgent {
+		t.Fatalf("unexpected anonymous user agents: %#v", agents)
+	}
+
+	agents = nil
+	c = &Client{Cookie: func(string) string { return "session=fixture" }, UserAgent: func(string) string { return "Browser/fixture" }, HTTP: &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		agents = append(agents, r.Header.Get("User-Agent"))
+		return response(r, 200, fixturePage("normal"), nil), nil
+	})}}
+	if _, err := c.Note(context.Background(), "https://www.xiaohongshu.com/explore/"+noteID+"?xsec_token=fresh"); err != nil {
+		t.Fatal(err)
+	}
+	if len(agents) != 1 || agents[0] != "Browser/fixture" {
+		t.Fatalf("browser user agent was overwritten: %#v", agents)
+	}
+}
+
+func TestNoteUserAgentIsPreservedWithCookieAndOnShareExpansion(t *testing.T) {
+	var requests []string
+	c := &Client{Cookie: func(string) string { return "session=fixture" }, UserAgent: func(string) string { return "Browser/fixture" }, HTTP: &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		requests = append(requests, r.URL.Hostname()+"|"+r.Header.Get("User-Agent")+"|"+r.Header.Get("Cookie"))
+		if r.URL.Hostname() == "xhslink.com" {
+			return response(r, 302, "", http.Header{"Location": {"https://www.xiaohongshu.com/explore/" + noteID + "?xsec_token=fresh"}}), nil
+		}
+		return response(r, 200, fixturePage("normal"), nil), nil
+	})}}
+	if _, err := c.Note(context.Background(), "https://xhslink.com/a/Fixture"); err != nil {
+		t.Fatal(err)
+	}
+	if len(requests) != 2 || requests[0] != "xhslink.com|Browser/fixture|" || requests[1] != "www.xiaohongshu.com|Browser/fixture|session=fixture" {
+		t.Fatalf("share or cookie request headers changed: %#v", requests)
+	}
+}
+
+func TestNoteWithCookieAndNoBrowserUserAgentKeepsDesktopDefault(t *testing.T) {
+	var gotAgent, gotCookie string
+	c := &Client{Cookie: func(string) string { return "session=fixture" }, HTTP: &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		gotAgent, gotCookie = r.Header.Get("User-Agent"), r.Header.Get("Cookie")
+		return response(r, 200, fixturePage("normal"), nil), nil
+	})}}
+	if _, err := c.Note(context.Background(), "https://www.xiaohongshu.com/explore/"+noteID+"?xsec_token=fresh"); err != nil {
+		t.Fatal(err)
+	}
+	if gotAgent != "Mozilla/5.0" || gotCookie != "session=fixture" {
+		t.Fatalf("cookie request was treated as anonymous: agent=%q cookie=%q", gotAgent, gotCookie)
+	}
+}
+
+func TestNoteWithoutCookiePreservesSavedBrowserUserAgent(t *testing.T) {
+	var gotAgent, gotCookie string
+	c := &Client{UserAgent: func(string) string { return "Browser/fixture" }, HTTP: &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		gotAgent, gotCookie = r.Header.Get("User-Agent"), r.Header.Get("Cookie")
+		return response(r, 200, fixturePage("normal"), nil), nil
+	})}}
+	if _, err := c.Note(context.Background(), "https://www.xiaohongshu.com/explore/"+noteID+"?xsec_token=fresh"); err != nil {
+		t.Fatal(err)
+	}
+	if gotAgent != "Browser/fixture" || gotCookie != "" {
+		t.Fatalf("browser user agent was not preserved: agent=%q cookie=%q", gotAgent, gotCookie)
+	}
+}
+
 func TestLoginAndUnavailableRedirectsExplainMissingDetailsWithoutFollowing(t *testing.T) {
 	for _, target := range []string{"/login?redirect=private-locator", "/website-login", "/404?error_msg=private-response"} {
-		for _, raw := range []string{"https://xhslink.com/a/Fixture", "https://www.xiaohongshu.com/explore/" + noteID} {
+		for _, raw := range []string{"https://xhslink.com/a/Fixture", "https://www.xiaohongshu.com/explore/" + noteID + "?xsec_token=fixture-access"} {
 			calls := 0
 			c := &Client{Cookie: func(string) string { return "session=private-credential" }, HTTP: &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
 				calls++
 				return response(r, 302, "", http.Header{"Location": {"https://www.xiaohongshu.com" + target}}), nil
 			})}}
 			_, err := c.Note(context.Background(), raw)
-			if err == nil || calls != 1 || strings.Contains(err.Error(), "private") {
+			var platform *discovery.PlatformError
+			if err == nil || !errors.As(err, &platform) || platform.Code != "xiaohongshu_note_unavailable" || calls != 1 || strings.Contains(err.Error(), "private") {
 				t.Fatal("followed unavailable page or leaked redirect", calls, err)
 			}
-			message := "登录"
+			message := "分享访问参数可能已过期"
 			if strings.HasPrefix(target, "/404") {
-				message = "完整分享链接"
+				message = "重新复制分享链接"
 			}
 			if !strings.Contains(err.Error(), message) {
 				t.Fatal("missing next action", err)
