@@ -173,25 +173,39 @@ func wireFeatures(dataDir string, configuration config.Config, option Options, r
 }
 
 func resolveDouyinPlayback(ctx context.Context, id string, pageResolve, ytdlpResolve func(context.Context, string) (playback.Source, error)) (playback.Source, error) {
+	trace := playback.DiagnosticsFromContext(ctx)
 	source, err := pageResolve(ctx, id)
 	if err == nil && source.URL != "" {
 		source.Platform, source.Referer = "douyin", "https://www.douyin.com/video/"+id
+		playback.RecordDiagnostic(ctx, playback.DiagnosticStage{Stage: "resolver_fallback", Outcome: playback.OutcomeOK, Reason: appDiagnosticReason("webview_success")})
 		return source, nil
+	}
+	if err == nil && source.URL == "" {
+		playback.RecordDiagnostic(ctx, playback.DiagnosticStage{Stage: "webview_media_extract", Outcome: playback.OutcomeNoURL, Reason: appDiagnosticReason("media_not_found")})
 	}
 	var restricted *discovery.PlatformError
 	if err != nil && errors.As(err, &restricted) && restricted.Restricted {
-		return playback.Source{}, err
+		playback.RecordDiagnostic(ctx, playback.DiagnosticStage{Stage: "resolver_fallback", Outcome: playback.OutcomeRestricted, Reason: appDiagnosticReason("fallback_blocked_restricted")})
+		return playback.Source{}, playback.WrapDiagnostic(err, trace, playback.DiagnosticSummary(trace.Snapshot().Stages))
 	}
 	if err != nil && (errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil) {
-		return playback.Source{}, err
+		outcome, reason := playback.OutcomeTimeout, "fallback_blocked_timeout"
+		if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+			outcome, reason = playback.OutcomeException, "fallback_blocked_cancelled"
+		}
+		playback.RecordDiagnostic(ctx, playback.DiagnosticStage{Stage: "resolver_fallback", Outcome: outcome, Reason: appDiagnosticReason(reason)})
+		return playback.Source{}, playback.WrapDiagnostic(err, trace, playback.DiagnosticSummary(trace.Snapshot().Stages))
 	}
+	playback.RecordDiagnostic(ctx, playback.DiagnosticStage{Stage: "resolver_fallback", Outcome: playback.OutcomeOK, Reason: appDiagnosticReason("fallback_allowed")})
 	source, err = ytdlpResolve(ctx, "https://www.douyin.com/video/"+id)
 	if err != nil {
-		return playback.Source{}, err
+		return playback.Source{}, playback.WrapDiagnostic(err, trace, playback.DiagnosticSummary(trace.Snapshot().Stages))
 	}
 	source.Platform, source.Referer = "douyin", "https://www.douyin.com/video/"+id
 	return source, nil
 }
+
+func appDiagnosticReason(value string) *string { return &value }
 
 func summaryNoteID(contentID string) string {
 	sum := sha256.Sum256([]byte("ai-summary-note:" + contentID))

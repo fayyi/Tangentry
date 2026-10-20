@@ -2,7 +2,10 @@
 // request same-origin data through a native authenticated WebView.
 package platformfetch
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 type Request struct {
 	Method  string
@@ -40,12 +43,58 @@ type Fetcher interface {
 // logged-in platform page. Cookies, response bodies and page HTML never cross
 // this port.
 type VideoMediaResponse struct {
-	URL        string
-	Backups    []string
-	Status     int
-	Restricted bool
-	PageURL    string
-	ExpiresAt  int64
+	URL         string
+	Backups     []string
+	Status      int
+	Restricted  bool
+	PageURL     string
+	ExpiresAt   int64
+	Diagnostics []VideoMediaDiagnostic
+}
+
+// VideoMediaDiagnostic contains only bounded metadata captured inside the
+// native page bridge. It never carries response bodies or media URLs.
+type VideoMediaDiagnostic struct {
+	Stage                string
+	Outcome              string
+	Reason               string
+	HTTPStatus           *int
+	ContentType          *string
+	PageURL              *string
+	BlockedNavigationURL *string
+	PageReadyState       *string
+	IsDouyinContext      *bool
+	BusinessStatus       *int
+	CandidateCount       *int
+	AcceptedCount        *int
+	VideoElementCount    *int
+	DetailURLCount       *int
+	VideoSourceCount     *int
+	ResponseBytes        *int64
+}
+
+type VideoMediaError struct {
+	Cause       error
+	Diagnostics []VideoMediaDiagnostic
+}
+
+func (err *VideoMediaError) Error() string {
+	if err == nil || err.Cause == nil {
+		return "应用内抖音页面解析失败"
+	}
+	return err.Cause.Error()
+}
+func (err *VideoMediaError) Unwrap() error {
+	if err == nil {
+		return nil
+	}
+	return err.Cause
+}
+func WrapVideoMediaError(cause error, diagnostics ...VideoMediaDiagnostic) error {
+	if cause == nil {
+		cause = errors.New("应用内抖音页面解析失败")
+	}
+	return &VideoMediaError{Cause: cause, Diagnostics: diagnostics}
 }
 
 type VideoMediaFetcher interface {

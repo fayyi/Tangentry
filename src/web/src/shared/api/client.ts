@@ -1,5 +1,5 @@
 export class APIError extends Error {
-  constructor(message: string, readonly code: string, readonly status: number) {
+  constructor(message: string, readonly code: string, readonly status: number, readonly details: unknown[] = []) {
     super(message)
   }
 }
@@ -22,8 +22,8 @@ export async function requestResponse(path: string, options: RequestInit = {}, f
     throw new APIError('无法连接 Tangentry，请确认服务仍在运行。', 'network_error', 0)
   }
   if (!response.ok) {
-    const error = await response.json().catch(() => ({})) as { message?: string; code?: string }
-    throw new APIError(error.message ?? fallback.message, error.code ?? fallback.code, response.status)
+    const error = await response.json().catch(() => ({})) as { message?: string; code?: string; details?: unknown }
+    throw new APIError(error.message ?? fallback.message, error.code ?? fallback.code, response.status, Array.isArray(error.details) ? error.details : [])
   }
   return response
 }

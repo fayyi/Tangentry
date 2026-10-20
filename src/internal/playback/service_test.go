@@ -1,9 +1,12 @@
 package playback
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
@@ -140,6 +143,172 @@ func TestDouyinRedirectIsPlatformBoundAndKeepsReferer(t *testing.T) {
 		t.Fatalf("cross-platform redirect accepted: %v", err)
 	}
 }
+
+func TestDouyinMediaFailuresKeepSanitizedStatusAndRefreshDiagnostics(t *testing.T) {
+	for _, status := range []int{http.StatusForbidden, http.StatusGone, http.StatusServiceUnavailable} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			trace := NewDiagnosticTrace()
+			page := "https://www.douyin.com/video/7340916925458779430"
+			client := &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": {"text/html; charset=utf-8"}}, Body: io.NopCloser(strings.NewReader("fixture"))}, nil
+			})}
+			service := New(func(context.Context, string) (Source, error) {
+				return Source{URL: "https://v1.douyinvod.com/video.mp4?msToken=fixture", Platform: "douyin", Referer: page}, nil
+			}, client)
+			ctx := ContextWithDiagnostics(context.Background(), trace)
+			session, err := service.OpenDouyin(ctx, "7340916925458779430")
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _, err = service.Fetch(context.Background(), session.ID, http.MethodGet, "")
+			if !errors.Is(err, ErrUnavailable) {
+				t.Fatalf("fetch error classification = %v", err)
+			}
+			var diagnostic *DiagnosticError
+			if !errors.As(err, &diagnostic) {
+				t.Fatalf("diagnostic wrapper missing: %v", err)
+			}
+			stages := diagnostic.Diagnostics().Stages
+			found := false
+			for _, stage := range stages {
+				if stage.Stage == "session_media_fetch" && stage.HTTPStatus != nil && *stage.HTTPStatus == status && stage.ContentType != nil && *stage.ContentType == "text/html" {
+					found = true
+				}
+			}
+			if !found || strings.Contains(err.Error(), "msToken") || strings.Contains(strings.Join(stageStrings(stages), " "), "fixture") {
+				t.Fatalf("unsafe or incomplete media diagnostics: %v %+v", err, stages)
+			}
+		})
+	}
+}
+
+func TestDouyinFrontendMediaReportRedactsTextAndLogsFinalStageOnce(t *testing.T) {
+	service := New(func(context.Context, string) (Source, error) {
+		return Source{URL: "https://v1.douyinvod.com/video.mp4", Platform: "douyin"}, nil
+	}, &http.Client{Transport: roundTrip(func(*http.Request) (*http.Response, error) {
+		return rangeResponse(http.StatusOK, "", "", "video/mp4"), nil
+	})})
+	trace := NewDiagnosticTrace()
+	session, err := service.OpenDouyin(ContextWithDiagnostics(context.Background(), trace), "7340916925458779430")
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := service.ReportFrontendMedia(session.ID, 4, "media failed token=private a_bogus=signed-private", 1)
+	if report.FinalOutcome != OutcomeException {
+		t.Fatalf("final outcome = %s", report.FinalOutcome)
+	}
+	encoded, _ := json.Marshal(report)
+	if strings.Contains(string(encoded), "private") || strings.Contains(string(encoded), "signed-private") {
+		t.Fatalf("frontend message leaked sensitive value: %s", encoded)
+	}
+	if trace.Snapshot().Stages[len(trace.Snapshot().Stages)-1].Stage != "frontend_media" || !trace.IsLogged() {
+		t.Fatal("frontend failure did not close the attempt")
+	}
+	if trace.Snapshot().FinalOutcome != OutcomeException {
+		t.Fatalf("frontend failure final outcome = %s", trace.Snapshot().FinalOutcome)
+	}
+}
+
+func TestDouyinFrontendMediaReadyDoesNotCloseTraceThroughCodeZeroReport(t *testing.T) {
+	service := New(func(context.Context, string) (Source, error) {
+		return Source{URL: "https://v1.douyinvod.com/video.mp4", Platform: "douyin"}, nil
+	}, &http.Client{Transport: roundTrip(func(*http.Request) (*http.Response, error) {
+		return rangeResponse(http.StatusOK, "", "", "video/mp4"), nil
+	})})
+	trace := NewDiagnosticTrace()
+	session, err := service.OpenDouyin(ContextWithDiagnostics(context.Background(), trace), "7340916925458779430")
+	if err != nil {
+		t.Fatal(err)
+	}
+	readyReport := service.ReportFrontendMedia(session.ID, 0, "", 0)
+	if readyReport.FinalOutcome != "" || trace.IsLogged() {
+		t.Fatalf("code-zero report closed trace: %+v logged=%v", readyReport, trace.IsLogged())
+	}
+	failed := service.ReportFrontendMedia(session.ID, 4, "media failed", 1)
+	if failed.FinalOutcome != OutcomeException || !trace.IsLogged() {
+		t.Fatalf("later media failure did not close trace: %+v logged=%v", failed, trace.IsLogged())
+	}
+
+	trace = NewDiagnosticTrace()
+	session, err = service.OpenDouyin(ContextWithDiagnostics(context.Background(), trace), "7340916925458779430")
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed = service.ReportFrontendMediaFailure(session.ID, 0, "", 0)
+	if failed.FinalOutcome != OutcomeException || !trace.IsLogged() {
+		t.Fatalf("code-zero media failure did not close trace: %+v logged=%v", failed, trace.IsLogged())
+	}
+	last := failed.Stages[len(failed.Stages)-1]
+	if last.Stage != "frontend_media" || last.Outcome != OutcomeException || last.FrontendMediaCode != nil {
+		t.Fatalf("code-zero failure stage = %+v", last)
+	}
+
+	trace = NewDiagnosticTrace()
+	session, err = service.OpenDouyin(ContextWithDiagnostics(context.Background(), trace), "7340916925458779430")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready := service.ReportMediaReady(session.ID)
+	if ready.FinalOutcome != "" || trace.IsLogged() {
+		t.Fatalf("explicit ready signal closed trace too early: %+v logged=%v", ready, trace.IsLogged())
+	}
+	failed = service.ReportFrontendMediaFailure(session.ID, 4, "media failed after ready", 0)
+	if failed.FinalOutcome != OutcomeException || !trace.IsLogged() {
+		t.Fatalf("media failure after ready did not close trace: %+v logged=%v", failed, trace.IsLogged())
+	}
+
+	trace = NewDiagnosticTrace()
+	session, err = service.OpenDouyin(ContextWithDiagnostics(context.Background(), trace), "7340916925458779430")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.ReportMediaReady(session.ID)
+	service.Release(session.ID)
+	if !trace.IsLogged() || trace.Snapshot().FinalOutcome != OutcomeOK {
+		t.Fatalf("successful release did not close trace: %+v logged=%v", trace.Snapshot(), trace.IsLogged())
+	}
+}
+
+func TestDouyinDiagnosticLogRedactsPathAndUsesFailureAsFinalOutcome(t *testing.T) {
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	service := New(func(context.Context, string) (Source, error) {
+		return Source{URL: "https://v1.douyinvod.com/video.mp4", Platform: "douyin"}, nil
+	}, &http.Client{Transport: roundTrip(func(*http.Request) (*http.Response, error) {
+		return rangeResponse(http.StatusOK, "", "", "video/mp4"), nil
+	})})
+	trace := NewDiagnosticTrace()
+	session, err := service.OpenDouyin(ContextWithDiagnostics(context.Background(), trace), "7340916925458779430")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := "https://www.douyin.com/video/abcdefghijklmnopqrstuvwxyzABCDEF/detail"
+	trace.Add(DiagnosticStage{Stage: "webview_page_load", Outcome: OutcomeOK, PageURL: &page})
+	service.ReportMediaReady(session.ID)
+	if logs.Len() != 0 {
+		t.Fatalf("metadata-ready logged before terminal outcome: %s", logs.String())
+	}
+	service.ReportMediaStreamFailure(session.ID, http.StatusForbidden, "video/mp4; charset=utf-8", 128, errors.New("fixture stream failure"))
+	output := logs.String()
+	if !strings.Contains(output, "douyin playback diagnostic") || !strings.Contains(output, "final_outcome=exception") {
+		t.Fatalf("missing terminal desktop diagnostic: %s", output)
+	}
+	if strings.Contains(output, "abcdefghijklmnopqrstuvwxyzABCDEF") || strings.Contains(output, "?signature") {
+		t.Fatalf("desktop diagnostic leaked sensitive path data: %s", output)
+	}
+}
+
+func stageStrings(stages []DiagnosticStage) []string {
+	values := make([]string, 0, len(stages))
+	for _, stage := range stages {
+		encoded, _ := json.Marshal(stage)
+		values = append(values, string(encoded))
+	}
+	return values
+}
+
 func TestCanceledResolveDoesNotLeaveSession(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := New(func(context.Context, string) (Source, error) {

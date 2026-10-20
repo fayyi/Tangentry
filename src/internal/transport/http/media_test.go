@@ -3,6 +3,7 @@ package httptransport
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -16,6 +17,21 @@ import (
 	"testing"
 	"time"
 )
+
+type failingPlaybackBody struct {
+	read bool
+}
+
+func (b *failingPlaybackBody) Read(p []byte) (int, error) {
+	if b.read {
+		return 0, errors.New("fixture stream failure")
+	}
+	b.read = true
+	copy(p, "data")
+	return 4, errors.New("fixture stream failure")
+}
+
+func (b *failingPlaybackBody) Close() error { return nil }
 
 func TestPlaybackRoutesKeepPlatformIdentifiersSeparate(t *testing.T) {
 	var resolves int
@@ -36,6 +52,83 @@ func TestPlaybackRoutesKeepPlatformIdentifiersSeparate(t *testing.T) {
 	}
 	if resolves != 0 {
 		t.Fatalf("invalid platform identifiers reached resolver %d times", resolves)
+	}
+}
+
+func TestDouyinPlaybackErrorCarriesSanitizedDiagnosticDetails(t *testing.T) {
+	service := playback.New(func(ctx context.Context, _ string) (playback.Source, error) {
+		trace := playback.DiagnosticsFromContext(ctx)
+		status := http.StatusForbidden
+		page := "https://www.douyin.com/video/abcdefghijklmnopqrstuvwxyzABCDEF/detail?msToken=fixture-secret"
+		contentType := "application/json; charset=utf-8"
+		trace.Add(playback.DiagnosticStage{Stage: "webview_detail_fetch", Outcome: playback.OutcomeHTTPError, HTTPStatus: &status, ContentType: &contentType, PageURL: &page, IsDouyinContext: playback.IsDouyinContext(&page)})
+		return playback.Source{}, playback.WrapDiagnostic(errors.New("fixture failure"), trace, playback.DiagnosticSummary(trace.Snapshot().Stages))
+	}, &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) { t.Fatal("unexpected media request"); return nil, nil })})
+	h := New(nil, nil, nil, Options{Playback: service})
+	r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/playback/douyin/6961737553342991651", nil)
+	r.Header.Set("Origin", "http://127.0.0.1")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), "抖音视频解析失败：应用内页面详情接口返回 HTTP 403") || !strings.Contains(w.Body.String(), `"details"`) {
+		t.Fatalf("diagnostic response: %d %s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "msToken") || strings.Contains(w.Body.String(), "fixture-secret") || strings.Contains(w.Body.String(), "abcdefghijklmnopqrstuvwxyzABCDEF") || strings.Contains(w.Body.String(), "?") {
+		t.Fatalf("unsafe diagnostic escaped: %s", w.Body.String())
+	}
+	for _, value := range []string{`"frontend_request"`, `"api_code":"playback_unavailable"`, `"is_douyin_context":true`} {
+		if !strings.Contains(w.Body.String(), value) {
+			t.Fatalf("missing diagnostic field %s in %s", value, w.Body.String())
+		}
+	}
+	if !strings.Contains(w.Body.String(), "www.douyin.com/video/<redacted>/detail") && !strings.Contains(w.Body.String(), `www.douyin.com/video/\u003credacted\u003e/detail`) {
+		t.Fatalf("redacted diagnostic path missing: %s", w.Body.String())
+	}
+}
+
+func TestDouyinSessionDiagnosticsExposePostReadyMediaFailure(t *testing.T) {
+	service := playback.New(func(ctx context.Context, _ string) (playback.Source, error) {
+		trace := playback.DiagnosticsFromContext(ctx)
+		page := "www.douyin.com/video/abcdefghijklmnopqrstuvwxyzABCDEF/detail"
+		trace.Add(playback.DiagnosticStage{Stage: "webview_page_load", Outcome: playback.OutcomeOK, PageURL: &page})
+		return playback.Source{
+			URL:      "https://v3.douyinvod.com/video/segment/abcdefghijklmnopqrstuvwxyzABCDEF/signed.mp4",
+			Platform: "douyin",
+		}, nil
+	}, &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"video/mp4"}, "Content-Length": {"4"}}, Body: &failingPlaybackBody{}}, nil
+	})})
+	h := New(nil, nil, nil, Options{Playback: service})
+	request := func(method, path string, body io.Reader) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, "http://127.0.0.1"+path, body)
+		r.Header.Set("Origin", "http://127.0.0.1")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+	opened := request(http.MethodPost, "/api/playback/douyin/7340916925458779430", nil)
+	if opened.Code != http.StatusOK {
+		t.Fatalf("open status: %d %s", opened.Code, opened.Body.String())
+	}
+	var session playback.Session
+	if err := json.Unmarshal(opened.Body.Bytes(), &session); err != nil || session.ID == "" {
+		t.Fatalf("open response: %v %s", err, opened.Body.String())
+	}
+	readyPath := "/api/playback/sessions/" + session.ID + "/diagnostics"
+	ready := request(http.MethodPost, readyPath, strings.NewReader(`{"ready":true}`))
+	if ready.Code != http.StatusOK || strings.Contains(ready.Body.String(), `"final_outcome":"ok"`) {
+		t.Fatalf("ready prematurely closed diagnostics: %d %s", ready.Code, ready.Body.String())
+	}
+	media := request(http.MethodGet, "/api/playback/sessions/"+session.ID+"/media", nil)
+	if media.Code != http.StatusOK {
+		t.Fatalf("media status: %d %s", media.Code, media.Body.String())
+	}
+	diagnostics := request(http.MethodPost, readyPath, strings.NewReader(`{}`))
+	body := diagnostics.Body.String()
+	if diagnostics.Code != http.StatusOK || !strings.Contains(body, `"final_outcome":"exception"`) || !strings.Contains(body, `"stage":"session_media_fetch"`) {
+		t.Fatalf("post-ready failure diagnostics: %d %s", diagnostics.Code, body)
+	}
+	if !strings.Contains(body, "v3.douyinvod.com/video/segment") || strings.Contains(body, "abcdefghijklmnopqrstuvwxyzABCDEF") {
+		t.Fatalf("diagnostics leaked or omitted sanitized path: %s", body)
 	}
 }
 

@@ -18,6 +18,18 @@ import (
 const maxCompatibilityInput = 256 << 20
 const MaxCompatibilityOutput = 384 << 20
 
+var compatibilityCDNSuffixes = []struct {
+	suffix string
+	douyin bool
+}{
+	{suffix: ".xhscdn.com"},
+	{suffix: ".douyinvod.com", douyin: true},
+	{suffix: ".douyinvod.net", douyin: true},
+	{suffix: ".bytecdn.cn", douyin: true},
+	{suffix: ".zjcdn.com", douyin: true},
+	{suffix: ".amemv.com", douyin: true},
+}
+
 // PlaybackFormat is the small subset of container metadata needed to decide
 // whether WKWebView can play a temporary file directly.
 type PlaybackFormat struct {
@@ -80,8 +92,8 @@ func compatibilityURL(raw string) bool {
 	// These are the CDN suffixes currently emitted by the platform resolvers.
 	// Keep this explicit: resolver output must never turn this service into a
 	// general-purpose URL fetcher.
-	for _, suffix := range []string{".xhscdn.com", ".douyinvod.com", ".douyinvod.net", ".bytecdn.cn", ".zjcdn.com", ".amemv.com"} {
-		if strings.HasSuffix(host, suffix) && host != suffix[1:] {
+	for _, cdn := range compatibilityCDNSuffixes {
+		if strings.HasSuffix(host, cdn.suffix) && host != cdn.suffix[1:] {
 			return true
 		}
 	}
