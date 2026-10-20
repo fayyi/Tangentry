@@ -154,6 +154,17 @@ func TestBackupTargetPasswordUsesSeparateNamespaceAndEncryptsWhenKeyed(t *testin
 	if strings.Contains(string(raw), password) {
 		t.Fatal("keyed WebDAV password persisted as plaintext")
 	}
+	if strings.Contains(string(raw), `"password":"`) {
+		t.Fatalf("keyed WebDAV credential uses a plaintext password field: %s", raw)
+	}
+	dirInfo, err := os.Stat(dir)
+	if err != nil || dirInfo.Mode().Perm() != 0700 {
+		t.Fatalf("credentials directory permissions: %v %v", dirInfo, err)
+	}
+	fileInfo, err := os.Stat(filepath.Join(dir, "backup-targets.json"))
+	if err != nil || fileInfo.Mode().Perm() != 0600 {
+		t.Fatalf("credential file permissions: %v %v", fileInfo, err)
+	}
 	reopened, err := OpenWithKey(dir, "", "", key)
 	if err != nil {
 		t.Fatal(err)
@@ -166,6 +177,50 @@ func TestBackupTargetPasswordUsesSeparateNamespaceAndEncryptsWhenKeyed(t *testin
 	}
 	if _, ok := reopened.BackupTargetPassword("webdav-target-1"); ok {
 		t.Fatal("WebDAV password was not deleted")
+	}
+}
+
+func TestBackupTargetCredentialCleanupRemovesOnlyOrphans(t *testing.T) {
+	store, err := OpenWithKey(filepath.Join(t.TempDir(), "credentials"), "", "", bytes.Repeat([]byte{0x42}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"webdav-kept", "webdav-orphan"} {
+		if err := store.SaveBackupTargetPassword(id, "fixture-password-"+id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.CleanupBackupTargetPasswords([]string{"webdav-kept"}); err != nil {
+		t.Fatal(err)
+	}
+	if !store.BackupTargetConfigured("webdav-kept") || store.BackupTargetConfigured("webdav-orphan") {
+		t.Fatal("orphan cleanup removed a live credential or kept an orphan")
+	}
+}
+
+func TestDeleteHeadlessBackupTargetPreservesOtherCredentials(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "credentials")
+	store, err := Open(dir, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"webdav-first", "webdav-second"} {
+		if err := store.SaveBackupTargetPassword(id, "fixture-password-"+id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.DeleteBackupTargetPassword("webdav-first"); err != nil {
+		t.Fatal(err)
+	}
+	if store.BackupTargetConfigured("webdav-first") || !store.BackupTargetConfigured("webdav-second") {
+		t.Fatal("headless deletion removed the wrong credential")
+	}
+	reopened, err := Open(dir, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := reopened.BackupTargetPassword("webdav-second"); !ok || got != "fixture-password-webdav-second" {
+		t.Fatal("headless deletion did not persist the remaining credential")
 	}
 }
 

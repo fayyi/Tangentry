@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/url"
 	"os"
 	"path"
@@ -145,12 +146,14 @@ type Task struct {
 }
 
 type Snapshot struct {
-	ID        string      `json:"id"`
-	TaskID    string      `json:"taskId,omitempty"`
-	CreatedAt time.Time   `json:"createdAt"`
-	Size      int64       `json:"size"`
-	Status    string      `json:"status"`
-	Targets   []TargetRun `json:"targets,omitempty"`
+	ID                     string      `json:"id"`
+	TaskID                 string      `json:"taskId,omitempty"`
+	CreatedAt              time.Time   `json:"createdAt"`
+	Size                   int64       `json:"size"`
+	Status                 string      `json:"status"`
+	Targets                []TargetRun `json:"targets,omitempty"`
+	RetryAvailable         bool        `json:"retryAvailable"`
+	RetryUnavailableReason string      `json:"retryUnavailableReason,omitempty"`
 }
 
 type Validation struct {
@@ -555,6 +558,7 @@ type TargetCredentials interface {
 	BackupTargetPassword(string) (string, bool)
 	BackupTargetConfigured(string) bool
 	DeleteBackupTargetPassword(string) error
+	CleanupBackupTargetPasswords([]string) error
 }
 
 type TargetTester func(context.Context, Target) error
@@ -585,12 +589,37 @@ func (s *Service) withRestoreLock(ctx context.Context, fn func() error) error {
 
 func NewService(repo Repository, source Source, stores StoreFactory, workDir, version string) *Service {
 	_ = cleanupRestoreWorkDir(workDir)
-	_ = cleanupRetryPackages(workDir)
-	return &Service{repo: repo, source: source, stores: stores, workDir: workDir, version: version, plans: make(map[string]restorePlan)}
+	service := &Service{repo: repo, source: source, stores: stores, workDir: workDir, version: version, plans: make(map[string]restorePlan)}
+	_ = service.cleanupRetryPackages(context.Background())
+	return service
 }
 
 func (s *Service) SetTargetCredentials(credentials TargetCredentials) { s.credentials = credentials }
 func (s *Service) SetTargetTester(tester TargetTester)                { s.testTarget = tester }
+
+func (s *Service) CleanupOrphanTargetCredentials(ctx context.Context) error {
+	if s.credentials == nil {
+		return nil
+	}
+	targets, err := s.repo.ListTargets(ctx)
+	if err != nil {
+		return err
+	}
+	ids := make([]string, 0, len(targets))
+	for _, target := range targets {
+		if target.Type == "webdav" {
+			ids = append(ids, target.ID)
+		}
+	}
+	if err := s.credentials.CleanupBackupTargetPasswords(ids); err != nil {
+		logCredentialCleanupFailure()
+	}
+	return nil
+}
+
+func logCredentialCleanupFailure() {
+	slog.Warn("backup target credential cleanup failed; it will be retried on startup")
+}
 
 func (s *Service) Targets(ctx context.Context) ([]Target, error) {
 	targets, err := s.repo.ListTargets(ctx)
@@ -608,7 +637,31 @@ func (s *Service) Targets(ctx context.Context) ([]Target, error) {
 }
 func (s *Service) Tasks(ctx context.Context) ([]Task, error) { return s.repo.ListTasks(ctx) }
 func (s *Service) Snapshots(ctx context.Context) ([]Snapshot, error) {
-	return s.repo.ListSnapshots(ctx)
+	snapshots, err := s.repo.ListSnapshots(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range snapshots {
+		if snapshots[i].Status == "succeeded" {
+			snapshots[i].RetryAvailable = false
+			continue
+		}
+		if snapshots[i].RetryUnavailableReason != "" {
+			continue
+		}
+		packageFile, err := openPrivateRetryPackage(filepath.Join(s.workDir, "retry-"+snapshots[i].ID+".tgb"))
+		if err != nil {
+			snapshots[i].RetryAvailable = false
+			snapshots[i].RetryUnavailableReason = retryPackageUnavailableReason(filepath.Join(s.workDir, "retry-"+snapshots[i].ID+".tgb"))
+			if err := s.repo.SaveSnapshot(ctx, snapshots[i]); err != nil {
+				return nil, err
+			}
+		} else {
+			_ = packageFile.Close()
+			snapshots[i].RetryAvailable = true
+		}
+	}
+	return snapshots, nil
 }
 
 func (s *Service) TestTarget(ctx context.Context, target Target) error {
@@ -680,7 +733,9 @@ func (s *Service) SaveTarget(ctx context.Context, target Target) error {
 		return err
 	}
 	if previousErr == nil && previous.Type == "webdav" && target.Type != "webdav" && s.credentials != nil {
-		return s.credentials.DeleteBackupTargetPassword(target.ID)
+		if err := s.credentials.DeleteBackupTargetPassword(target.ID); err != nil {
+			logCredentialCleanupFailure()
+		}
 	}
 	return nil
 }
@@ -723,7 +778,9 @@ func (s *Service) DeleteTarget(ctx context.Context, id string) error {
 		return err
 	}
 	if s.credentials != nil {
-		return s.credentials.DeleteBackupTargetPassword(id)
+		if err := s.credentials.DeleteBackupTargetPassword(id); err != nil {
+			logCredentialCleanupFailure()
+		}
 	}
 	return nil
 }
@@ -910,6 +967,7 @@ func (s *Service) create(ctx context.Context, task Task, password string) (Snaps
 	}
 	status := targetRunsStatus(runs)
 	snap.Status, snap.Targets = status, runs
+	snap.RetryAvailable = status != "succeeded"
 	if err = s.persistTargetRuns(ctx, id, runs); err != nil {
 		return Snapshot{}, err
 	}
@@ -946,10 +1004,18 @@ func (s *Service) RetryFailed(ctx context.Context, snapshotID string) (Snapshot,
 	if snap.Status == "succeeded" {
 		return snap, nil
 	}
+	if snap.RetryUnavailableReason != "" {
+		return snap, nil
+	}
 	path := filepath.Join(s.workDir, "retry-"+snapshotID+".tgb")
 	packageFile, err := openPrivateRetryPackage(path)
 	if err != nil {
-		return Snapshot{}, errors.New("retry package is unavailable")
+		snap.RetryAvailable = false
+		snap.RetryUnavailableReason = retryPackageUnavailableReason(path)
+		if saveErr := s.repo.SaveSnapshot(ctx, snap); saveErr != nil {
+			return Snapshot{}, saveErr
+		}
+		return snap, nil
 	}
 	_ = packageFile.Close()
 	runs := snap.Targets
@@ -1012,6 +1078,8 @@ func (s *Service) RetryFailed(ctx context.Context, snapshotID string) (Snapshot,
 	}
 	snap.Status = targetRunsStatus(runs)
 	snap.Targets = runs
+	snap.RetryAvailable = snap.Status != "succeeded"
+	snap.RetryUnavailableReason = ""
 	if err := s.persistTargetRuns(ctx, snapshotID, runs); err != nil {
 		return Snapshot{}, err
 	}
@@ -1023,6 +1091,8 @@ func (s *Service) RetryFailed(ctx context.Context, snapshotID string) (Snapshot,
 			return snap, err
 		}
 	}
+	snap.RetryAvailable = snap.Status != "succeeded"
+	snap.RetryUnavailableReason = ""
 	if runErr != nil {
 		return snap, runErr
 	}
@@ -1031,7 +1101,7 @@ func (s *Service) RetryFailed(ctx context.Context, snapshotID string) (Snapshot,
 
 func openPrivateRetryPackage(path string) (*os.File, error) {
 	before, err := os.Lstat(path)
-	if err != nil || !before.Mode().IsRegular() || before.Mode()&os.ModeSymlink != 0 || before.Mode().Perm()&0077 != 0 || before.Size() > MaxPackageSize {
+	if err != nil || !before.Mode().IsRegular() || before.Mode()&os.ModeSymlink != 0 || before.Mode().Perm()&0077 != 0 || before.Size() > MaxPackageSize || time.Since(before.ModTime()) > 7*24*time.Hour {
 		return nil, ErrInvalidPackage
 	}
 	file, err := os.Open(path)
@@ -1039,14 +1109,23 @@ func openPrivateRetryPackage(path string) (*os.File, error) {
 		return nil, err
 	}
 	after, err := file.Stat()
-	if err != nil || !after.Mode().IsRegular() || after.Mode().Perm()&0077 != 0 || !os.SameFile(before, after) || after.Size() > MaxPackageSize {
+	if err != nil || !after.Mode().IsRegular() || after.Mode().Perm()&0077 != 0 || !os.SameFile(before, after) || after.Size() > MaxPackageSize || time.Since(after.ModTime()) > 7*24*time.Hour {
 		_ = file.Close()
 		return nil, ErrInvalidPackage
 	}
 	return file, nil
 }
 
-func cleanupRetryPackages(workDir string) error {
+func retryPackageUnavailableReason(path string) string {
+	info, err := os.Stat(path)
+	if err == nil && time.Since(info.ModTime()) > 7*24*time.Hour {
+		return "加密快照已超过 7 天，无法重试。"
+	}
+	return "加密快照不可用，无法重试。"
+}
+
+func (s *Service) cleanupRetryPackages(ctx context.Context) error {
+	workDir := s.workDir
 	entries, err := os.ReadDir(workDir)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -1054,11 +1133,14 @@ func cleanupRetryPackages(workDir string) error {
 	if err != nil {
 		return err
 	}
-	type retryPackage struct {
-		name    string
-		modTime time.Time
+	snapshots, err := s.repo.ListSnapshots(ctx)
+	if err != nil {
+		return err
 	}
-	var packages []retryPackage
+	byID := make(map[string]Snapshot, len(snapshots))
+	for _, snapshot := range snapshots {
+		byID[snapshot.ID] = snapshot
+	}
 	for _, entry := range entries {
 		if !strings.HasPrefix(entry.Name(), "retry-") || !strings.HasSuffix(entry.Name(), ".tgb") {
 			continue
@@ -1067,20 +1149,20 @@ func cleanupRetryPackages(workDir string) error {
 		if err != nil {
 			return err
 		}
-		if time.Since(info.ModTime()) > 7*24*time.Hour {
+		id := strings.TrimSuffix(strings.TrimPrefix(entry.Name(), "retry-"), ".tgb")
+		snapshot, exists := byID[id]
+		expired := time.Since(info.ModTime()) > 7*24*time.Hour
+		if exists && expired && snapshot.Status != "succeeded" && snapshot.RetryUnavailableReason == "" {
+			snapshot.RetryAvailable = false
+			snapshot.RetryUnavailableReason = "加密快照已超过 7 天，无法重试。"
+			if err := s.repo.SaveSnapshot(ctx, snapshot); err != nil {
+				return err
+			}
+		}
+		if !exists || snapshot.Status == "succeeded" || expired {
 			if err := os.Remove(filepath.Join(workDir, entry.Name())); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return err
 			}
-			continue
-		}
-		packages = append(packages, retryPackage{name: entry.Name(), modTime: info.ModTime()})
-	}
-	sort.Slice(packages, func(i, j int) bool { return packages[i].modTime.Before(packages[j].modTime) })
-	for len(packages) > 3 {
-		oldest := packages[0]
-		packages = packages[1:]
-		if err := os.Remove(filepath.Join(workDir, oldest.name)); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
 		}
 	}
 	return nil

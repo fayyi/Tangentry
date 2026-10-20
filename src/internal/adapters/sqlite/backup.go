@@ -287,11 +287,11 @@ func (s *Store) DeleteBackupTask(ctx context.Context, id string) error {
 	return err
 }
 func (s *Store) SaveBackupSnapshot(ctx context.Context, v backup.Snapshot) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO backup_run(id,task_id,created_at,size,status) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET task_id=excluded.task_id,created_at=excluded.created_at,size=excluded.size,status=excluded.status`, v.ID, v.TaskID, v.CreatedAt.Unix(), v.Size, v.Status)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO backup_run(id,task_id,created_at,size,status,retry_available,retry_unavailable_reason) VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET task_id=excluded.task_id,created_at=excluded.created_at,size=excluded.size,status=excluded.status,retry_available=excluded.retry_available,retry_unavailable_reason=excluded.retry_unavailable_reason`, v.ID, v.TaskID, v.CreatedAt.Unix(), v.Size, v.Status, boolInt(v.RetryAvailable), v.RetryUnavailableReason)
 	return err
 }
 func (s *Store) BackupSnapshots(ctx context.Context) ([]backup.Snapshot, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,task_id,created_at,size,status FROM backup_run ORDER BY created_at DESC`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,task_id,created_at,size,status,retry_available,retry_unavailable_reason FROM backup_run ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -300,9 +300,11 @@ func (s *Store) BackupSnapshots(ctx context.Context) ([]backup.Snapshot, error) 
 	for rows.Next() {
 		var v backup.Snapshot
 		var ts int64
-		if err := rows.Scan(&v.ID, &v.TaskID, &ts, &v.Size, &v.Status); err != nil {
+		var retryAvailable int
+		if err := rows.Scan(&v.ID, &v.TaskID, &ts, &v.Size, &v.Status, &retryAvailable, &v.RetryUnavailableReason); err != nil {
 			return nil, err
 		}
+		v.RetryAvailable = retryAvailable != 0
 		v.CreatedAt = time.Unix(ts, 0).UTC()
 		v.Targets, err = s.backupTargetRuns(ctx, v.ID)
 		if err != nil {
@@ -316,17 +318,19 @@ func (s *Store) BackupSnapshots(ctx context.Context) ([]backup.Snapshot, error) 
 func (s *Store) GetBackupSnapshot(ctx context.Context, id string) (backup.Snapshot, error) {
 	var v backup.Snapshot
 	var ts int64
-	err := s.db.QueryRowContext(ctx, `SELECT id,task_id,created_at,size,status FROM backup_run WHERE id=?`, id).Scan(&v.ID, &v.TaskID, &ts, &v.Size, &v.Status)
+	var retryAvailable int
+	err := s.db.QueryRowContext(ctx, `SELECT id,task_id,created_at,size,status,retry_available,retry_unavailable_reason FROM backup_run WHERE id=?`, id).Scan(&v.ID, &v.TaskID, &ts, &v.Size, &v.Status, &retryAvailable, &v.RetryUnavailableReason)
 	if err != nil {
 		return v, err
 	}
 	v.CreatedAt = time.Unix(ts, 0).UTC()
+	v.RetryAvailable = retryAvailable != 0
 	v.Targets, err = s.backupTargetRuns(ctx, id)
 	return v, err
 }
 
 func (s *Store) backupTargetRuns(ctx context.Context, runID string) ([]backup.TargetRun, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT target_id,name,status,error_summary FROM backup_run_target WHERE run_id=? ORDER BY target_id`, runID)
+	rows, err := s.db.QueryContext(ctx, `SELECT target_id,name,status,error_summary FROM backup_run_target WHERE run_id=? ORDER BY position,target_id`, runID)
 	if err != nil {
 		return nil, err
 	}
@@ -364,8 +368,8 @@ func (s *Store) SaveBackupTargetRuns(ctx context.Context, runID string, runs []b
 		return err
 	}
 	succeeded, failed, pending := 0, 0, 0
-	for _, run := range runs {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO backup_run_target(run_id,target_id,name,status,error_summary) VALUES(?,?,?,?,?)`, runID, run.TargetID, run.Name, run.Status, run.Error); err != nil {
+	for i, run := range runs {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO backup_run_target(run_id,target_id,name,status,error_summary,position) VALUES(?,?,?,?,?,?)`, runID, run.TargetID, run.Name, run.Status, run.Error, i); err != nil {
 			return err
 		}
 		switch run.Status {
@@ -385,7 +389,7 @@ func (s *Store) SaveBackupTargetRuns(ctx context.Context, runID string, runs []b
 	} else if failed > 0 || succeeded == 0 {
 		status = "failed"
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE backup_run SET status=? WHERE id=?`, status, runID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE backup_run SET status=?,retry_available=? WHERE id=?`, status, boolInt(status != "succeeded"), runID); err != nil {
 		return err
 	}
 	return tx.Commit()

@@ -83,6 +83,9 @@ func openRuntimeResources(dataDir string, configuration config.Config, option Op
 		}
 	}, backupWorkDir, "dev")
 	backupService.SetTargetCredentials(cookies)
+	if err := backupService.CleanupOrphanTargetCredentials(context.Background()); err != nil {
+		return nil, fmt.Errorf("backup credential cleanup: %w", err)
+	}
 	backupService.SetTargetTester(func(ctx context.Context, target backup.Target) error {
 		store, err := webdavstorage.New(webdavstorage.Config{Endpoint: target.Endpoint, Username: target.Username, Password: target.Password, RemotePath: target.RemotePath, AllowInsecureTLS: target.AllowInsecureTLS, Timeout: 15 * time.Second, TempDir: backupWorkDir})
 		if err != nil {

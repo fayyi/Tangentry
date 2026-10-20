@@ -162,7 +162,11 @@ export function backupActionAvailability(input: BackupActionAvailabilityInput): 
 }
 
 export function immediateBackupAvailability(input: Pick<BackupActionAvailabilityInput, 'targetCount' | 'hasTarget' | 'password' | 'hasPassword' | 'pendingAction'>): BackupActionAvailability {
-  return backupActionAvailability(input).run
+	const availability = backupActionAvailability(input).run
+	if ((input.hasTarget ?? (input.targetCount ?? 0) > 0) === false) {
+		return { disabled: true, reason: '请至少选择一个备份目标' }
+	}
+	return availability
 }
 
 function toDate(value: string | number | Date | null | undefined): Date | null {

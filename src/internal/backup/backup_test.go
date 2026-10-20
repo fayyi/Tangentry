@@ -285,7 +285,11 @@ func (r *fanoutRepo) ListTargets(context.Context) ([]Target, error) {
 func (r *fanoutRepo) GetTarget(_ context.Context, id string) (Target, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.targets[id], nil
+	target, ok := r.targets[id]
+	if !ok {
+		return Target{}, errors.New("target not found")
+	}
+	return target, nil
 }
 func (r *fanoutRepo) SaveTarget(_ context.Context, target Target) error {
 	r.mu.Lock()
@@ -310,7 +314,16 @@ func (r *fanoutRepo) SaveSnapshot(_ context.Context, snapshot Snapshot) error {
 	r.snapshots[snapshot.ID] = snapshot
 	return nil
 }
-func (r *fanoutRepo) ListSnapshots(context.Context) ([]Snapshot, error) { return nil, nil }
+func (r *fanoutRepo) ListSnapshots(context.Context) ([]Snapshot, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]Snapshot, 0, len(r.snapshots))
+	for id, snapshot := range r.snapshots {
+		snapshot.Targets = append([]TargetRun(nil), r.runs[id]...)
+		out = append(out, snapshot)
+	}
+	return out, nil
+}
 func (r *fanoutRepo) GetSnapshot(_ context.Context, id string) (Snapshot, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -366,7 +379,10 @@ func (fanoutStore) List(context.Context, string) ([]string, error) { return nil,
 func (fanoutStore) Delete(context.Context, string) error           { return nil }
 func (fanoutStore) TestConnection(context.Context) error           { return nil }
 
-type fixtureTargetCredentials struct{ values map[string]string }
+type fixtureTargetCredentials struct {
+	values     map[string]string
+	failDelete bool
+}
 
 func (c *fixtureTargetCredentials) SaveBackupTargetPassword(id, password string) error {
 	c.values[id] = password
@@ -381,7 +397,22 @@ func (c *fixtureTargetCredentials) BackupTargetConfigured(id string) bool {
 	return ok
 }
 func (c *fixtureTargetCredentials) DeleteBackupTargetPassword(id string) error {
+	if c.failDelete {
+		return errors.New("fixture cleanup failure")
+	}
 	delete(c.values, id)
+	return nil
+}
+func (c *fixtureTargetCredentials) CleanupBackupTargetPasswords(ids []string) error {
+	keep := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		keep[id] = true
+	}
+	for id := range c.values {
+		if !keep[id] {
+			delete(c.values, id)
+		}
+	}
 	return nil
 }
 
@@ -417,6 +448,11 @@ func TestFanoutPersistsPartialSuccessAndRetriesOnlyFailedTarget(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(workDir, "retry-"+snapshot.ID+".tgb")); err != nil {
 		t.Fatalf("encrypted retry package missing: %v", err)
+	}
+	for _, path := range []string{"credentials/backup-targets.json", "documents/credentials/backup-targets.json"} {
+		if _, err := os.Stat(filepath.Join(workDir, "backup", snapshot.ID, path)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("snapshot staging retained credential path %q: %v", path, err)
+		}
 	}
 	badUploads.Store(1)
 	retried, err := service.RetryFailed(context.Background(), snapshot.ID)
@@ -460,6 +496,69 @@ func TestRetryFailedPersistsSuccessfulTargetBeforeLaterFailure(t *testing.T) {
 	}
 }
 
+func TestRetryPackageCleanupKeepsMoreThanThreeActiveRunsAndMarksExpiredRun(t *testing.T) {
+	workDir := t.TempDir()
+	repo := &fanoutRepo{targets: map[string]Target{}, snapshots: map[string]Snapshot{}, runs: map[string][]TargetRun{}}
+	for i := 1; i <= 4; i++ {
+		id := fmt.Sprintf("snapshot-%d", i)
+		path := filepath.Join(workDir, "retry-"+id+".tgb")
+		if err := os.WriteFile(path, []byte("encrypted-fixture"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, time.Now().Add(-8*24*time.Hour), time.Now().Add(-8*24*time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+		if i == 1 {
+			if err := os.Chtimes(path, time.Now().Add(-8*24*time.Hour), time.Now().Add(-8*24*time.Hour)); err != nil {
+				t.Fatal(err)
+			}
+		} else if err := os.Chtimes(path, time.Now(), time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		repo.snapshots[id] = Snapshot{ID: id, TaskID: "task-1", Status: "partial_success", Targets: []TargetRun{{TargetID: "failed", Status: "failed"}}}
+		repo.runs[id] = append([]TargetRun(nil), repo.snapshots[id].Targets...)
+	}
+	_ = NewService(repo, fanoutSource{}, func(Target) (ObjectStore, error) { return nil, errors.New("unused") }, workDir, "test")
+	for i := 2; i <= 4; i++ {
+		if _, err := os.Stat(filepath.Join(workDir, fmt.Sprintf("retry-snapshot-%d.tgb", i))); err != nil {
+			t.Fatalf("active retry package %d was deleted: %v", i, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(workDir, "retry-snapshot-1.tgb")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expired retry package retained: %v", err)
+	}
+	expired, err := repo.GetSnapshot(context.Background(), "snapshot-1")
+	if err != nil || expired.RetryAvailable || expired.RetryUnavailableReason == "" {
+		t.Fatalf("expired run was not marked unavailable: %+v %v", expired, err)
+	}
+}
+
+func TestRetryAfterPackageExpiresPersistsUnavailableReason(t *testing.T) {
+	workDir := t.TempDir()
+	path := filepath.Join(workDir, "retry-snapshot-expired.tgb")
+	if err := os.WriteFile(path, []byte("encrypted-fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-8 * 24 * time.Hour)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+	repo := &fanoutRepo{
+		targets:   map[string]Target{},
+		snapshots: map[string]Snapshot{"snapshot-expired": {ID: "snapshot-expired", TaskID: "task-1", Status: "failed", RetryAvailable: true, Targets: []TargetRun{{TargetID: "failed", Status: "failed"}}}},
+		runs:      map[string][]TargetRun{"snapshot-expired": {{TargetID: "failed", Status: "failed"}}},
+	}
+	service := NewService(repo, fanoutSource{}, func(Target) (ObjectStore, error) { return nil, errors.New("unused") }, workDir, "test")
+	snapshots, err := service.Snapshots(context.Background())
+	if err != nil || len(snapshots) != 1 || snapshots[0].RetryAvailable || snapshots[0].RetryUnavailableReason == "" {
+		t.Fatalf("expired package was not marked unavailable while service is running: %+v %v", snapshots, err)
+	}
+	saved, err := repo.GetSnapshot(context.Background(), "snapshot-expired")
+	if err != nil || saved.RetryAvailable || saved.RetryUnavailableReason == "" {
+		t.Fatalf("expired retry state did not persist: %+v %v", saved, err)
+	}
+}
+
 type fanoutSource struct{}
 
 func (fanoutSource) Snapshot(_ context.Context, stage string, _ bool) ([]File, error) {
@@ -490,6 +589,48 @@ func TestWebDAVTargetCredentialIsNotReturnedOrStoredInRepository(t *testing.T) {
 	}
 	if err := service.DeleteTarget(context.Background(), target.ID); err != nil || len(credentials.values) != 0 {
 		t.Fatalf("credential was not cleared: %v", err)
+	}
+}
+
+func TestTargetCredentialCleanupFailureDoesNotFailDatabaseMutationAndStartupCleansOrphans(t *testing.T) {
+	repo := &fanoutRepo{targets: map[string]Target{"live": {ID: "live", Name: "Live", Type: "webdav", Enabled: true}}, snapshots: map[string]Snapshot{}, runs: map[string][]TargetRun{}}
+	credentials := &fixtureTargetCredentials{values: map[string]string{"live": "fixture-live", "orphan": "fixture-orphan"}, failDelete: true}
+	service := NewService(repo, fanoutSource{}, func(Target) (ObjectStore, error) { return nil, errors.New("unused") }, t.TempDir(), "test")
+	service.SetTargetCredentials(credentials)
+	if err := service.DeleteTarget(context.Background(), "live"); err != nil {
+		t.Fatalf("credential cleanup failure leaked as target delete failure: %v", err)
+	}
+	if _, err := repo.GetTarget(context.Background(), "live"); err == nil {
+		t.Fatal("database target was not deleted")
+	}
+	credentials.failDelete = false
+	if err := service.CleanupOrphanTargetCredentials(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if credentials.BackupTargetConfigured("live") || credentials.BackupTargetConfigured("orphan") {
+		t.Fatal("startup orphan cleanup retained credentials without matching WebDAV targets")
+	}
+}
+
+func TestChangingTargetTypeDeletesDatabaseBeforeCredentialCleanup(t *testing.T) {
+	repo := &fanoutRepo{targets: map[string]Target{"live": {ID: "live", Name: "Live", Type: "webdav", Endpoint: "https://dav.example.test/root", Username: "fixture-user", Enabled: true}}, snapshots: map[string]Snapshot{}, runs: map[string][]TargetRun{}}
+	credentials := &fixtureTargetCredentials{values: map[string]string{"live": "fixture-live"}, failDelete: true}
+	service := NewService(repo, fanoutSource{}, func(Target) (ObjectStore, error) { return nil, errors.New("unused") }, t.TempDir(), "test")
+	service.SetTargetCredentials(credentials)
+	local := Target{ID: "live", Name: "Local", Type: "local", Path: "/tmp/backup-fixture", Enabled: true}
+	if err := service.SaveTarget(context.Background(), local); err != nil {
+		t.Fatalf("credential cleanup failure leaked as target save failure: %v", err)
+	}
+	saved, err := repo.GetTarget(context.Background(), "live")
+	if err != nil || saved.Type != "local" || !credentials.BackupTargetConfigured("live") {
+		t.Fatalf("database change or orphan fixture missing: target=%+v configured=%v err=%v", saved, credentials.BackupTargetConfigured("live"), err)
+	}
+	credentials.failDelete = false
+	if err := service.CleanupOrphanTargetCredentials(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if credentials.BackupTargetConfigured("live") {
+		t.Fatal("startup cleanup retained credential for non-WebDAV target")
 	}
 }
 
