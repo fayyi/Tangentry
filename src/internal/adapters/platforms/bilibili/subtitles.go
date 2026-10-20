@@ -25,6 +25,7 @@ const maxSubtitleParts = 100
 const maxSubtitleTracks = 32
 const maxSubtitleBody = 2 << 20
 const maxSubtitleBodies = 16 << 20
+const minSubtitlePrefetchBudget = 256 << 10
 
 var errNoSubtitleData = errors.New("subtitle API returned no subtitle data")
 
@@ -255,6 +256,9 @@ func (c *Client) readSubtitlePart(ctx context.Context, bvid string, cid int64, t
 			return subtitles.Part{}, firstErr
 		}
 		if len(firstCandidates) > 0 {
+			if firstPartBuilt {
+				return firstPart, nil
+			}
 			return c.subtitleFallbackError(ctx, firstCandidates, title, keyErr, readBodies, selectedLanguage, remainingBodyBytes), nil
 		}
 		return subtitles.Part{}, keyErr
@@ -388,7 +392,7 @@ func (c *Client) buildSubtitlePart(ctx context.Context, candidates []playerSubti
 		hasURL := strings.TrimSpace(candidate.URL) != ""
 		part.Languages = append(part.Languages, subtitles.Language{Language: language, Label: label, Automatic: source == "ai", Source: source, HasURL: hasURL})
 		selected := selectedLanguage == "" || language == selectedLanguage
-		if !hasURL || !readBodies || !selected || remainingBodyBytes != nil && *remainingBodyBytes <= 0 {
+		if !hasURL || !readBodies || !selected || remainingBodyBytes != nil && *remainingBodyBytes < minSubtitlePrefetchBudget {
 			continue
 		}
 		budget := maxSubtitleBody

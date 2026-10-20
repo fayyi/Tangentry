@@ -358,7 +358,7 @@ func TestReadSubtitlesKeepsInvalidAIContentErrorWhenWBIHasNoSubtitleField(t *tes
 	client := NewClient(subtitleFixtureClient(handler), "")
 	client.baseURL = "https://api.fixture.invalid"
 	doc, err := client.ReadSubtitles(context.Background(), "BV17x411w7KC")
-	if err != nil || doc.Status != "error" || !strings.Contains(doc.ErrorMessage, "内容无效") || strings.Contains(doc.ErrorMessage, "no subtitle data") || len(doc.Parts[0].Languages) != 1 || !doc.Parts[0].Languages[0].HasURL || wbiCalls != 1 {
+	if err != nil || doc.Status != "error" || doc.ErrorMessage != "字幕 CDN 内容无效（HTTP 200，application/json）。" || len(doc.Parts[0].Languages) != 1 || !doc.Parts[0].Languages[0].HasURL || wbiCalls != 1 {
 		t.Fatalf("invalid AI body was not reported distinctly from missing API fields: %+v, %v (WBI %d)", doc, err, wbiCalls)
 	}
 }
