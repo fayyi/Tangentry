@@ -6,8 +6,9 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"tangentry/internal/backup"
 	"time"
+
+	"tangentry/internal/backup"
 )
 
 type backupHandler struct{ service BackupService }
@@ -218,12 +219,18 @@ func (h *backupHandler) error(w http.ResponseWriter, err error) {
 	write(w, code, apiError{"backup_error", safeBackupError(err)})
 }
 func safeBackupError(err error) string {
+	if errors.Is(err, backup.ErrTargetConnectionChanged) {
+		return "地址或用户名已修改，请重新输入密码。"
+	}
 	if errors.Is(err, backup.ErrBadPassword) {
 		return "备份密码错误或快照已损坏。"
 	}
 	return "备份操作未完成，请检查目标设置后重试。"
 }
 func safeBackupTestError(err error) string {
+	if errors.Is(err, backup.ErrTargetConnectionChanged) {
+		return "地址或用户名已修改，请重新输入密码。"
+	}
 	var summary interface{ ErrorSummary() string }
 	if errors.As(err, &summary) {
 		return summary.ErrorSummary()
@@ -236,6 +243,8 @@ func (h *backupHandler) folderError(w http.ResponseWriter, err error) {
 	code := "backup_folder_error"
 	message := "远端目录操作失败，请检查设置后重试。"
 	switch {
+	case errors.Is(err, backup.ErrTargetConnectionChanged):
+		status, code, message = http.StatusBadRequest, "backup_folder_credentials_changed", "地址或用户名已修改，请重新输入密码。"
 	case errors.Is(err, backup.ErrFolderUnauthorized):
 		status, code, message = http.StatusUnauthorized, "backup_folder_unauthorized", "WebDAV 认证失败，请检查账号和密码。"
 	case errors.Is(err, backup.ErrFolderPermissionDenied):

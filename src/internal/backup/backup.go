@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/url"
 	"os"
 	"path"
@@ -52,16 +53,17 @@ const (
 )
 
 var (
-	ErrInvalidPackage         = errors.New("invalid backup package")
-	ErrBadPassword            = errors.New("backup password rejected")
-	ErrUnknownVersion         = errors.New("unsupported backup format version")
-	ErrInvalidFolderPath      = errors.New("invalid remote folder path")
-	ErrInvalidFolderName      = errors.New("invalid remote folder name")
-	ErrFolderResponseTooLarge = errors.New("remote folder response too large")
-	ErrTooManyFolders         = errors.New("too many remote folders")
-	ErrFolderParentNotFound   = errors.New("remote folder parent not found")
-	ErrFolderUnauthorized     = errors.New("remote folder authentication failed")
-	ErrFolderPermissionDenied = errors.New("remote folder permission denied")
+	ErrInvalidPackage          = errors.New("invalid backup package")
+	ErrBadPassword             = errors.New("backup password rejected")
+	ErrUnknownVersion          = errors.New("unsupported backup format version")
+	ErrInvalidFolderPath       = errors.New("invalid remote folder path")
+	ErrInvalidFolderName       = errors.New("invalid remote folder name")
+	ErrFolderResponseTooLarge  = errors.New("remote folder response too large")
+	ErrTooManyFolders          = errors.New("too many remote folders")
+	ErrFolderParentNotFound    = errors.New("remote folder parent not found")
+	ErrFolderUnauthorized      = errors.New("remote folder authentication failed")
+	ErrFolderPermissionDenied  = errors.New("remote folder permission denied")
+	ErrTargetConnectionChanged = errors.New("backup target address or username changed; password required")
 )
 
 type FileType string
@@ -696,11 +698,18 @@ func (s *Service) Snapshots(ctx context.Context) ([]Snapshot, error) {
 }
 
 func (s *Service) TestTarget(ctx context.Context, target Target) error {
-	if target.Type != "webdav" || s.testTarget == nil || target.Endpoint == "" || target.Username == "" {
+	if target.Type != "webdav" || s.testTarget == nil {
 		return errors.New("invalid WebDAV connection test")
 	}
-	if target.Password == "" && target.ID != "" && s.credentials != nil {
-		target.Password, _ = s.credentials.BackupTargetPassword(target.ID)
+	if target.Password == "" && target.ID != "" {
+		resolved, err := s.resolveSavedTarget(ctx, target)
+		if err != nil {
+			return err
+		}
+		target = resolved
+	}
+	if target.Endpoint == "" || target.Username == "" {
+		return errors.New("invalid WebDAV connection test")
 	}
 	if target.Password == "" {
 		return errors.New("WebDAV password is required")
@@ -737,18 +746,36 @@ func (s *Service) SaveTarget(ctx context.Context, target Target) (saveErr error)
 			return err
 		}
 		logTargetSavePhase("validation", targetType, time.Since(validationStarted), nil)
+	} else {
+		logTargetSavePhase("validation", targetType, time.Since(validationStarted), nil)
+	}
+	lookupStarted := time.Now()
+	previous, previousErr := s.repo.GetTarget(ctx, target.ID)
+	logTargetSavePhase("repository_lookup", targetType, time.Since(lookupStarted), previousErr)
+	if target.Type == "webdav" && !target.UpdateCredential && previousErr == nil && previous.Type == "webdav" {
+		requestedEndpoint, requestedErr := normalizeWebDAVEndpoint(target.Endpoint)
+		savedEndpoint, savedErr := normalizeWebDAVEndpoint(previous.Endpoint)
+		if requestedErr != nil || savedErr != nil || requestedEndpoint != savedEndpoint || target.Username != previous.Username {
+			logTargetSavePhase("credential_check", targetType, 0, ErrTargetConnectionChanged)
+			return ErrTargetConnectionChanged
+		}
+	}
+	if target.Type == "webdav" {
 		var configured bool
 		if s.credentials != nil {
 			credentialReadStarted := time.Now()
 			configured = s.credentials.BackupTargetConfigured(target.ID)
 			previousPassword, previousConfigured = s.credentials.BackupTargetPassword(target.ID)
 			logTargetSavePhase("credential_read", targetType, time.Since(credentialReadStarted), nil)
+		} else {
+			logTargetSavePhase("credential_read", targetType, 0, errors.New("backup credentials unavailable"))
 		}
 		if target.UpdateCredential {
+			credentialWriteStarted := time.Now()
 			if s.credentials == nil {
+				logTargetSavePhase("credential_write", targetType, time.Since(credentialWriteStarted), errors.New("backup credentials unavailable"))
 				return errors.New("backup credentials unavailable")
 			}
-			credentialWriteStarted := time.Now()
 			if err := s.credentials.SaveBackupTargetPassword(target.ID, target.Password); err != nil {
 				logTargetSavePhase("credential_write", targetType, time.Since(credentialWriteStarted), err)
 				return err
@@ -757,31 +784,31 @@ func (s *Service) SaveTarget(ctx context.Context, target Target) (saveErr error)
 			configured = true
 		}
 		if !configured {
+			logTargetSavePhase("credential_check", targetType, 0, errors.New("WebDAV password is required"))
 			return errors.New("WebDAV password is required")
 		}
 		target.CredentialConfigured = true
 		target.Password = ""
 		target.UpdateCredential = false
 	} else {
-		logTargetSavePhase("validation", targetType, time.Since(validationStarted), nil)
 		target.Endpoint, target.Username, target.RemotePath = "", "", ""
 		target.AllowInsecureTLS = false
 		target.CredentialConfigured = false
 		target.Password = ""
 		target.UpdateCredential = false
 	}
-	lookupStarted := time.Now()
-	previous, previousErr := s.repo.GetTarget(ctx, target.ID)
-	logTargetSavePhase("repository_lookup", targetType, time.Since(lookupStarted), previousErr)
 	repositoryWriteStarted := time.Now()
 	if err := s.repo.SaveTarget(ctx, target); err != nil {
 		logTargetSavePhase("repository_write", targetType, time.Since(repositoryWriteStarted), err)
 		if target.Type == "webdav" && updateCredential && s.credentials != nil {
+			compensationStarted := time.Now()
+			var compensationErr error
 			if previousConfigured {
-				_ = s.credentials.SaveBackupTargetPassword(target.ID, previousPassword)
+				compensationErr = s.credentials.SaveBackupTargetPassword(target.ID, previousPassword)
 			} else {
-				_ = s.credentials.DeleteBackupTargetPassword(target.ID)
+				compensationErr = s.credentials.DeleteBackupTargetPassword(target.ID)
 			}
+			logTargetSavePhase("credential_compensation", targetType, time.Since(compensationStarted), compensationErr)
 		}
 		return err
 	}
@@ -829,33 +856,12 @@ func (s *Service) targetFolderStore(ctx context.Context, target Target) (TargetF
 	if s.folderStores == nil {
 		return nil, errors.New("WebDAV folder browser unavailable")
 	}
-	if target.ID != "" {
-		saved, err := s.repo.GetTarget(ctx, target.ID)
-		savedWebDAV := err == nil && saved.Type == "webdav"
-		temporaryCredentials := target.Password != ""
-		useSavedConfig := strings.TrimSpace(target.Endpoint) == "" && strings.TrimSpace(target.Username) == ""
-		if target.Type == "" && savedWebDAV {
-			target.Type = saved.Type
+	if target.ID != "" && target.Password == "" {
+		resolved, err := s.resolveSavedTarget(ctx, target)
+		if err != nil {
+			return nil, err
 		}
-		if !savedWebDAV && !temporaryCredentials {
-			return nil, ErrFolderUnauthorized
-		}
-		if savedWebDAV {
-			if strings.TrimSpace(target.Endpoint) == "" {
-				target.Endpoint = saved.Endpoint
-			}
-			if strings.TrimSpace(target.Username) == "" {
-				target.Username = saved.Username
-			}
-			if useSavedConfig {
-				target.AllowInsecureTLS = saved.AllowInsecureTLS
-			}
-		}
-		if savedWebDAV && !temporaryCredentials && s.credentials != nil {
-			if password, ok := s.credentials.BackupTargetPassword(target.ID); ok {
-				target.Password = password
-			}
-		}
+		target = resolved
 	}
 	if target.Type != "webdav" {
 		return nil, errors.New("WebDAV folder browser unavailable")
@@ -867,6 +873,81 @@ func (s *Service) targetFolderStore(ctx context.Context, target Target) (TargetF
 		return nil, ErrFolderUnauthorized
 	}
 	return s.folderStores(target)
+}
+
+func (s *Service) resolveSavedTarget(ctx context.Context, requested Target) (Target, error) {
+	saved, err := s.repo.GetTarget(ctx, requested.ID)
+	if err != nil || saved.Type != "webdav" {
+		return Target{}, ErrFolderUnauthorized
+	}
+	if requested.Type != "" && requested.Type != saved.Type {
+		return Target{}, ErrTargetConnectionChanged
+	}
+	requestedEndpointValue := strings.TrimSpace(requested.Endpoint)
+	requestedUsernameValue := strings.TrimSpace(requested.Username)
+	useSavedConfig := requestedEndpointValue == "" && requestedUsernameValue == ""
+	if (requestedEndpointValue == "") != (requestedUsernameValue == "") {
+		return Target{}, ErrTargetConnectionChanged
+	}
+	if requestedEndpointValue != "" {
+		requestedEndpoint, requestErr := normalizeWebDAVEndpoint(requested.Endpoint)
+		savedEndpoint, savedErr := normalizeWebDAVEndpoint(saved.Endpoint)
+		if requestErr != nil || savedErr != nil || requestedEndpoint != savedEndpoint {
+			return Target{}, ErrTargetConnectionChanged
+		}
+	}
+	if requestedUsernameValue != "" && requested.Username != saved.Username {
+		return Target{}, ErrTargetConnectionChanged
+	}
+	if requested.Endpoint == "" {
+		requested.Endpoint = saved.Endpoint
+	}
+	if requested.Username == "" {
+		requested.Username = saved.Username
+	}
+	if useSavedConfig {
+		requested.AllowInsecureTLS = saved.AllowInsecureTLS
+	}
+	requested.Type = saved.Type
+	password, ok := "", false
+	if s.credentials != nil {
+		password, ok = s.credentials.BackupTargetPassword(requested.ID)
+	}
+	if !ok || password == "" {
+		return Target{}, ErrFolderUnauthorized
+	}
+	requested.Endpoint = saved.Endpoint
+	requested.Username = saved.Username
+	requested.Password = password
+	return requested, nil
+}
+
+func normalizeWebDAVEndpoint(raw string) (string, error) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u == nil {
+		return "", errors.New("invalid WebDAV endpoint")
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if u.Host == "" || scheme != "http" && scheme != "https" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || hasPathTraversal(u.Path) {
+		return "", errors.New("invalid WebDAV endpoint")
+	}
+	host := strings.ToLower(u.Hostname())
+	port := u.Port()
+	if port == "80" && scheme == "http" || port == "443" && scheme == "https" {
+		port = ""
+	}
+	authority := host
+	if strings.Contains(host, ":") {
+		authority = "[" + host + "]"
+	}
+	if port != "" {
+		authority = net.JoinHostPort(host, port)
+	}
+	endpointPath := path.Clean("/" + strings.TrimPrefix(u.Path, "/"))
+	if endpointPath == "/" {
+		endpointPath = ""
+	}
+	return scheme + "://" + authority + endpointPath, nil
 }
 
 func validateWebDAVConnectionTarget(target Target) error {
