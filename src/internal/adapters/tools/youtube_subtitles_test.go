@@ -200,6 +200,9 @@ func TestYouTubeInnerTubeCaptionsFallbackAndNoCaptionClassification(t *testing.T
 	})}
 	kit := New(config.Config{})
 	kit.SetYouTubeHTTPClient(client)
+	// Keep this fixture independent of whatever yt-dlp happens to be installed
+	// on the host running the suite; it specifically exercises the InnerTube path.
+	kit.status.Tools[0].Available = false
 	doc, err := kit.ReadYouTubeSubtitles(context.Background(), "jNQXAC9IVRw", "")
 	if err != nil || doc.Status != "available" || len(doc.Tracks) != 1 || !doc.Tracks[0].Automatic || doc.Tracks[0].Language != "zh-Hans" || len(doc.Tracks[0].Cues) != 2 || doc.Tracks[0].Cues[1].Text != "now" {
 		t.Fatalf("InnerTube auto captions: %+v %v", doc, err)
