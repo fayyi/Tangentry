@@ -61,7 +61,7 @@ type Document struct {
 	Parts        []Part     `json:"parts,omitempty"`
 	VideoID      string     `json:"videoId"`
 	Part         int        `json:"part"`
-	Status       string     `json:"status"` // available, none, login_required, api_empty, error, cc, ai, ai_mismatch
+	Status       string     `json:"status"` // available, none, login_required, api_empty, error, cc, ai, ai_mismatch, rate_limited
 	ErrorCode    int        `json:"errorCode,omitempty"`
 	ErrorMessage string     `json:"errorMessage,omitempty"`
 	Tracks       []Track    `json:"tracks"`

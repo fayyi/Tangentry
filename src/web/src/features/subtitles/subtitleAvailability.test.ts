@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { selectedSubtitleAvailability, subtitlePartMessage } from './subtitleAvailability'
+import { selectedSubtitleAvailability, subtitleDocumentMessage, subtitlePartMessage } from './subtitleAvailability'
 import { subtitlePriority } from './useSubtitles'
 import type { SubtitleDocument, SubtitlePart, SubtitleTrack } from '../../shared/api/types'
 
@@ -18,13 +18,21 @@ describe('B站字幕可用性', () => {
     expect(subtitlePartMessage(part('api_empty'))).toMatchObject({ action: '去账号设置', tone: 'warning' })
     expect(subtitlePartMessage(part('none'))).toMatchObject({ action: '转录', tone: 'neutral' })
     expect(subtitlePartMessage(part('error', -101, '需要登录'))).toMatchObject({ message: expect.stringContaining('-101'), action: '重试', tone: 'danger' })
-    expect(subtitlePartMessage(part('rate_limited'))).toMatchObject({ message: expect.stringContaining('暂时限制访问'), action: '稍后重试', tone: 'warning' })
+    expect(subtitlePartMessage(part('rate_limited', 412, 'HTTP 412 text/html'))).toMatchObject({ message: expect.stringContaining('412'), action: '稍后重试', tone: 'warning' })
+    expect(subtitleDocumentMessage('rate_limited', 412, 'HTTP 412 text/html')).toContain('412')
+    expect(subtitleDocumentMessage('api_empty')).toContain('地址为空')
+    expect(subtitleDocumentMessage('error', -101, '需要登录')).toContain('需要登录')
     expect(subtitlePartMessage(part('ai_mismatch'))).toMatchObject({ message: expect.stringContaining('仍可查看'), action: '改用转录' })
   })
 
   it('混合 CC 与 AI 时仍显示 AI 存疑标记', () => {
     const mixed = { cid: 12, page: 1, status: 'cc' as const, aiMismatch: true, languages: [], tracks: [] }
     expect(subtitlePartMessage(mixed)).toMatchObject({ message: expect.stringContaining('另有 AI 字幕疑似错位'), tone: 'warning' })
+  })
+
+  it('注明通过 yt-dlp 读取的字幕来源', () => {
+    const part = { cid: 12, page: 1, status: 'ai' as const, languages: [], tracks: [{ language: 'zh-CN', label: '简体中文', automatic: true, source: 'yt-dlp' as const, cues: [] }] }
+    expect(subtitlePartMessage(part)).toMatchObject({ message: expect.stringContaining('yt-dlp') })
   })
 
   it('本机副本不掩盖当前平台 AI 轨道的存疑标记', () => {
