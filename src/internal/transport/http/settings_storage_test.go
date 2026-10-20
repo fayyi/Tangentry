@@ -2,6 +2,7 @@ package httptransport
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -128,5 +129,43 @@ func TestSavedSubtitleHTTPStrictValidationAndVersionConflicts(t *testing.T) {
 	}
 	if w := storageRequest(h, "PUT", path, strings.Replace(valid, `"revision":0`, `"revision":1`, 1), "application/json"); w.Code != 409 {
 		t.Fatal("old saved revision overwrote recreated subtitle")
+	}
+}
+
+func TestSavedBilibiliCCAndAIMetadataRoundTrips(t *testing.T) {
+	store, err := sqlite.Open(filepath.Join(t.TempDir(), "saved-bilibili-captions.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	h := New(nil, nil, nil, Options{SavedSubtitles: subtitles.NewSavedService(store)})
+	base := `"label":"中文","automatic":%s,"source":"%s","mismatch":%t,"cues":[{"start":0,"end":1,"text":"字幕"}]`
+	for _, candidate := range []struct {
+		language string
+		track    string
+	}{
+		{"zh-CN", `{"language":"zh-CN",` + fmt.Sprintf(base, "false", "cc", false) + `}`},
+		{"zh-Hans", `{"language":"zh-Hans",` + fmt.Sprintf(base, "true", "ai", true) + `}`},
+	} {
+		body := `{"revision":0,"track":` + candidate.track + `}`
+		path := "/api/saved-subtitles/bilibili:BV17x411w7KC/" + candidate.language
+		if response := storageRequest(h, "PUT", path, body, "application/json"); response.Code != 200 {
+			t.Fatalf("save %s failed: %d %s", candidate.language, response.Code, response.Body)
+		}
+	}
+	values, err := store.ListSavedSubtitles(context.Background(), "bilibili:BV17x411w7KC")
+	if err != nil || len(values) != 2 {
+		t.Fatalf("saved tracks did not round-trip: %+v %v", values, err)
+	}
+	byLanguage := map[string]subtitles.Track{}
+	for _, value := range values {
+		byLanguage[value.Track.Language] = value.Track
+	}
+	if byLanguage["zh-CN"].Source != "cc" || byLanguage["zh-CN"].Mismatch || byLanguage["zh-Hans"].Source != "ai" || !byLanguage["zh-Hans"].Mismatch {
+		t.Fatalf("B站 source metadata did not persist: %+v", byLanguage)
+	}
+	listed := storageRequest(h, "GET", "/api/saved-subtitles?contentId=bilibili:BV17x411w7KC", "", "")
+	if listed.Code != 200 || !strings.Contains(listed.Body.String(), `"source":"ai"`) || !strings.Contains(listed.Body.String(), `"mismatch":true`) || !strings.Contains(listed.Body.String(), `"source":"cc"`) {
+		t.Fatalf("saved metadata missing from API response: %d %s", listed.Code, listed.Body)
 	}
 }

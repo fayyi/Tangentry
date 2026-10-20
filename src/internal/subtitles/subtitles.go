@@ -49,6 +49,7 @@ type Part struct {
 	Page         int        `json:"page"`
 	Title        string     `json:"title,omitempty"`
 	Status       string     `json:"status"`
+	AIMismatch   bool       `json:"aiMismatch,omitempty"`
 	ErrorCode    int        `json:"errorCode,omitempty"`
 	ErrorMessage string     `json:"errorMessage,omitempty"`
 	Languages    []Language `json:"languages"`

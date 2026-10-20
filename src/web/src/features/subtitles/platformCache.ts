@@ -11,7 +11,7 @@ let entries: Map<string, Entry> | undefined
 function validDocument(value: unknown): value is SubtitleDocument {
   if (!value || typeof value !== 'object') return false
   const doc = value as SubtitleDocument
-  if (!['available', 'none', 'login_required', 'api_empty', 'error', 'cc', 'ai', 'ai_mismatch'].includes(doc.status) || typeof doc.videoId !== 'string' || doc.videoId.length > 160 || !Number.isInteger(doc.part) || doc.part < 1 ||
+  if (!['available', 'none', 'login_required', 'api_empty', 'error', 'cc', 'ai', 'ai_mismatch', 'rate_limited'].includes(doc.status) || typeof doc.videoId !== 'string' || doc.videoId.length > 160 || !Number.isInteger(doc.part) || doc.part < 1 ||
       !Array.isArray(doc.tracks) || doc.tracks.length > 64) return false
   if (doc.errorCode !== undefined && (!Number.isInteger(doc.errorCode) || Math.abs(doc.errorCode) > 100000) ||
       doc.errorMessage !== undefined && (typeof doc.errorMessage !== 'string' || doc.errorMessage.length > 160 || unsafeErrorText.test(doc.errorMessage))) return false
@@ -33,7 +33,8 @@ function validDocument(value: unknown): value is SubtitleDocument {
   if (doc.languages !== undefined && (!Array.isArray(doc.languages) || doc.languages.length > 64 || !doc.languages.every(validLanguage))) return false
   let partCueCount = 0
   const validParts = doc.parts === undefined || (Array.isArray(doc.parts) && doc.parts.length <= 100 && doc.parts.every(part => {
-    if (!part || !Number.isInteger(part.cid) || part.cid <= 0 || !Number.isInteger(part.page) || part.page < 1 || !['cc','ai','ai_mismatch','api_empty','none','error'].includes(part.status) ||
+    if (!part || !Number.isInteger(part.cid) || part.cid <= 0 || !Number.isInteger(part.page) || part.page < 1 || !['cc','ai','ai_mismatch','api_empty','none','error','rate_limited'].includes(part.status) ||
+        (part.aiMismatch !== undefined && typeof part.aiMismatch !== 'boolean') ||
         part.title !== undefined && (typeof part.title !== 'string' || part.title.length > 120) ||
         part.errorCode !== undefined && (!Number.isInteger(part.errorCode) || Math.abs(part.errorCode) > 100000) ||
         part.errorMessage !== undefined && (typeof part.errorMessage !== 'string' || part.errorMessage.length > 160 || unsafeErrorText.test(part.errorMessage)) ||
@@ -98,6 +99,7 @@ export function cachedSubtitles(key: string, videoId: string): SubtitleDocument 
 
 export function cacheSubtitles(key: string, document: SubtitleDocument) {
   if (!validDocument(document)) return
+  if (document.status === 'rate_limited' || document.parts?.some(part => part.status === 'rate_limited')) return
   // Store only the public caption contract, never arbitrary response fields.
   const language = (value: { language: string; label: string; automatic?: boolean; source?: 'cc' | 'ai'; hasUrl?: boolean }) =>
     ({ language: value.language, label: value.label, automatic: value.automatic ?? false, ...(value.source ? { source: value.source } : {}), ...(value.hasUrl !== undefined ? { hasUrl: value.hasUrl } : {}) })
@@ -106,7 +108,7 @@ export function cacheSubtitles(key: string, document: SubtitleDocument) {
     videoId: document.videoId, part: document.part, status: document.status,
     ...(document.errorCode !== undefined ? { errorCode: document.errorCode } : {}), ...(document.errorMessage ? { errorMessage: document.errorMessage } : {}),
     languages: document.languages?.map(language),
-    parts: document.parts?.map(part => ({ cid: part.cid, page: part.page, ...(part.title ? { title: part.title } : {}), status: part.status, ...(part.errorCode !== undefined ? { errorCode: part.errorCode } : {}), ...(part.errorMessage ? { errorMessage: part.errorMessage } : {}), languages: part.languages.map(language), tracks: part.tracks.map(track) })),
+    parts: document.parts?.map(part => ({ cid: part.cid, page: part.page, ...(part.title ? { title: part.title } : {}), status: part.status, ...(part.aiMismatch ? { aiMismatch: true } : {}), ...(part.errorCode !== undefined ? { errorCode: part.errorCode } : {}), ...(part.errorMessage ? { errorMessage: part.errorMessage } : {}), languages: part.languages.map(language), tracks: part.tracks.map(track) })),
     tracks: document.tracks.map(track),
   }
   cache().delete(key)

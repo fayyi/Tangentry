@@ -88,6 +88,7 @@ func (c *Client) ReadSubtitles(ctx context.Context, bvid string) (subtitles.Docu
 	}
 
 	doc := subtitles.Document{VideoID: bvid, Part: 1, Status: "error", Tracks: []subtitles.Track{}, Parts: make([]subtitles.Part, 0, len(parts))}
+	coolingDown := false
 	for i, page := range parts {
 		part := subtitles.Part{CID: page.CID, Page: page.Page, Title: safeSubtitleText(page.Title, 120), Status: "error", Languages: []subtitles.Language{}, Tracks: []subtitles.Track{}}
 		if part.Page < 1 {
@@ -98,17 +99,28 @@ func (c *Client) ReadSubtitles(ctx context.Context, bvid string) (subtitles.Docu
 			doc.Parts = append(doc.Parts, part)
 			continue
 		}
+		if coolingDown {
+			part.Status = "rate_limited"
+			part.ErrorMessage = "B站暂时限制访问，请稍后重试。"
+			doc.Parts = append(doc.Parts, part)
+			continue
+		}
 		title := safeSubtitleText(view.Title+" "+page.Title, 240)
-		result, err := c.readSubtitlePart(ctx, bvid, page.CID, title)
+		result, err := c.readSubtitlePart(ctx, bvid, page.CID, title, i == 0)
 		if err != nil {
 			if ctx.Err() != nil {
 				return subtitles.Document{}, ctx.Err()
 			}
 			part.ErrorCode, part.ErrorMessage = platformSubtitleError(err)
+			if isSubtitleRateLimited(err) {
+				part.Status = "rate_limited"
+				part.ErrorMessage = "B站暂时限制访问，请稍后重试。"
+				coolingDown = true
+			}
 			doc.Parts = append(doc.Parts, part)
 			continue
 		}
-		part.Languages, part.Tracks, part.Status = result.Languages, result.Tracks, result.Status
+		part.Languages, part.Tracks, part.Status, part.AIMismatch = result.Languages, result.Tracks, result.Status, result.AIMismatch
 		part.ErrorCode, part.ErrorMessage = result.ErrorCode, result.ErrorMessage
 		doc.Parts = append(doc.Parts, part)
 	}
@@ -120,17 +132,20 @@ func (c *Client) ReadSubtitles(ctx context.Context, bvid string) (subtitles.Docu
 	return doc, nil
 }
 
-func (c *Client) readSubtitlePart(ctx context.Context, bvid string, cid int64, title string) (subtitles.Part, error) {
+func (c *Client) readSubtitlePart(ctx context.Context, bvid string, cid int64, title string, readBodies bool) (subtitles.Part, error) {
 	params := url.Values{"bvid": {bvid}, "cid": {strconv.FormatInt(cid, 10)}}
 	first, firstErr := c.playerSubtitles(ctx, "/x/player/v2", params)
+	if isSubtitleRateLimited(firstErr) {
+		return subtitles.Part{}, firstErr
+	}
 	var firstCandidates []playerSubtitle
 	if firstErr == nil && first.Subtitle != nil && len(first.Subtitle.List) > 0 {
 		firstCandidates = first.Subtitle.List
 		if hasSubtitleURL(first.Subtitle.List) {
-			firstPart := c.buildSubtitlePart(ctx, first.Subtitle.List, title)
+			firstPart := c.buildSubtitlePart(ctx, first.Subtitle.List, title, readBodies)
 			// A declared URL can still yield an empty/invalid payload. Treat that
 			// as missing subtitle data and give the signed endpoint a chance.
-			if len(firstPart.Tracks) > 0 {
+			if !readBodies || len(firstPart.Tracks) > 0 {
 				return firstPart, nil
 			}
 		}
@@ -138,11 +153,14 @@ func (c *Client) readSubtitlePart(ctx context.Context, bvid string, cid int64, t
 
 	key, keyErr := c.mixinKey(ctx)
 	if keyErr != nil {
+		if isSubtitleRateLimited(keyErr) {
+			return subtitles.Part{}, keyErr
+		}
 		if firstErr != nil {
 			return subtitles.Part{}, firstErr
 		}
 		if len(firstCandidates) > 0 {
-			return c.subtitleFallbackError(ctx, firstCandidates, title, keyErr), nil
+			return c.subtitleFallbackError(ctx, firstCandidates, title, keyErr, readBodies), nil
 		}
 		return subtitles.Part{}, keyErr
 	}
@@ -150,25 +168,28 @@ func (c *Client) readSubtitlePart(ctx context.Context, bvid string, cid int64, t
 	sign(signed, key, time.Now().Unix())
 	second, secondErr := c.playerSubtitles(ctx, "/x/player/wbi/v2", signed)
 	if secondErr != nil {
+		if isSubtitleRateLimited(secondErr) {
+			return subtitles.Part{}, secondErr
+		}
 		if len(firstCandidates) > 0 {
-			return c.subtitleFallbackError(ctx, firstCandidates, title, secondErr), nil
+			return c.subtitleFallbackError(ctx, firstCandidates, title, secondErr, readBodies), nil
 		}
 		return subtitles.Part{}, secondErr
 	}
 	if second.Subtitle == nil {
 		if len(firstCandidates) > 0 {
-			return c.subtitleFallbackError(ctx, firstCandidates, title, errors.New("subtitle API returned no subtitle data")), nil
+			return c.subtitleFallbackError(ctx, firstCandidates, title, errors.New("subtitle API returned no subtitle data"), readBodies), nil
 		}
 		return subtitles.Part{}, errors.New("subtitle API returned no subtitle data")
 	}
 	if len(second.Subtitle.List) == 0 && len(firstCandidates) > 0 {
-		return c.buildSubtitlePart(ctx, firstCandidates, title), nil
+		return c.buildSubtitlePart(ctx, firstCandidates, title, readBodies), nil
 	}
-	return c.buildSubtitlePart(ctx, second.Subtitle.List, title), nil
+	return c.buildSubtitlePart(ctx, second.Subtitle.List, title, readBodies), nil
 }
 
-func (c *Client) subtitleFallbackError(ctx context.Context, candidates []playerSubtitle, title string, err error) subtitles.Part {
-	part := c.buildSubtitlePart(ctx, candidates, title)
+func (c *Client) subtitleFallbackError(ctx context.Context, candidates []playerSubtitle, title string, err error, readBodies bool) subtitles.Part {
+	part := c.buildSubtitlePart(ctx, candidates, title, readBodies)
 	part.Status = "error"
 	part.ErrorCode, part.ErrorMessage = platformSubtitleError(err)
 	return part
@@ -180,6 +201,9 @@ func (c *Client) playerSubtitles(ctx context.Context, endpoint string, params ur
 		return playerSubtitleResponse{}, err
 	}
 	if body.Code != 0 {
+		if body.Code == -352 || body.Code == -412 || body.Code == -799 || body.Code == -509 {
+			return playerSubtitleResponse{}, c.restricted()
+		}
 		return playerSubtitleResponse{}, apiSubtitleError{code: body.Code, message: body.Message}
 	}
 	if len(body.Data) == 0 || string(body.Data) == "null" {
@@ -218,7 +242,7 @@ func platformSubtitleError(err error) (int, string) {
 	return 0, safeSubtitleText(err.Error(), 160)
 }
 
-func (c *Client) buildSubtitlePart(ctx context.Context, candidates []playerSubtitle, title string) subtitles.Part {
+func (c *Client) buildSubtitlePart(ctx context.Context, candidates []playerSubtitle, title string, readBodies bool) subtitles.Part {
 	part := subtitles.Part{Title: title, Status: "none", Languages: []subtitles.Language{}, Tracks: []subtitles.Track{}}
 	failedURL := false
 	if len(candidates) > maxSubtitleTracks {
@@ -236,7 +260,7 @@ func (c *Client) buildSubtitlePart(ctx context.Context, candidates []playerSubti
 		source := subtitleSource(candidate)
 		hasURL := strings.TrimSpace(candidate.URL) != ""
 		part.Languages = append(part.Languages, subtitles.Language{Language: language, Label: label, Automatic: source == "ai", Source: source, HasURL: hasURL})
-		if !hasURL {
+		if !hasURL || !readBodies {
 			continue
 		}
 		cues, err := c.fetchSubtitleCues(ctx, candidate.URL)
@@ -261,21 +285,40 @@ func (c *Client) buildSubtitlePart(ctx context.Context, candidates []playerSubti
 				part.Tracks[i].Mismatch = true
 			}
 		}
+		for _, track := range part.Tracks {
+			part.AIMismatch = part.AIMismatch || track.Source == "ai" && track.Mismatch
+		}
 		part.Status = part.Tracks[0].Source
 		if part.Tracks[0].Source == "ai" && part.Tracks[0].Mismatch {
 			part.Status = "ai_mismatch"
 		}
 	} else if len(part.Languages) > 0 {
-		if failedURL {
+		hasURL := false
+		for _, language := range part.Languages {
+			hasURL = hasURL || language.HasURL
+		}
+		if readBodies && failedURL {
 			part.Status = "error"
 			if part.ErrorMessage == "" {
 				part.ErrorMessage = "字幕内容为空或格式无效。"
 			}
-		} else {
+		} else if !hasURL {
 			part.Status = "api_empty"
+		} else {
+			for _, language := range part.Languages {
+				if language.HasURL {
+					part.Status = language.Source
+					break
+				}
+			}
 		}
 	}
 	return part
+}
+
+func isSubtitleRateLimited(err error) bool {
+	var platform *discovery.PlatformError
+	return errors.As(err, &platform) && platform.Restricted
 }
 
 func subtitleSource(candidate playerSubtitle) string {

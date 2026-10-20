@@ -129,6 +129,77 @@ func TestReadSubtitlesDistinguishesMissingURLFromNoCaptionsAndRetainsAIMismatch(
 	}
 }
 
+func TestReadSubtitlesRateLimitMarksRemainingPartsWithoutBypassingCooldown(t *testing.T) {
+	var paths []string
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path+"?cid="+r.URL.Query().Get("cid"))
+		switch r.URL.Path {
+		case "/x/web-interface/view":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"title":"课程","pages":[{"cid":111,"page":1,"part":"第一课"},{"cid":222,"page":2,"part":"第二课"},{"cid":333,"page":3,"part":"第三课"}]}}`))
+		case "/x/player/v2":
+			if r.URL.Query().Get("cid") == "111" {
+				w.WriteHeader(http.StatusTooManyRequests)
+				return
+			}
+			t.Errorf("cooldown was bypassed with player request: %s", r.URL.RawQuery)
+		case "/x/web-interface/nav", "/x/player/wbi/v2":
+			t.Errorf("cooldown was bypassed with WBI request: %s", r.URL.Path)
+		default:
+			t.Errorf("unexpected request: %s", r.URL.Path)
+		}
+	})
+	client := NewClient(subtitleFixtureClient(handler), "")
+	client.baseURL = "https://api.fixture.invalid"
+	doc, err := client.ReadSubtitles(context.Background(), "BV17x411w7KC")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Parts) != 3 || doc.Parts[0].Status != "rate_limited" || doc.Parts[1].Status != "rate_limited" || doc.Parts[2].Status != "rate_limited" {
+		t.Fatalf("rate-limited part states not preserved: %+v", doc.Parts)
+	}
+	if len(paths) != 2 || paths[1] != "/x/player/v2?cid=111" {
+		t.Fatalf("subsequent P requests bypassed cooling period: %v", paths)
+	}
+}
+
+func TestReadSubtitlesOnlyDownloadsFirstPartBodyAndMarksMixedAIMismatch(t *testing.T) {
+	bodyRequests := 0
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/x/web-interface/view":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"title":"量子计算课程","pages":[{"cid":111,"page":1,"part":"第一课"},{"cid":222,"page":2,"part":"第二课"}]}}`))
+		case "/x/player/v2":
+			if r.URL.Query().Get("cid") == "111" {
+				_, _ = w.Write([]byte(`{"code":0,"data":{"subtitle":{"list":[{"lan":"zh-CN","lan_doc":"中文 CC","subtitle_url":"https://subtitle.hdslb.com/cc.json"},{"lan":"zh-Hans","lan_doc":"中文 AI","subtitle_url":"https://aisubtitle.hdslb.com/ai.json","ai_type":1}]}}}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"code":0,"data":{"subtitle":{"list":[{"lan":"zh-CN","lan_doc":"中文 CC","subtitle_url":"https://subtitle.hdslb.com/cc.json"},{"lan":"zh-Hans","lan_doc":"中文 AI","subtitle_url":"https://aisubtitle.hdslb.com/ai.json","ai_type":1}]}}}`))
+		case "/cc.json":
+			bodyRequests++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"body":[{"from":0,"to":1,"content":"量子计算课程欢迎学习"}]}`))
+		case "/ai.json":
+			bodyRequests++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"body":[{"from":0,"to":1,"content":"完全无关的话题文本内容"},{"from":1,"to":2,"content":"另外一些不相关句子信息"},{"from":2,"to":3,"content":"更多无关文本继续展开"}]}`))
+		default:
+			t.Errorf("unexpected request: %s", r.URL.Path)
+		}
+	})
+	client := NewClient(subtitleFixtureClient(handler), "")
+	client.baseURL = "https://api.fixture.invalid"
+	doc, err := client.ReadSubtitles(context.Background(), "BV17x411w7KC")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bodyRequests != 2 || len(doc.Parts) != 2 || doc.Status != "cc" || doc.Parts[0].Status != "cc" || !doc.Parts[0].AIMismatch || !doc.Parts[0].Tracks[1].Mismatch {
+		t.Fatalf("mixed status or body request policy was wrong: requests=%d document=%+v", bodyRequests, doc)
+	}
+	if len(doc.Parts[1].Tracks) != 0 || len(doc.Parts[1].Languages) != 2 || doc.Parts[1].Status != "cc" || doc.Parts[1].AIMismatch {
+		t.Fatalf("non-current part bodies were fetched or status lost: %+v", doc.Parts[1])
+	}
+}
+
 func TestSubtitleURLValidationAndSafeErrorText(t *testing.T) {
 	for _, raw := range []string{"http://subtitle.hdslb.com/a", "https://evil.invalid/a", "https://subtitle.hdslb.com:8443/a", "https://user:pass@subtitle.hdslb.com/a"} {
 		if _, err := validateSubtitleURL(raw); err == nil {

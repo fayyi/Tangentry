@@ -25,7 +25,9 @@ describe('B站字幕平台缓存', () => {
     const document = {
       videoId: 'BV17x411w7KC', part: 1, status: 'ai_mismatch',
       tracks: [track], languages: [{ language: 'zh-Hans', label: '中文 AI', automatic: true, source: 'ai', hasUrl: true, url: 'https://aisubtitle.hdslb.com/private.json' }],
-      parts: [{ cid: 123, page: 1, title: '第一课', status: 'ai_mismatch', languages: [], tracks: [track] }],
+      parts: [
+        { cid: 123, page: 1, title: '第一课', status: 'cc', aiMismatch: true, languages: [], tracks: [track] },
+      ],
       cookie: 'synthetic-secret', raw: { subtitle_url: 'https://aisubtitle.hdslb.com/private.json' },
     } as unknown as SubtitleDocument
 
@@ -33,7 +35,7 @@ describe('B站字幕平台缓存', () => {
 
     const cached = cachedSubtitles('/subtitles/bilibili?q=BV17x411w7KC', 'BV17x411w7KC')
     expect(cached?.status).toBe('ai_mismatch')
-    expect(cached?.parts?.[0]).toMatchObject({ cid: 123, page: 1, status: 'ai_mismatch' })
+    expect(cached?.parts?.[0]).toMatchObject({ cid: 123, page: 1, status: 'cc', aiMismatch: true })
     expect(cached?.tracks[0]).toMatchObject({ source: 'ai', mismatch: true, cues: [cue] })
     const serialized = [...values.values()].join('\n')
     expect(serialized).not.toContain('aisubtitle.hdslb.com')
@@ -52,5 +54,15 @@ describe('B站字幕平台缓存', () => {
 
     expect(cachedSubtitles('/subtitles/bilibili?q=BV17x411w7KD', 'BV17x411w7KD')).toBeUndefined()
     expect([...values.values()].join('\n')).not.toContain('synthetic-secret')
+  })
+
+  it('不缓存限流状态，避免冷却结束后继续显示旧结果', () => {
+    vi.stubGlobal('sessionStorage', storage)
+    const document: SubtitleDocument = {
+      videoId: 'BV17x411w7KE', part: 1, status: 'rate_limited', tracks: [],
+      parts: [{ cid: 456, page: 1, status: 'rate_limited', languages: [], tracks: [] }],
+    }
+    cacheSubtitles('/subtitles/bilibili?q=BV17x411w7KE', document)
+    expect(cachedSubtitles('/subtitles/bilibili?q=BV17x411w7KE', 'BV17x411w7KE')).toBeUndefined()
   })
 })
