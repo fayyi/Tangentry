@@ -142,6 +142,20 @@ func TestMapDOMCardsDeduplicatesAndMapsSafeFields(t *testing.T) {
 	}
 }
 
+func TestRecommendationMappingUsesAvailableHTTPSCoverVariants(t *testing.T) {
+	body := `{"status_code":0,"aweme_list":[{"aweme_id":"6961737553342991651","desc":"动态封面","video":{"duration":1000,"cover":{"url_list":["http://insecure.example/cover.jpg"]},"origin_cover":{"urlList":["https://p3.douyinpic.com/origin.jpg?sign=fixture"]}}},{"aweme_id":"6961737553342991652","desc":"不安全封面","video":{"cover":{"url_list":["javascript:bad","https://user:pass@p3.douyinpic.com/bad.jpg"]}}}]}`
+	feed, err := decodeRecommendations([]byte(body), 1, nil)
+	if err != nil || len(feed.Items) != 2 {
+		t.Fatalf("valid feed did not map: %+v %v", feed, err)
+	}
+	if got := feed.Items[0].ThumbnailURL; got != "https://p3.douyinpic.com/origin.jpg?sign=fixture" {
+		t.Fatalf("available secure cover variant lost: %q", got)
+	}
+	if got := feed.Items[1].ThumbnailURL; got != "" {
+		t.Fatalf("unsafe cover URL was retained: %q", got)
+	}
+}
+
 func TestRecommendationCaptureUsesPageDecodedFeedProjection(t *testing.T) {
 	c := &Client{Page: captureFetcherFunc(func(context.Context, string, int) (platformfetch.FeedCaptureResponse, error) {
 		return platformfetch.FeedCaptureResponse{

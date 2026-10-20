@@ -144,13 +144,14 @@ const douyinFeedCaptureScript = `(function(){
   const absolute = raw => { try { return new URL(String(raw || ''), location.href).href; } catch (_) { return String(raw || ''); } };
   const idOf = value => { const match = String(value || '').match(/^[1-9][0-9]{15,19}$/); return match ? match[0] : ''; };
   const countOf = value => { const number = Number(value); return Number.isFinite(number) && number >= 0 ? Math.min(Math.round(number), 2147483647) : 0; };
+  const safeImage = raw => { try { const value=new URL(String(raw||''),location.href),authority=value.href.slice(value.protocol.length+2).split(/[/?#]/,1)[0]; return value.protocol==='https:'&&value.hostname&&!value.username&&!value.password&&authority===value.host?value.href:''; } catch (_) { return ''; } };
+  const imageURLs = (value,depth=0) => { if(!value||depth>4)return []; if(Array.isArray(value))return value.slice(0,16).flatMap(item=>imageURLs(item,depth+1)).slice(0,16); if(typeof value==='string')return [safeImage(value)].filter(Boolean); if(typeof value==='object')return ['url_list','urlList','url','uri'].flatMap(key=>imageURLs(value[key],depth+1)).slice(0,16); return []; };
   const project = video => {
     if (!video || typeof video !== 'object') return null;
     const id = idOf(video.aweme_id || video.awemeId || video.item_id || video.itemId); if (!id) return null;
     const author = video.author || {};
-    const cover = video.video && video.video.cover;
-    const rawCover = cover && (cover.url_list || cover.urlList);
-    const thumbnailURL = Array.isArray(rawCover) ? rawCover.map(absolute).find(value => /^https:\/\//i.test(value)) || '' : '';
+    const media = video.video || {};
+    const thumbnailURL = [media.cover,media.origin_cover,media.dynamic_cover,media.fallback_cover,media.coverUrl,media.originCover,media.dynamicCover].flatMap(value=>imageURLs(value))[0] || '';
     return {id:id, url:'https://www.douyin.com/video/' + id, thumbnailURL:thumbnailURL, title:String(video.desc || video.description || '').slice(0, 1000), author:String(author.nickname || author.name || '').slice(0, 200), authorID:String(author.uid || author.id || '').slice(0, 200), likeCount:countOf(video.statistics && (video.statistics.digg_count || video.statistics.diggCount)), duration:Math.round(countOf(video.video && video.video.duration) / 1000)};
   };
   const projectBody = body => {
@@ -247,6 +248,24 @@ func douyinFeedReadScriptForMedia(id string) string {
 const douyinPageStateScript = `(function(){const url=location.href,title=document.title||'',text=(document.body&&(document.body.innerText||document.body.textContent)||'').slice(0,4096);return {url:url,title:title,ready:document.readyState,restricted:/login|登录|captcha|验证码|验证|verify|challenge|passport|risk[ -]?control|风控|滑块|人机|just a moment/i.test(url+' '+title+' '+text),douyin:/^https:\/\/(?:www\.)?douyin\.com\//i.test(url)};})();`
 
 const douyinMediaClearScript = `(function(){ if(window.__tangentryDouyinMedia) window.__tangentryDouyinMedia.splice(0); if(window.__tangentryDouyinFeed) window.__tangentryDouyinFeed.splice(0); return true; })();`
+
+const douyinMediaMutePreloadScript = `(function(){
+  let target='';
+  try { target=sessionStorage.getItem('__tangentryDouyinMediaResolution')||'';if(target)sessionStorage.removeItem('__tangentryDouyinMediaResolution'); } catch (_) {}
+  if (!/^[1-9][0-9]{15,19}$/.test(target) || location.pathname!=='/video/'+target && location.pathname!=='/video/'+target+'/' || !/^(?:www\.)?douyin\.com$/i.test(location.hostname) || !window.HTMLMediaElement) return;
+  const mute=media=>{if(!media||!(/^(?:AUDIO|VIDEO)$/i.test(String(media.tagName||''))))return;media.muted=true;media.defaultMuted=true;media.autoplay=false;if(media.hasAttribute&&media.hasAttribute('autoplay'))media.removeAttribute('autoplay');if(typeof media.pause==='function')media.pause();};
+  const prototype=HTMLMediaElement.prototype,play=prototype.play;
+  if(typeof play==='function'&&!prototype.__tangentryDouyinMutedPlay){Object.defineProperty(prototype,'__tangentryDouyinMutedPlay',{value:true});prototype.play=function(){mute(this);return play.apply(this,arguments);};}
+  const visit=node=>{if(!node)return;if(node.nodeType===1){mute(node);if(node.querySelectorAll)for(const media of node.querySelectorAll('audio,video'))mute(media);}};
+  if(typeof MutationObserver==='function')new MutationObserver(records=>{for(const record of records){if(record.type==='attributes')visit(record.target);for(const node of record.addedNodes||[])visit(node);}}).observe(document,{subtree:true,childList:true,attributes:true,attributeFilter:['autoplay']});
+  document.addEventListener('play',event=>mute(event.target),true);
+  for(const media of document.querySelectorAll('audio,video'))mute(media);
+})();`
+
+func douyinMediaMuteEnableScript(id string) string {
+	encoded, _ := json.Marshal(id)
+	return `(function(){try{sessionStorage.setItem('__tangentryDouyinMediaResolution',` + string(encoded) + `);}catch(_){}for(const media of document.querySelectorAll('audio,video')){media.muted=true;media.defaultMuted=true;media.autoplay=false;media.pause();}return true;})();`
+}
 
 func douyinMediaTargetScript(id string) string {
 	encoded, _ := json.Marshal(id)
@@ -439,16 +458,9 @@ func douyinDOMMediaScript(id string) string {
 const douyinDomReadScript = `(function(){
   const text = node => (node && (node.innerText || node.textContent) || '').trim();
   const absolute = raw => { try { return new URL(raw || '', location.href).href; } catch (_) { return ''; } };
+  const safeImage = raw => { const value=absolute(raw);try{const parsed=new URL(value),authority=value.slice(parsed.protocol.length+2).split(/[/?#]/,1)[0];return parsed.protocol==='https:'&&parsed.hostname&&!parsed.username&&!parsed.password&&authority===parsed.host?value:'';}catch(_){return '';} };
+  const imageFrom = node => { if(!node)return '';const candidates=[];const add=raw=>{if(typeof raw==='string'&&raw.trim())candidates.push(raw.trim());};const elements=[node,...Array.from(node.querySelectorAll('img,video,source,[data-e2e*="cover"],[class*="cover"],[style*="background-image"]'))];for(const element of elements){for(const name of ['currentSrc','src','poster'])add(element[name]);for(const name of ['data-src','data-lazy-src','data-url','data-original','data-origin','poster'])add(element.getAttribute&&element.getAttribute(name));const srcset=element.getAttribute&&element.getAttribute('srcset');if(srcset)for(const entry of srcset.split(','))add(entry.trim().split(/\s+/)[0]);const style=element.getAttribute&&element.getAttribute('style');if(style){const match=String(style).match(/url\(["']?([^"')]+)["']?\)/i);if(match)add(match[1]);}}return candidates.map(safeImage).find(Boolean)||'';};
   const idFrom = raw => { const match = String(raw || '').match(/\/video\/([1-9][0-9]{15,19})/); return match ? match[1] : ''; };
-  const imageFrom = node => {
-    if (!node) return '';
-    const image = node.querySelector('img, video, [data-e2e*="cover"], [class*="cover"]');
-    const raw = image && (image.currentSrc || image.src || image.poster || image.getAttribute('data-src') || image.getAttribute('data-lazy-src') || image.getAttribute('data-url'));
-    if (raw) return absolute(raw);
-    const styled = node.querySelector('[style*="background-image"]');
-    const match = styled && String(styled.getAttribute('style') || '').match(/url\(["']?([^"')]+)["']?\)/i);
-    return absolute(match && match[1]);
-  };
   const findText = (node, names) => { for (const name of names) { const found = node.querySelector(name); if (text(found)) return text(found); } return ''; };
   const durationOf = value => { const match = String(value || '').match(/(?:^|\s)([0-9]{1,2}):([0-5][0-9])(?:\s|$)/); return match ? Number(match[1]) * 60 + Number(match[2]) : 0; };
   const countOf = value => { const match = String(value || '').replace(/,/g, '').match(/([0-9]+(?:\.[0-9]+)?)\s*([万千wkKmM])?/i); if (!match) return 0; const number = Number(match[1]); const unit = String(match[2] || '').toLowerCase(); const multiplier = unit === '万' || unit === 'w' ? 10000 : unit === '千' || unit === 'k' ? 1000 : unit === 'm' ? 1000000 : 1; return Math.round(number * multiplier); };
@@ -473,12 +485,13 @@ const douyinDomReadScript = `(function(){
 const searchDomReadScript = `(function(){
   const text = node => (node && (node.innerText || node.textContent) || '').trim();
   const absolute = raw => { try { return new URL(raw || '', location.href).href; } catch (_) { return ''; } };
+  const safeImage = raw => { const value=absolute(raw);try{const parsed=new URL(value),authority=value.slice(parsed.protocol.length+2).split(/[/?#]/,1)[0];return parsed.protocol==='https:'&&parsed.hostname&&!parsed.username&&!parsed.password&&authority===parsed.host?value:'';}catch(_){return '';} };
   const idFrom = raw => { const value = String(raw || ''); let match = value.match(/\/video\/([1-9][0-9]{15,19})/); if (match) return {platform:'douyin',id:match[1]}; match = value.match(/\/(?:explore|discovery\/item)\/([A-Za-z0-9_-]{3,80})/); if (match) return {platform:'xiaohongshu',id:match[1]}; return null; };
   const authorIDFrom = raw => { const value = String(raw || ''); let match = value.match(/\/user\/profile\/([^/?#]+)/); if (!match) match = value.match(/\/user\/([^/?#]+)/); if (!match) return ''; try { return decodeURIComponent(match[1]); } catch (_) { return ''; } };
-  const imageFrom = node => { const image = node && node.querySelector('img,video,[class*="cover"]'); const raw = image && (image.currentSrc || image.src || image.poster || image.getAttribute('data-src')); return absolute(raw); };
+  const imageFrom = node => { if(!node)return '';const candidates=[];const add=raw=>{if(typeof raw==='string'&&raw.trim())candidates.push(raw.trim());};const elements=[node,...Array.from(node.querySelectorAll('img,video,source,[data-e2e*="cover"],[class*="cover"],[style*="background-image"]'))];for(const element of elements){for(const name of ['currentSrc','src','poster'])add(element[name]);for(const name of ['data-src','data-lazy-src','data-url','data-original','data-origin','poster'])add(element.getAttribute&&element.getAttribute(name));const srcset=element.getAttribute&&element.getAttribute('srcset');if(srcset)for(const entry of srcset.split(','))add(entry.trim().split(/\s+/)[0]);const style=element.getAttribute&&element.getAttribute('style');if(style){const match=String(style).match(/url\(["']?([^"')]+)["']?\)/i);if(match)add(match[1]);}}return candidates.map(safeImage).find(Boolean)||'';};
   const findText = (node, names) => { for (const name of names) { const found = node && node.querySelector(name); if (text(found)) return text(found); } return ''; };
   const cards = [], seen = new Set();
-  for (const link of document.querySelectorAll('a[href]')) { const url = absolute(link.getAttribute('href') || link.href); const ref = idFrom(url); if (!ref || seen.has(ref.platform+':'+ref.id)) continue; let node = link; for (let i=0;i<6 && node.parentElement;i++) { node=node.parentElement; if (node.querySelector('img,video,[class*="cover"]') || node.querySelectorAll('a[href]').length > 2) break; } const authorLink = Array.from(node.querySelectorAll('a[href]')).map(candidate => ({candidate, url:absolute(candidate.getAttribute('href') || candidate.href)})).find(value => /\/user\//.test(value.url) || /\/profile\//.test(value.url)); const title = text(link) || findText(node,['h1','h2','h3','[class*="title"]','[class*="desc"]']) || text(node).slice(0,200); const author = findText(node,['[class*="author"]','[class*="user"]','[data-e2e*="user"]','a[href*="/user/"]','a[href*="/profile/"]']); cards.push({id:ref.platform+':'+ref.id,url:url.split('?')[0],thumbnailURL:imageFrom(node),title:title,author:author,authorID:authorIDFrom(authorLink && authorLink.url)}); seen.add(ref.platform+':'+ref.id); }
+  for (const link of document.querySelectorAll('a[href]')) { const url = absolute(link.getAttribute('href') || link.href); const ref = idFrom(url); if (!ref || seen.has(ref.platform+':'+ref.id)) continue; let node = link; for (let i=0;i<6 && node.parentElement;i++) { node=node.parentElement; if (node.querySelector('img,video,source,[data-e2e*="cover"],[class*="cover"],[style*="background-image"]') || node.querySelectorAll('a[href]').length > 2) break; } const authorLink = Array.from(node.querySelectorAll('a[href]')).map(candidate => ({candidate, url:absolute(candidate.getAttribute('href') || candidate.href)})).find(value => /\/user\//.test(value.url) || /\/profile\//.test(value.url)); const title = text(link) || findText(node,['h1','h2','h3','[class*="title"]','[class*="desc"]']) || text(node).slice(0,200); const author = findText(node,['[class*="author"]','[class*="user"]','[data-e2e*="user"]','a[href*="/user/"]','a[href*="/profile/"]']); cards.push({id:ref.platform+':'+ref.id,url:url.split('?')[0],thumbnailURL:imageFrom(node),title:title,author:author,authorID:authorIDFrom(authorLink && authorLink.url)}); seen.add(ref.platform+':'+ref.id); }
   return {pageUrl:location.href,title:document.title||'',ready:document.readyState,cards:cards};
 })();`
 
@@ -594,6 +607,9 @@ func (b *platformPageBridge) ResolveVideoMedia(ctx context.Context, id string) (
 		return platformfetch.VideoMediaResponse{}, platformfetch.WrapVideoMediaError(err, diagnostics...)
 	}
 	if _, err := evalPageWithRetry(ctx, session.window.Page(), douyinMediaClearScript); err != nil && ctx.Err() != nil {
+		return platformfetch.VideoMediaResponse{}, platformfetch.WrapVideoMediaError(err, diagnostics...)
+	}
+	if _, err := evalPageWithRetry(ctx, session.window.Page(), douyinMediaMuteEnableScript(id)); err != nil {
 		return platformfetch.VideoMediaResponse{}, platformfetch.WrapVideoMediaError(err, diagnostics...)
 	}
 	if err := session.window.Page().LoadURL("https://www.douyin.com/video/" + id); err != nil {
@@ -1766,13 +1782,22 @@ func sanitizeDouyinCard(card platformfetch.DOMCard) platformfetch.DOMCard {
 	return platformfetch.DOMCard{
 		ID:           truncateCaptureField(card.ID, 64),
 		URL:          safeCaptureURL(card.URL),
-		ThumbnailURL: safeCaptureURL(card.ThumbnailURL),
+		ThumbnailURL: safeCaptureImageURL(card.ThumbnailURL),
 		Title:        truncateCaptureField(card.Title, 1000),
 		Author:       truncateCaptureField(card.Author, 200),
 		AuthorID:     truncateCaptureField(card.AuthorID, 200),
 		LikeCount:    clampCaptureNumber(card.LikeCount),
 		Duration:     clampCaptureNumber(card.Duration),
 	}
+}
+
+func safeCaptureImageURL(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || len(raw) > 4096 || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Opaque != "" {
+		return ""
+	}
+	u.Fragment = ""
+	return u.String()
 }
 
 func truncateCaptureField(value string, limit int) string {
@@ -2047,7 +2072,7 @@ func (b *platformPageBridge) session(platform, origin string) (*platformPageSess
 		DisableClose: true, DisableFullScreen: true, SkipTaskbar: true,
 		Page: mygo.PageOptions{TrustedOrigins: []string{origin}, PreloadScript: func() string {
 			if platform == "douyin" {
-				return douyinFeedCaptureScript
+				return douyinFeedCaptureScript + "\n" + douyinMediaMutePreloadScript
 			}
 			return ""
 		}()},
