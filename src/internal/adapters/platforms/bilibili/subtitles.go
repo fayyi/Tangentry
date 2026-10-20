@@ -25,6 +25,9 @@ const maxSubtitleParts = 100
 const maxSubtitleTracks = 32
 const maxSubtitleBody = 2 << 20
 const maxSubtitleBodies = 16 << 20
+const minSubtitlePrefetchBudget = 256 << 10
+
+var errNoSubtitleData = errors.New("subtitle API returned no subtitle data")
 
 var subtitleCredentialText = regexp.MustCompile(`(?i)(cookie|sessdata|bili_jct|dedeuserid(?:__ckmd5)?|buvid3|sid|token|csrf|authorization)\s*[:=]\s*[^\s,;]+`)
 var subtitleURLText = regexp.MustCompile(`(?i)https?://[^\s<>"']+`)
@@ -39,8 +42,38 @@ var subtitleCDNHosts = map[string]bool{
 
 type playerSubtitleResponse struct {
 	Subtitle *struct {
-		List []playerSubtitle `json:"list"`
+		List      *[]playerSubtitle `json:"list"`
+		Subtitles *[]playerSubtitle `json:"subtitles"`
 	} `json:"subtitle"`
+}
+
+func (r playerSubtitleResponse) hasTrackList() bool {
+	return r.Subtitle != nil && (r.Subtitle.Subtitles != nil || r.Subtitle.List != nil)
+}
+
+func (r playerSubtitleResponse) candidates() []playerSubtitle {
+	if !r.hasTrackList() {
+		return nil
+	}
+	var subtitlesList, list []playerSubtitle
+	if r.Subtitle.Subtitles != nil {
+		subtitlesList = *r.Subtitle.Subtitles
+	}
+	if r.Subtitle.List != nil {
+		list = *r.Subtitle.List
+	}
+	candidates := make([]playerSubtitle, 0, len(subtitlesList)+len(list))
+	seen := make(map[playerSubtitle]struct{}, cap(candidates))
+	for _, group := range [][]playerSubtitle{subtitlesList, list} {
+		for _, candidate := range group {
+			if _, ok := seen[candidate]; ok {
+				continue
+			}
+			seen[candidate] = struct{}{}
+			candidates = append(candidates, candidate)
+		}
+	}
+	return candidates
 }
 
 type playerSubtitle struct {
@@ -197,10 +230,15 @@ func (c *Client) readSubtitlePart(ctx context.Context, bvid string, cid int64, t
 		return subtitles.Part{}, firstErr
 	}
 	var firstCandidates []playerSubtitle
-	if firstErr == nil && first.Subtitle != nil && len(first.Subtitle.List) > 0 {
-		firstCandidates = first.Subtitle.List
-		if hasSubtitleURL(first.Subtitle.List) {
-			firstPart := c.buildSubtitlePart(ctx, first.Subtitle.List, title, readBodies, selectedLanguage, remainingBodyBytes)
+	var firstPart subtitles.Part
+	firstPartBuilt := false
+	if firstErr == nil {
+		firstCandidates = first.candidates()
+	}
+	if len(firstCandidates) > 0 {
+		if hasSubtitleURL(firstCandidates) {
+			firstPart = c.buildSubtitlePart(ctx, firstCandidates, title, readBodies, selectedLanguage, remainingBodyBytes)
+			firstPartBuilt = true
 			// A declared URL can still yield an empty/invalid payload. Treat that
 			// as missing subtitle data and give the signed endpoint a chance.
 			if !readBodies || len(firstPart.Tracks) > 0 {
@@ -218,6 +256,9 @@ func (c *Client) readSubtitlePart(ctx context.Context, bvid string, cid int64, t
 			return subtitles.Part{}, firstErr
 		}
 		if len(firstCandidates) > 0 {
+			if firstPartBuilt {
+				return firstPart, nil
+			}
 			return c.subtitleFallbackError(ctx, firstCandidates, title, keyErr, readBodies, selectedLanguage, remainingBodyBytes), nil
 		}
 		return subtitles.Part{}, keyErr
@@ -230,20 +271,45 @@ func (c *Client) readSubtitlePart(ctx context.Context, bvid string, cid int64, t
 			return subtitles.Part{}, secondErr
 		}
 		if len(firstCandidates) > 0 {
+			if errors.Is(secondErr, errNoSubtitleData) {
+				if firstPartBuilt {
+					return firstPart, nil
+				}
+				return c.buildSubtitlePart(ctx, firstCandidates, title, readBodies, selectedLanguage, remainingBodyBytes), nil
+			}
 			return c.subtitleFallbackError(ctx, firstCandidates, title, secondErr, readBodies, selectedLanguage, remainingBodyBytes), nil
+		}
+		if errors.Is(secondErr, errNoSubtitleData) && firstErr == nil && first.hasTrackList() {
+			return c.buildSubtitlePart(ctx, firstCandidates, title, readBodies, selectedLanguage, remainingBodyBytes), nil
+		}
+		if firstErr != nil && !errors.Is(firstErr, errNoSubtitleData) {
+			return subtitles.Part{}, firstErr
 		}
 		return subtitles.Part{}, secondErr
 	}
-	if second.Subtitle == nil {
+	if !second.hasTrackList() {
 		if len(firstCandidates) > 0 {
-			return c.subtitleFallbackError(ctx, firstCandidates, title, errors.New("subtitle API returned no subtitle data"), readBodies, selectedLanguage, remainingBodyBytes), nil
+			if firstPartBuilt {
+				return firstPart, nil
+			}
+			return c.buildSubtitlePart(ctx, firstCandidates, title, readBodies, selectedLanguage, remainingBodyBytes), nil
 		}
 		return subtitles.Part{}, errors.New("subtitle API returned no subtitle data")
 	}
-	if len(second.Subtitle.List) == 0 && len(firstCandidates) > 0 {
-		return c.buildSubtitlePart(ctx, firstCandidates, title, readBodies, selectedLanguage, remainingBodyBytes), nil
+	secondCandidates := second.candidates()
+	if len(secondCandidates) == 0 {
+		if len(firstCandidates) > 0 {
+			if firstPartBuilt {
+				return firstPart, nil
+			}
+			return c.buildSubtitlePart(ctx, firstCandidates, title, readBodies, selectedLanguage, remainingBodyBytes), nil
+		}
+		if firstErr != nil && !errors.Is(firstErr, errNoSubtitleData) {
+			return subtitles.Part{}, firstErr
+		}
+		return c.buildSubtitlePart(ctx, secondCandidates, title, readBodies, selectedLanguage, remainingBodyBytes), nil
 	}
-	return c.buildSubtitlePart(ctx, second.Subtitle.List, title, readBodies, selectedLanguage, remainingBodyBytes), nil
+	return c.buildSubtitlePart(ctx, secondCandidates, title, readBodies, selectedLanguage, remainingBodyBytes), nil
 }
 
 func (c *Client) subtitleFallbackError(ctx context.Context, candidates []playerSubtitle, title string, err error, readBodies bool, selectedLanguage string, remainingBodyBytes *int) subtitles.Part {
@@ -271,8 +337,8 @@ func (c *Client) playerSubtitles(ctx context.Context, endpoint string, params ur
 	if json.Unmarshal(body.Data, &response) != nil {
 		return playerSubtitleResponse{}, errors.New("subtitle API response could not be decoded")
 	}
-	if response.Subtitle == nil {
-		return playerSubtitleResponse{}, errors.New("subtitle API returned no subtitle data")
+	if !response.hasTrackList() {
+		return playerSubtitleResponse{}, errNoSubtitleData
 	}
 	return response, nil
 }
@@ -326,7 +392,7 @@ func (c *Client) buildSubtitlePart(ctx context.Context, candidates []playerSubti
 		hasURL := strings.TrimSpace(candidate.URL) != ""
 		part.Languages = append(part.Languages, subtitles.Language{Language: language, Label: label, Automatic: source == "ai", Source: source, HasURL: hasURL})
 		selected := selectedLanguage == "" || language == selectedLanguage
-		if !hasURL || !readBodies || !selected || remainingBodyBytes != nil && *remainingBodyBytes <= 0 {
+		if !hasURL || !readBodies || !selected || remainingBodyBytes != nil && *remainingBodyBytes < minSubtitlePrefetchBudget {
 			continue
 		}
 		budget := maxSubtitleBody

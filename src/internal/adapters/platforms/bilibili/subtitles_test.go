@@ -2,6 +2,7 @@ package bilibili
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -63,6 +64,30 @@ func TestReadSubtitlesFallsBackToSignedWBIAndKeepsPerPartFailures(t *testing.T) 
 	}
 	if strings.Contains(doc.Parts[1].ErrorMessage, "cookie") || doc.Tracks[0].Source != "cc" || doc.Tracks[1].Source != "ai" {
 		t.Fatalf("missing safe source or error metadata: %+v", doc)
+	}
+}
+
+func TestReadSubtitlesKeepsExplicitNoCaptionsWhenOtherPlayerFieldIsMissing(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/x/web-interface/view":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"title":"夹具","cid":111}}`))
+		case "/x/player/v2":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"subtitle":{"list":[]}}}`))
+		case "/x/web-interface/nav":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"wbi_img":{"img_url":"https://fixture.invalid/7cd084941338484aae1ad9425b84077c.png","sub_url":"https://fixture.invalid/4932caff0ff746eab6f01bf08b70ac45.png"}}}`))
+		case "/x/player/wbi/v2":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"subtitle":null}}`))
+		default:
+			t.Errorf("unexpected fixture request: %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	})
+	client := NewClient(subtitleFixtureClient(handler), "")
+	client.baseURL = "https://api.fixture.invalid"
+	doc, err := client.ReadSubtitles(context.Background(), "BV17x411w7KC")
+	if err != nil || doc.Status != "none" || doc.ErrorMessage != "" {
+		t.Fatalf("explicitly empty track list was confused with a missing response field: %+v, %v", doc, err)
 	}
 }
 
@@ -246,6 +271,147 @@ func TestReadSubtitlesAcceptsProtocolRelativeAIChineseTrack(t *testing.T) {
 	}
 	if subtitlePriority("ai-zh", "ai") >= subtitlePriority("en-US", "cc") {
 		t.Fatal("ai-zh was not prioritized as Chinese")
+	}
+}
+
+func TestReadSubtitlesFallsBackAcrossPlayerResponseShapesAndReadsAISubtitle(t *testing.T) {
+	for _, scenario := range []string{"v2_missing_wbi_subtitles", "v2_subtitles_ai_body", "v2_list_ai_body"} {
+		t.Run(scenario, func(t *testing.T) {
+			var v2Calls, wbiCalls, aiBodyCalls int
+			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/x/web-interface/view":
+					_, _ = w.Write([]byte(`{"code":0,"data":{"title":"AI字幕读取夹具","cid":111}}`))
+				case "/x/player/v2":
+					v2Calls++
+					switch scenario {
+					case "v2_missing_wbi_subtitles":
+						_, _ = w.Write([]byte(`{"code":0,"data":{"subtitle":null}}`))
+					case "v2_subtitles_ai_body":
+						_, _ = w.Write([]byte(`{"code":0,"data":{"subtitle":{"subtitles":[{"lan":"zh-Hans","lan_doc":"简体中文 AI","subtitle_url":"https://aisubtitle.hdslb.com/ai-caption.json","ai_type":1,"ai_status":2}]}}}`))
+					case "v2_list_ai_body":
+						_, _ = w.Write([]byte(`{"code":0,"data":{"subtitle":{"list":[{"lan":"zh-Hans","lan_doc":"简体中文 AI","subtitle_url":"https://aisubtitle.hdslb.com/ai-caption.json","ai_type":1}]}}}`))
+					}
+				case "/x/web-interface/nav":
+					_, _ = w.Write([]byte(`{"code":0,"data":{"wbi_img":{"img_url":"https://fixture.invalid/7cd084941338484aae1ad9425b84077c.png","sub_url":"https://fixture.invalid/4932caff0ff746eab6f01bf08b70ac45.png"}}}`))
+				case "/x/player/wbi/v2":
+					wbiCalls++
+					if scenario == "v2_missing_wbi_subtitles" {
+						_, _ = w.Write([]byte(`{"code":0,"data":{"subtitle":{"subtitles":[{"lan":"zh-Hans","lan_doc":"简体中文 AI","subtitle_url":"https://aisubtitle.hdslb.com/ai-caption.json","ai_type":1,"ai_status":2}]}}}`))
+						return
+					}
+					// A successful but incomplete WBI response must not erase v2 candidates.
+					_, _ = w.Write([]byte(`{"code":0,"data":{"subtitle":null}}`))
+				case "/ai-caption.json":
+					aiBodyCalls++
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"body":[{"from":0,"to":1,"content":"这是来自脱敏 AI 字幕夹具的正文。"}]}`))
+				default:
+					t.Errorf("unexpected fixture request: %s", r.URL.Path)
+					http.NotFound(w, r)
+				}
+			})
+			client := NewClient(subtitleFixtureClient(handler), "")
+			client.baseURL = "https://api.fixture.invalid"
+			doc, err := client.ReadSubtitles(context.Background(), "BV17x411w7KC")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if doc.Status != "ai" || len(doc.Tracks) != 1 || doc.Tracks[0].Source != "ai" || !doc.Tracks[0].Automatic || doc.Tracks[0].Language != "zh-Hans" || len(doc.Tracks[0].Cues) != 1 || doc.Tracks[0].Cues[0].Text != "这是来自脱敏 AI 字幕夹具的正文。" {
+				t.Fatalf("AI subtitle candidate or body was lost: %+v", doc)
+			}
+			if v2Calls != 1 || aiBodyCalls != 1 {
+				t.Fatalf("unexpected calls: v2=%d AI bodies=%d", v2Calls, aiBodyCalls)
+			}
+			wantWBICalls := 0
+			if scenario == "v2_missing_wbi_subtitles" {
+				wantWBICalls = 1
+			}
+			if wbiCalls != wantWBICalls {
+				t.Fatalf("WBI calls=%d, want %d", wbiCalls, wantWBICalls)
+			}
+		})
+	}
+}
+
+func TestReadSubtitlesKeepsInvalidAIContentErrorWhenWBIHasNoSubtitleField(t *testing.T) {
+	var wbiCalls int
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/x/web-interface/view":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"title":"夹具","cid":111}}`))
+		case "/x/player/v2":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"subtitle":{"subtitles":[{"lan":"zh-Hans","lan_doc":"简体中文 AI","subtitle_url":"https://aisubtitle.hdslb.com/invalid.json","ai_type":1}]}}}`))
+		case "/x/web-interface/nav":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"wbi_img":{"img_url":"https://fixture.invalid/7cd084941338484aae1ad9425b84077c.png","sub_url":"https://fixture.invalid/4932caff0ff746eab6f01bf08b70ac45.png"}}}`))
+		case "/x/player/wbi/v2":
+			wbiCalls++
+			_, _ = w.Write([]byte(`{"code":0,"data":{"subtitle":null}}`))
+		case "/invalid.json":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"body":[]}`))
+		default:
+			t.Errorf("unexpected fixture request: %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	})
+	client := NewClient(subtitleFixtureClient(handler), "")
+	client.baseURL = "https://api.fixture.invalid"
+	doc, err := client.ReadSubtitles(context.Background(), "BV17x411w7KC")
+	if err != nil || doc.Status != "error" || doc.ErrorMessage != "字幕 CDN 内容无效（HTTP 200，application/json）。" || len(doc.Parts[0].Languages) != 1 || !doc.Parts[0].Languages[0].HasURL || wbiCalls != 1 {
+		t.Fatalf("invalid AI body was not reported distinctly from missing API fields: %+v, %v (WBI %d)", doc, err, wbiCalls)
+	}
+}
+
+func TestReadSubtitlesPreservesLoginErrorWhenWBIHasNoTracks(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/x/web-interface/view":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"title":"夹具","cid":111}}`))
+		case "/x/player/v2":
+			_, _ = w.Write([]byte(`{"code":-101,"message":"请先登录"}`))
+		case "/x/web-interface/nav":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"wbi_img":{"img_url":"https://fixture.invalid/7cd084941338484aae1ad9425b84077c.png","sub_url":"https://fixture.invalid/4932caff0ff746eab6f01bf08b70ac45.png"}}}`))
+		case "/x/player/wbi/v2":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"subtitle":{"subtitles":[]}}}`))
+		default:
+			t.Errorf("unexpected fixture request: %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	})
+	client := NewClient(subtitleFixtureClient(handler), "")
+	client.baseURL = "https://api.fixture.invalid"
+	doc, err := client.ReadSubtitles(context.Background(), "BV17x411w7KC")
+	if err != nil || doc.Status != "error" || doc.ErrorCode != -101 || doc.ErrorMessage != "请先登录" {
+		t.Fatalf("login-required result was replaced by the empty WBI response: %+v, %v", doc, err)
+	}
+}
+
+func TestPlayerSubtitleResponseRecognizesBothTrackCollectionFields(t *testing.T) {
+	for name, raw := range map[string]string{
+		"missing":          `{"subtitle":null}`,
+		"empty subtitles":  `{"subtitle":{"subtitles":[]}}`,
+		"empty list":       `{"subtitle":{"list":[]}}`,
+		"both collections": `{"subtitle":{"subtitles":[{"lan":"zh-Hans","subtitle_url":"https://aisubtitle.hdslb.com/ai.json","ai_type":1}],"list":[{"lan":"en","subtitle_url":"https://subtitle.hdslb.com/en.json"}]}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			var response playerSubtitleResponse
+			if err := json.Unmarshal([]byte(raw), &response); err != nil {
+				t.Fatal(err)
+			}
+			if name == "missing" {
+				if response.hasTrackList() || len(response.candidates()) != 0 {
+					t.Fatal("missing subtitle field was treated as an empty track list")
+				}
+				return
+			}
+			if !response.hasTrackList() {
+				t.Fatal("explicit track-list response shape was not recognized")
+			}
+			if name == "both collections" && len(response.candidates()) != 2 {
+				t.Fatalf("one track collection was lost: %+v", response.candidates())
+			}
+		})
 	}
 }
 
