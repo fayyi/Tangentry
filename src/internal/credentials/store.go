@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -385,7 +386,9 @@ func (s *Store) persistBackupTargetPasswords(values map[string]string) error {
 	for id, password := range values {
 		credential := backupTargetCredential{}
 		if len(s.secretKey) > 0 {
+			encryptStarted := time.Now()
 			secret, err := encryptPrivate(s.secretKey, entry{Jar: password})
+			slog.Info("backup target credential timing", "phase", "encryption", "duration_ms", time.Since(encryptStarted).Milliseconds(), "target_type", "webdav", "error_class", credentialErrorClass(err))
 			if err != nil {
 				return ErrStorage
 			}
@@ -395,7 +398,17 @@ func (s *Store) persistBackupTargetPasswords(values map[string]string) error {
 		}
 		entries[id] = credential
 	}
-	return s.persistBackupTargetEntries(entries)
+	persistStarted := time.Now()
+	err := s.persistBackupTargetEntries(entries)
+	slog.Info("backup target credential timing", "phase", "persistence", "duration_ms", time.Since(persistStarted).Milliseconds(), "target_type", "webdav", "error_class", credentialErrorClass(err))
+	return err
+}
+
+func credentialErrorClass(err error) string {
+	if err == nil {
+		return "none"
+	}
+	return "storage"
 }
 
 func (s *Store) persistBackupTargetEntries(entries map[string]backupTargetCredential) error {

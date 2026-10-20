@@ -203,6 +203,46 @@
 .backup-target-row p { margin: 4px 0 0; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .backup-row-actions, .backup-snapshot-actions { display: flex; align-items: center; gap: 8px; }
 .backup-target-editor { margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--line); }
+.backup-remote-path > label { display: block; margin-bottom: 7px; color: var(--muted); font-size: 12px; }
+.backup-remote-path > div { display: flex; gap: 8px; min-width: 0; }
+.backup-remote-path input { min-width: 0; flex: 1; }
+.backup-folder-browser { min-width: 0; padding: 14px; border: 1px solid var(--line); border-left: 3px solid var(--accent); background: var(--surface); }
+.backup-folder-browser-heading, .backup-folder-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.backup-folder-browser-heading h4 { margin: 0; font-size: 13px; font-weight: 600; }
+.backup-folder-browser-heading p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+.backup-folder-breadcrumbs { display: flex; flex-wrap: wrap; gap: 4px; margin: 12px 0; padding: 8px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.backup-folder-breadcrumbs > span { display: inline-flex; align-items: center; gap: 4px; min-width: 0; color: var(--faint); }
+.backup-folder-breadcrumbs .text-button { min-height: 30px; padding: 0 4px; overflow-wrap: anywhere; }
+.backup-folder-breadcrumbs button[aria-current='location'] { color: var(--ink); font-weight: 600; }
+.backup-folder-list { display: grid; min-height: 54px; max-height: 220px; overflow-y: auto; }
+.backup-folder-row { display: flex; align-items: center; gap: 9px; min-width: 0; min-height: 40px; padding: 0 8px; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: var(--ink); text-align: left; font: inherit; font-size: 13px; cursor: pointer; }
+.backup-folder-row > span { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.backup-folder-row > svg:first-child { flex: 0 0 auto; color: var(--accent-ink); }
+.backup-folder-row > svg:last-child { flex: 0 0 auto; color: var(--faint); }
+.backup-folder-row:hover { background: var(--hover); }
+.backup-folder-row:focus-visible, .backup-folder-breadcrumbs button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.backup-folder-state, .backup-folder-error { display: flex; align-items: center; gap: 8px; min-width: 0; margin: 0; padding: 12px 8px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.backup-folder-error { color: var(--danger); }
+.backup-folder-error p { flex: 1; margin: 0; overflow-wrap: anywhere; }
+.backup-folder-create { display: grid; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.backup-folder-create > label { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; }
+.backup-folder-hint { margin: -2px 0 0; color: var(--faint); font-size: 12px; }
+.backup-folder-create > div { display: flex; gap: 8px; min-width: 0; }
+.backup-folder-create input { min-width: 0; flex: 1; min-height: 36px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--card); color: var(--ink); font: inherit; font-size: 13px; }
+.backup-folder-create input:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.backup-folder-create .backup-folder-error, .backup-folder-create .backup-folder-success, .backup-folder-create .backup-folder-state { padding: 2px 0; }
+.backup-folder-success { display: inline-flex; align-items: center; gap: 6px; margin: 0; color: var(--accent-ink); font-size: 12px; }
+.backup-folder-footer { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.backup-folder-footer > span { min-width: 0; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.backup-folder-footer strong { color: var(--ink); font-weight: 500; }
+@media (max-width: 420px) {
+  .backup-folder-browser { padding: 10px; }
+  .backup-folder-footer { align-items: flex-start; flex-direction: column; }
+  .backup-folder-footer .button { width: 100%; justify-content: center; }
+  .backup-folder-create > div { align-items: stretch; flex-wrap: wrap; }
+  .backup-folder-create input { flex-basis: 100%; }
+  .backup-folder-create .button { justify-content: center; }
+}
 .backup-target-editor h3 { margin: 0 0 14px; font-size: 13px; font-weight: 600; }
 .backup-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .backup-form-grid > label, .backup-restore-form > label, .backup-password-grid > label, .backup-restore-step label { display: grid; gap: 7px; color: var(--muted); font-size: 12px; }

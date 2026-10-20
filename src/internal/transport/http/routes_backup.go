@@ -6,6 +6,8 @@ func (h *Handler) registerBackupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/backup/targets", h.backup.targets)
 	mux.HandleFunc("POST /api/backup/targets", h.backup.saveTarget)
 	mux.HandleFunc("POST /api/backup/targets/test", h.backup.testTarget)
+	mux.HandleFunc("POST /api/backup/targets/browse", h.backup.browseTarget)
+	mux.HandleFunc("POST /api/backup/targets/mkdir", h.backup.createFolder)
 	mux.HandleFunc("DELETE /api/backup/targets/{id}", h.backup.deleteTarget)
 	mux.HandleFunc("GET /api/backup/tasks", h.backup.tasks)
 	mux.HandleFunc("POST /api/backup/tasks", h.backup.saveTask)

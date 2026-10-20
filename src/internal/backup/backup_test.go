@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +17,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"tangentry/internal/credentials"
 )
 
 func TestEncryptDecryptAndTamperDetection(t *testing.T) {
@@ -384,6 +387,24 @@ type fixtureTargetCredentials struct {
 	failDelete bool
 }
 
+type fixtureFolderStore struct {
+	browsePath string
+	closed     bool
+}
+
+func (s *fixtureFolderStore) Browse(_ context.Context, path string) ([]RemoteFolder, error) {
+	s.browsePath = path
+	childPath := "Tangentry"
+	if path != "" {
+		childPath = path + "/Tangentry"
+	}
+	return []RemoteFolder{{Name: "Tangentry", Path: childPath}}, nil
+}
+func (*fixtureFolderStore) CreateFolder(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+func (s *fixtureFolderStore) Close() error { s.closed = true; return nil }
+
 func (c *fixtureTargetCredentials) SaveBackupTargetPassword(id, password string) error {
 	c.values[id] = password
 	return nil
@@ -589,6 +610,73 @@ func TestWebDAVTargetCredentialIsNotReturnedOrStoredInRepository(t *testing.T) {
 	}
 	if err := service.DeleteTarget(context.Background(), target.ID); err != nil || len(credentials.values) != 0 {
 		t.Fatalf("credential was not cleared: %v", err)
+	}
+}
+
+func TestSaveWebDAVTargetIsLocalFastAndLogsRedactedStages(t *testing.T) {
+	repo := &fanoutRepo{targets: map[string]Target{}, snapshots: map[string]Snapshot{}, runs: map[string][]TargetRun{}}
+	credentialStore, err := credentials.OpenWithKey(filepath.Join(t.TempDir(), "credentials"), "", "", bytes.Repeat([]byte{0x42}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(repo, fanoutSource{}, func(Target) (ObjectStore, error) { return nil, errors.New("not used") }, t.TempDir(), "test")
+	service.SetTargetCredentials(credentialStore)
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+	service.SetTargetTester(func(context.Context, Target) error { t.Fatal("SaveTarget called remote test connection"); return nil })
+	service.SetTargetFolderStores(func(Target) (TargetFolderStore, error) {
+		t.Fatal("SaveTarget called remote folder operation")
+		return nil, errors.New("unreachable")
+	})
+	target := Target{ID: "target-fixture", Name: "Fixture", Type: "webdav", Endpoint: "https://dav.example.test/base", Username: "private-fixture-user", Password: "private-fixture-password", UpdateCredential: true, Enabled: true}
+	started := time.Now()
+	if err := service.SaveTarget(context.Background(), target); err != nil {
+		t.Fatal(err)
+	}
+	elapsed := time.Since(started)
+	if elapsed >= time.Second {
+		t.Fatalf("local target save took %s", elapsed)
+	}
+	t.Logf("local target save elapsed=%s timings=%s", elapsed, logs.String())
+	for _, phase := range []string{"validation", "credential_write", "repository_lookup", "repository_write", "service_total", "encryption", "persistence"} {
+		if !strings.Contains(logs.String(), "phase="+phase) {
+			t.Errorf("missing timing phase %q in %s", phase, logs.String())
+		}
+	}
+	for _, sensitive := range []string{"private-fixture-user", "private-fixture-password", "dav.example.test"} {
+		if strings.Contains(logs.String(), sensitive) {
+			t.Errorf("timing log contains sensitive field %q", sensitive)
+		}
+	}
+}
+
+func TestBrowseTargetLoadsSavedCredentialsAndRejectsInvalidPathBeforeFactory(t *testing.T) {
+	repo := &fanoutRepo{targets: map[string]Target{"saved": {ID: "saved", Name: "Saved", Type: "webdav", Endpoint: "https://dav.example.test/root", Username: "fixture-user", AllowInsecureTLS: true}}, snapshots: map[string]Snapshot{}, runs: map[string][]TargetRun{}}
+	credentials := &fixtureTargetCredentials{values: map[string]string{"saved": "fixture-password"}}
+	service := NewService(repo, fanoutSource{}, func(Target) (ObjectStore, error) { return nil, errors.New("unused") }, t.TempDir(), "test")
+	service.SetTargetCredentials(credentials)
+	var received Target
+	store := &fixtureFolderStore{}
+	service.SetTargetFolderStores(func(target Target) (TargetFolderStore, error) { received = target; return store, nil })
+	folders, err := service.BrowseTarget(context.Background(), Target{ID: "saved", Type: "webdav"}, "")
+	if err != nil || len(folders) != 1 {
+		t.Fatalf("saved target browse failed: folders=%v err=%v", folders, err)
+	}
+	if received.Endpoint != repo.targets["saved"].Endpoint || received.Username != repo.targets["saved"].Username || received.Password != "fixture-password" || !received.AllowInsecureTLS {
+		t.Fatalf("saved target configuration was not loaded safely: %+v", received)
+	}
+	if !store.closed {
+		t.Fatal("folder store was not closed")
+	}
+	called := false
+	service.SetTargetFolderStores(func(Target) (TargetFolderStore, error) { called = true; return &fixtureFolderStore{}, nil })
+	if _, err := service.BrowseTarget(context.Background(), Target{ID: "saved", Type: "webdav", Password: "fixture-password"}, "../outside"); !errors.Is(err, ErrInvalidFolderPath) {
+		t.Fatalf("invalid browse path error = %v", err)
+	}
+	if called {
+		t.Fatal("invalid browse path reached folder store factory")
 	}
 }
 

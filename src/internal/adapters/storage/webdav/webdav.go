@@ -168,7 +168,7 @@ func (s *Store) objectURL(name string) (*url.URL, error) {
 		u.Path = base + "/" + full
 	}
 	u.Path = path.Clean(u.Path)
-	u.RawPath = ""
+	u.RawPath = escapeURLPath(u.Path)
 	return &u, nil
 }
 

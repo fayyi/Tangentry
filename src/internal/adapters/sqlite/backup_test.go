@@ -1,14 +1,20 @@
 package sqlite
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"tangentry/internal/backup"
+	"tangentry/internal/credentials"
 )
 
 func TestSnapshotCollectsDocumentsAndHonorsDownloadSwitch(t *testing.T) {
@@ -113,6 +119,88 @@ func TestBackupWebDAVConfigurationAndTargetRunStatusesPersist(t *testing.T) {
 	loadedSnapshot, err = store.GetSnapshot(ctx, snapshot.ID)
 	if err != nil || loadedSnapshot.RetryAvailable || loadedSnapshot.RetryUnavailableReason == "" {
 		t.Fatalf("retry unavailability did not persist: %+v %v", loadedSnapshot, err)
+	}
+}
+
+func TestSaveBackupTargetLogsSQLiteConnectionAndWriteTiming(t *testing.T) {
+	store := inboxTestStore(t)
+	credentialStore, err := credentials.OpenWithKey(filepath.Join(t.TempDir(), "credentials"), "", "", bytes.Repeat([]byte{0x42}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := backup.NewService(store, nil, nil, t.TempDir(), "test")
+	service.SetTargetCredentials(credentialStore)
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+	target := backup.Target{ID: "sqlite-timing", Name: "SQLite timing fixture", Type: "webdav", Endpoint: "https://dav.example.test/root", Username: "fixture-user", Password: "fixture-password", UpdateCredential: true, Enabled: true}
+	started := time.Now()
+	if err := service.SaveTarget(context.Background(), target); err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(started); elapsed >= time.Second {
+		t.Fatalf("SQLite target save took %s", elapsed)
+	}
+	for _, phase := range []string{"connection_wait", "target_lookup", "target_write"} {
+		if !strings.Contains(logs.String(), "phase="+phase) {
+			t.Errorf("missing SQLite timing phase %q in %s", phase, logs.String())
+		}
+	}
+	for _, sensitive := range []string{"fixture-user", "fixture-password", "dav.example.test"} {
+		if strings.Contains(logs.String(), sensitive) {
+			t.Errorf("SQLite timing log contains sensitive field %q", sensitive)
+		}
+	}
+	loaded, err := store.GetTarget(context.Background(), target.ID)
+	if err != nil || loaded.Password != "" || loaded.Endpoint != target.Endpoint {
+		t.Fatalf("saved target was not persisted without password: %+v err=%v", loaded, err)
+	}
+}
+
+func TestSaveBackupTargetSeparatesSQLitePoolWaitFromWrite(t *testing.T) {
+	store := inboxTestStore(t)
+	conn, err := store.db.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+	done := make(chan error, 1)
+	started := make(chan struct{})
+	go func() {
+		close(started)
+		done <- store.SaveTarget(context.Background(), backup.Target{ID: "sqlite-wait", Name: "Wait fixture", Type: "webdav", Endpoint: "https://dav.example.test/root", Username: "fixture-user", Enabled: true})
+	}()
+	<-started
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for store.db.Stats().WaitCount == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	waited := store.db.Stats().WaitCount > 0
+	if waited {
+		time.Sleep(30 * time.Millisecond)
+	}
+	if err := conn.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if !waited {
+		t.Fatal("save did not wait for the occupied single-connection pool")
+	}
+	wait := regexp.MustCompile(`phase=connection_wait duration_ms=([0-9]+)`).FindStringSubmatch(logs.String())
+	write := regexp.MustCompile(`phase=target_write duration_ms=([0-9]+)`).FindStringSubmatch(logs.String())
+	if len(wait) != 2 || len(write) != 2 {
+		t.Fatalf("missing SQLite timing detail: %s", logs.String())
+	}
+	waitMS, _ := strconv.Atoi(wait[1])
+	writeMS, _ := strconv.Atoi(write[1])
+	if waitMS < 20 || waitMS <= writeMS {
+		t.Fatalf("pool wait was not distinguished from target write: wait=%dms write=%dms logs=%s", waitMS, writeMS, logs.String())
 	}
 }
 

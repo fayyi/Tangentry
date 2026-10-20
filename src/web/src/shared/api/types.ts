@@ -246,6 +246,7 @@ export interface ToolReport {
 
 export type BackupTargetType = 'local' | 'webdav' | 's3'
 export interface BackupTarget { id: string; name: string; type: BackupTargetType | string; path?: string; endpoint?: string; username?: string; remotePath?: string; allowInsecureTLS?: boolean; credentialConfigured?: boolean; password?: string; updateCredential?: boolean; enabled: boolean }
+export interface BackupRemoteFolder { name: string; path: string }
 export interface BackupTask { id: string; name: string; targetIds: string[]; includeDownloads: boolean; retention: number; enabled: boolean }
 export interface BackupTargetRun { targetId: string; name: string; status: string; error?: string }
 export interface BackupSnapshot { id: string; taskId?: string; createdAt: string; size: number; status: string; targets?: BackupTargetRun[]; retryAvailable?: boolean; retryUnavailableReason?: string }
