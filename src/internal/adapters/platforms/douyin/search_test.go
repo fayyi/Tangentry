@@ -36,6 +36,16 @@ func TestSearchMapsDOMCardsAndAuthorID(t *testing.T) {
 	}
 }
 
+func TestSearchDropsUnsafeCoverURL(t *testing.T) {
+	c := &Client{Page: searchCaptureFunc(func(context.Context, string, string, string) (platformfetch.SearchCaptureResponse, error) {
+		return platformfetch.SearchCaptureResponse{DOMCards: []platformfetch.DOMCard{{ID: "6961737553342991651", Title: "测试", ThumbnailURL: "http://p3.douyinpic.com/cover.jpg"}}}, nil
+	})}
+	page, err := c.Search(context.Background(), "测试", "")
+	if err != nil || len(page.Items) != 1 || page.Items[0].ThumbnailURL != "" {
+		t.Fatalf("insecure search cover was retained: %+v %v", page, err)
+	}
+}
+
 func TestSearchReturnsCancellationWithoutMaskingIt(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

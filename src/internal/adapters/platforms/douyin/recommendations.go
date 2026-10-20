@@ -611,11 +611,9 @@ type feedVideo struct {
 	Description string `json:"desc"`
 	Created     int64  `json:"create_time"`
 	Author      struct {
-		ID     string `json:"uid"`
-		Name   string `json:"nickname"`
-		Avatar struct {
-			URLs []string `json:"url_list"`
-		} `json:"avatar_thumb"`
+		ID     string    `json:"uid"`
+		Name   string    `json:"nickname"`
+		Avatar feedImage `json:"avatar_thumb"`
 	} `json:"author"`
 	Statistics struct {
 		Likes    int `json:"digg_count"`
@@ -623,11 +621,34 @@ type feedVideo struct {
 		Plays    int `json:"play_count"`
 	} `json:"statistics"`
 	Video struct {
-		Duration int `json:"duration"`
-		Cover    struct {
-			URLs []string `json:"url_list"`
-		} `json:"cover"`
+		Duration     int       `json:"duration"`
+		Cover        feedImage `json:"cover"`
+		OriginCover  feedImage `json:"origin_cover"`
+		DynamicCover feedImage `json:"dynamic_cover"`
+		Fallback     feedImage `json:"fallback_cover"`
+		CoverURL     string    `json:"coverUrl"`
+		OriginURL    string    `json:"originCover"`
+		DynamicURL   string    `json:"dynamicCover"`
 	} `json:"video"`
+}
+
+type feedImage struct {
+	URLs      []string `json:"url_list"`
+	URLsCamel []string `json:"urlList"`
+	URL       string   `json:"url"`
+	URI       string   `json:"uri"`
+}
+
+func (image feedImage) candidates() []string {
+	values := append([]string(nil), image.URLs...)
+	values = append(values, image.URLsCamel...)
+	if image.URL != "" {
+		values = append(values, image.URL)
+	}
+	if image.URI != "" {
+		values = append(values, image.URI)
+	}
+	return values
 }
 
 const maxDouyinCapturePages = 10
@@ -686,8 +707,9 @@ func mapFeedCards(cards []platformfetch.DOMCard, page int) discovery.Feed {
 }
 
 func safeHTTPSURL(raw string) string {
-	u, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil {
+	raw = strings.TrimSpace(raw)
+	u, err := url.Parse(raw)
+	if err != nil || len(raw) > 4096 || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Opaque != "" {
 		return ""
 	}
 	return u.String()
@@ -782,17 +804,20 @@ func decodeRecommendations(body []byte, page int, denied error) (discovery.Feed,
 			title = video.Author.Name + "的视频"
 		}
 		item := content.Item{ID: "douyin:" + video.ID, Platform: "douyin", PlatformID: video.ID, Kind: "video", Title: title, Description: video.Description, Author: video.Author.Name, AuthorID: video.Author.ID, URL: ref.URL, DurationSeconds: video.Video.Duration / 1000, PublishedAt: video.Created, LikeCount: video.Statistics.Likes}
-		for _, raw := range video.Video.Cover.URLs {
-			u, err := url.Parse(raw)
-			if err == nil && u.Scheme == "https" && u.Hostname() != "" && u.User == nil {
-				item.ThumbnailURL = raw
+		coverCandidates := make([]string, 0, 12)
+		for _, image := range []feedImage{video.Video.Cover, video.Video.OriginCover, video.Video.DynamicCover, video.Video.Fallback} {
+			coverCandidates = append(coverCandidates, image.candidates()...)
+		}
+		coverCandidates = append(coverCandidates, video.Video.CoverURL, video.Video.OriginURL, video.Video.DynamicURL)
+		for _, raw := range coverCandidates {
+			if safe := safeHTTPSURL(raw); safe != "" {
+				item.ThumbnailURL = safe
 				break
 			}
 		}
-		for _, raw := range video.Author.Avatar.URLs {
-			u, err := url.Parse(raw)
-			if err == nil && u.Scheme == "https" && u.Hostname() != "" && u.User == nil {
-				item.AuthorAvatarURL = raw
+		for _, raw := range video.Author.Avatar.candidates() {
+			if safe := safeHTTPSURL(raw); safe != "" {
+				item.AuthorAvatarURL = safe
 				break
 			}
 		}

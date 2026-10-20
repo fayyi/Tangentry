@@ -20,7 +20,7 @@ func validateDouyinCaptureScripts() error {
 	if err != nil {
 		return nil
 	}
-	for _, script := range []string{douyinFeedCaptureScript, douyinMediaReadScript("6961737553342991651"), douyinFeedReadScriptForMedia("6961737553342991651"), douyinDOMMediaScript("6961737553342991651")} {
+	for _, script := range []string{douyinFeedCaptureScript, douyinMediaReadScript("6961737553342991651"), douyinFeedReadScriptForMedia("6961737553342991651"), douyinDOMMediaScript("6961737553342991651"), douyinDomReadScript, searchDomReadScript, douyinMediaMuteEnableScript("6961737553342991651"), douyinMediaMutePreloadScript} {
 		command := exec.Command(node, "-e", "new Function(require('fs').readFileSync(0, 'utf8'))")
 		command.Stdin = strings.NewReader(script)
 		if output, err := command.CombinedOutput(); err != nil {
@@ -30,11 +30,146 @@ func validateDouyinCaptureScripts() error {
 	return nil
 }
 
+func TestDouyinMediaMuteIsScopedToResolutionDetailNavigation(t *testing.T) {
+	if !strings.Contains(douyinMediaMuteEnableScript("6961737553342991651"), "__tangentryDouyinMediaResolution") || !strings.Contains(douyinMediaMutePreloadScript, "location.pathname") || !strings.Contains(douyinMediaMutePreloadScript, "prototype.play=function") {
+		t.Fatal("media resolver mute is missing its one-shot route and autoplay guard")
+	}
+	if strings.Contains(douyinMediaMutePreloadScript, "src=\"") || strings.Contains(douyinMediaMutePreloadScript, "localStorage") {
+		t.Fatal("media resolver mute should not rewrite user content or persist beyond the WebView session")
+	}
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is unavailable for isolated media mute fixture")
+	}
+	encodedScript, err := json.Marshal(douyinMediaMutePreloadScript)
+	if err != nil {
+		t.Fatal(err)
+	}
+	harness := `
+function run(path,host,stored){
+  let value=stored,removed=false,paused=0;
+  global.location={pathname:path,hostname:host};
+  global.sessionStorage={getItem(){return value;},removeItem(){removed=true;value=null;}};
+  function Media(){this.tagName='VIDEO';this.muted=false;this.defaultMuted=false;this.autoplay=true;this.hasAttribute=()=>true;this.removeAttribute=()=>{};this.pause=()=>{paused++;};}
+  Media.prototype.play=function(){return this.muted?'muted':'audible';};
+  global.HTMLMediaElement=Media;global.window={HTMLMediaElement:Media};
+  const media=new Media();global.document={querySelectorAll(){return [media];},addEventListener(){}};
+  eval(` + string(encodedScript) + `);
+  return {muted:media.muted,play:media.play(),removed:removed,paused:paused};
+}
+console.log(JSON.stringify({enabled:run('/video/6961737553342991651','www.douyin.com','6961737553342991651'),reader:run('/video/6961737553342991651','www.douyin.com',null),other:run('/video/6961737553342991651','reader.local','6961737553342991651')}));`
+	output, err := exec.Command(node, "-e", harness).CombinedOutput()
+	if err != nil {
+		t.Fatalf("media mute fixture failed: %s", strings.TrimSpace(string(output)))
+	}
+	var result struct {
+		Enabled struct {
+			Muted   bool   `json:"muted"`
+			Play    string `json:"play"`
+			Removed bool   `json:"removed"`
+		} `json:"enabled"`
+		Reader struct {
+			Muted bool   `json:"muted"`
+			Play  string `json:"play"`
+		} `json:"reader"`
+		Other struct {
+			Muted bool   `json:"muted"`
+			Play  string `json:"play"`
+		} `json:"other"`
+	}
+	if err := json.Unmarshal(output, &result); err != nil || !result.Enabled.Muted || result.Enabled.Play != "muted" || !result.Enabled.Removed || result.Reader.Muted || result.Reader.Play != "audible" || result.Other.Muted {
+		t.Fatalf("media mute scope failed: %+v err=%v output=%s", result, err, output)
+	}
+}
+
+func TestSanitizeDouyinCardPreservesOnlySafeHTTPSCoverURL(t *testing.T) {
+	cover := "https://p3.douyinpic.com/cover.jpg?sign=fixture#preview"
+	if got := sanitizeDouyinCard(platformfetch.DOMCard{ThumbnailURL: cover}).ThumbnailURL; got != "https://p3.douyinpic.com/cover.jpg?sign=fixture" {
+		t.Fatalf("signed cover query not preserved or fragment not stripped: %q", got)
+	}
+	for _, raw := range []string{"http://p3.douyinpic.com/cover.jpg", "https://user:fixture@p3.douyinpic.com/cover.jpg", "javascript:bad", "https://p3.douyinpic.com/cover.jpg" + strings.Repeat("x", 4097)} {
+		if got := sanitizeDouyinCard(platformfetch.DOMCard{ThumbnailURL: raw}).ThumbnailURL; got != "" {
+			t.Fatalf("unsafe or oversized cover retained: %q -> %q", raw, got)
+		}
+	}
+}
+
+func TestRecommendationAndSearchDOMReadLazyCoverURLs(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		script string
+		image  map[string]string
+		want   string
+	}{
+		{name: "recommendation lazy source", script: douyinDomReadScript, image: map[string]string{"data-src": "//p3.douyinpic.com/lazy.jpg?sign=fixture"}, want: "https://p3.douyinpic.com/lazy.jpg?sign=fixture"},
+		{name: "search background image", script: searchDomReadScript, image: map[string]string{"style": `background-image:url("https://p3.douyinpic.com/search.jpg?sign=fixture")`}, want: "https://p3.douyinpic.com/search.jpg?sign=fixture"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cards := runDouyinCardProjectionFixture(t, test.script, test.image)
+			if len(cards) != 1 || cards[0].ThumbnailURL != test.want {
+				t.Fatalf("DOM cover was not captured: %+v", cards)
+			}
+		})
+	}
+}
+
+func runDouyinCardProjectionFixture(t *testing.T, script string, attributes map[string]string) []platformfetch.DOMCard {
+	t.Helper()
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is unavailable for isolated card projection fixture")
+	}
+	encodedScript, err := json.Marshal(script)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encodedAttributes, err := json.Marshal(attributes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	harness := `
+const id='6961737553342991651',attributes=` + string(encodedAttributes) + `;
+global.location={href:'https://www.douyin.com/jingxuan',hostname:'www.douyin.com'};
+const image={tagName:'IMG',innerText:'',currentSrc:'',src:'',poster:'',getAttribute(name){return attributes[name]||null;}};
+const container={innerText:'测试视频',textContent:'测试视频',parentElement:null,querySelectorAll(selector){return selector.includes('a[href')?[]:selector.includes('img')||selector.includes('background-image')?[image]:[];},querySelector(selector){return selector.includes('img')||selector.includes('background-image')?image:null;},getAttribute(){return null;}};
+const link={href:'https://www.douyin.com/video/'+id,getAttribute(name){return name==='href'?this.href:null;},innerText:'测试视频',textContent:'测试视频',parentElement:container};
+global.document={title:'精选',readyState:'complete',body:{innerText:'测试'},querySelectorAll(selector){if(selector==='a[href*="/video/"]'||selector==='a[href]')return [link];return [];}};
+global.performance={getEntriesByType(){return [];}};
+global.window={__tangentryDouyinFeed:[],fetch:function(){}};
+global.XMLHttpRequest=function(){};XMLHttpRequest.prototype.send=function(){};
+console.log(JSON.stringify(eval(` + string(encodedScript) + `).cards));`
+	output, err := exec.Command(node, "-e", harness).CombinedOutput()
+	if err != nil {
+		t.Fatalf("DOM card fixture failed: %s", strings.TrimSpace(string(output)))
+	}
+	var cards []platformfetch.DOMCard
+	if err := json.Unmarshal(output, &cards); err != nil {
+		t.Fatalf("decode DOM card projection: %v", err)
+	}
+	return cards
+}
+
 func TestDouyinCaptureObserverProjectsTargetForFetchAndXHR(t *testing.T) {
 	payload := `{"data":{"aweme_list":[{"aweme_id":"6961737553342991651","video":{"play_addr":{"url_list":["https://v1.douyinvod.com/fixture.mp4"]}}},{"aweme_id":"9999999999999999999","video":{"play_addr":{"url_list":["https://v1.douyinvod.com/other.mp4"]}}}]}}`
 	captures := runDouyinCaptureObserverTest(t, payload, douyinObserverFixture{})
 	if len(captures.Fetch) != 1 || len(captures.XHR) != 1 || len(captures.Fetch[0].Candidates) != 1 || captures.Fetch[0].Candidates[0].ID != "6961737553342991651" || captures.Fetch[0].Candidates[0].URLs[0] != "https://v1.douyinvod.com/fixture.mp4" || len(captures.XHR[0].Candidates) != 1 || captures.XHR[0].Candidates[0].ID != "6961737553342991651" {
 		t.Fatalf("fetch/XHR target projection incorrect: %+v", captures)
+	}
+}
+
+func TestDouyinFeedObserverProjectsSignedCoverVariants(t *testing.T) {
+	payload := `{"status_code":0,"aweme_list":[{"aweme_id":"6961737553342991651","desc":"投影测试","video":{"cover":{"url_list":["javascript:bad"]},"origin_cover":{"urlList":["https://p3.douyinpic.com/cover.jpg?sign=fixture"]}}}]}`
+	result := runDouyinCaptureObserverTest(t, payload, douyinObserverFixture{RequestURL: "/aweme/v1/web/tab/feed/"})
+	if len(result.Feed) == 0 || len(result.Feed[0].Cards) != 1 || result.Feed[0].Cards[0].ThumbnailURL != "https://p3.douyinpic.com/cover.jpg?sign=fixture" {
+		t.Fatalf("feed projection lost safe cover variant: %+v", result.Feed)
+	}
+}
+
+func TestDouyinFeedObserverFindsLaterCoverVariant(t *testing.T) {
+	payload := `{"status_code":0,"aweme_list":[{"aweme_id":"6961737553342991651","desc":"备用封面","video":{"cover":{"url_list":["javascript:bad"]},"origin_cover":{"url_list":["data:image/jpeg;base64,AAAA"]},"fallback_cover":{"url_list":["https://p3.douyinpic.com/fallback.jpg?sign=fixture"]}}}]}`
+	result := runDouyinCaptureObserverTest(t, payload, douyinObserverFixture{RequestURL: "/aweme/v1/web/tab/feed/"})
+	if len(result.Feed) == 0 || len(result.Feed[0].Cards) != 1 || result.Feed[0].Cards[0].ThumbnailURL != "https://p3.douyinpic.com/fallback.jpg?sign=fixture" {
+		t.Fatalf("feed projection did not continue past invalid cover fields: %+v", result.Feed)
 	}
 }
 
@@ -77,6 +212,9 @@ type douyinObserverFixture struct {
 type douyinObserverFixtureResult struct {
 	Fetch []platformfetch.VideoMediaCapture `json:"fetch"`
 	XHR   []platformfetch.VideoMediaCapture `json:"xhr"`
+	Feed  []struct {
+		Cards []platformfetch.DOMCard `json:"cards"`
+	} `json:"feed"`
 }
 
 func runDouyinCaptureObserverTest(t *testing.T, payload string, fixture douyinObserverFixture) douyinObserverFixtureResult {
@@ -115,7 +253,7 @@ class FixtureXHR{constructor(){this.listeners={};this.responseType='json';this.s
 global.XMLHttpRequest=FixtureXHR;
 global.window={__tangentryDouyinFeed:[],__tangentryDouyinMedia:[],fetch(){if(fixture.fetchError){const error=new Error('synthetic');error.name=fixture.fetchError;return Promise.reject(error);}return Promise.resolve(response(payload));}};
 ` + douyinFeedCaptureScript + `
-(async()=>{try{await window.fetch(fixture.requestURL);}catch(_){}await new Promise(resolve=>setTimeout(resolve,10));const fetchCaptures=window.__tangentryDouyinMedia.splice(0);const xhr=new XMLHttpRequest();xhr.open('GET',fixture.requestURL);xhr.send();await new Promise(resolve=>setTimeout(resolve,10));console.log(JSON.stringify({fetch:fetchCaptures,xhr:window.__tangentryDouyinMedia}));})().catch(error=>{console.error(error);process.exitCode=1;});`
+(async()=>{try{await window.fetch(fixture.requestURL);}catch(_){}await new Promise(resolve=>setTimeout(resolve,10));const fetchCaptures=window.__tangentryDouyinMedia.splice(0);const xhr=new XMLHttpRequest();xhr.open('GET',fixture.requestURL);xhr.send();await new Promise(resolve=>setTimeout(resolve,10));console.log(JSON.stringify({fetch:fetchCaptures,xhr:window.__tangentryDouyinMedia,feed:window.__tangentryDouyinFeed}));})().catch(error=>{console.error(error);process.exitCode=1;});`
 	command := exec.Command(node, "-e", harness)
 	output, err := command.CombinedOutput()
 	if err != nil {
