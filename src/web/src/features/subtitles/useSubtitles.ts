@@ -25,6 +25,7 @@ export function useSubtitles(videoId: string, source: 'bilibili' | 'youtube' | '
   const [localError, setLocalError] = useState('')
   const [writeError, setWriteError] = useState('')
   const [notice, setNotice] = useState('')
+  const [languageRead, setLanguageRead] = useState<{ language: string; status: 'loading' | 'loaded' | 'error'; error?: string } | null>(null)
   const controller = useRef<AbortController | null>(null)
   const localReader = useRef<AbortController | null>(null)
   const mutation = useRef<AbortController | null>(null)
@@ -36,6 +37,8 @@ export function useSubtitles(videoId: string, source: 'bilibili' | 'youtube' | '
     controller.current = current
     setLoading(true)
     setError('')
+    if (language) setLanguageRead({ language, status: 'loading' })
+    else setLanguageRead(null)
     try {
       const query = source === 'youtube' ? 'https://www.youtube.com/watch?v=' + videoId : videoId
       const endpoint = source === 'local' ? `/subtitles/local-media?contentId=${encodeURIComponent(contentId)}` : source === 'podcast' ? `/subtitles/podcast?contentId=${encodeURIComponent(contentId)}` : `/subtitles/${source}?q=${encodeURIComponent(query)}` + (language ? '&language=' + encodeURIComponent(language) : '')
@@ -59,13 +62,21 @@ export function useSubtitles(videoId: string, source: 'bilibili' | 'youtube' | '
           } : part),
         } : data)
         setOrigin(keepSaved ? 'saved' : 'platform'); setNotice('')
+        if (language) {
+          const loaded = data.tracks.some(track => track.language === language)
+          setLanguageRead({ language, status: loaded ? 'loaded' : 'error', ...(loaded ? {} : { error: data.errorMessage || '这条字幕正文暂时无法读取。' }) })
+        }
         if (!cached && data.tracks.length > 0) {
           const local = await request<{ tracks: SavedSubtitle[] }>(`/saved-subtitles?contentId=${encodeURIComponent(contentId)}`, { signal: current.signal })
           if (!current.signal.aborted) { setSaved(local.tracks); setLocalKnown(true) }
         }
       }
     } catch (cause) {
-      if (!current.signal.aborted) setError(cause instanceof Error ? cause.message : '暂时无法获取字幕，请重试。')
+      if (!current.signal.aborted) {
+        const message = cause instanceof Error ? cause.message : '暂时无法获取字幕，请重试。'
+        setError(message)
+        if (language) setLanguageRead({ language, status: 'error', error: message })
+      }
     } finally {
       if (!current.signal.aborted) setLoading(false)
     }
@@ -147,5 +158,5 @@ export function useSubtitles(videoId: string, source: 'bilibili' | 'youtube' | '
   const document: SubtitleDocument | null = origin === 'platform' ? platform : saved.length ? {
     ...(platform ?? {}), videoId, part: 1, status: platform?.status ?? 'available', tracks: saved.map(value => value.track),
   } : null
-  return { document, saved, origin, loading: loading || localLoading, localLoading, localKnown, pending, error, localError, writeError, notice, read, cancel, save, remove, useSaved, reloadSaved }
+  return { document, saved, origin, loading: loading || localLoading, localLoading, localKnown, pending, error, localError, writeError, notice, languageRead, read, cancel, save, remove, useSaved, reloadSaved }
 }

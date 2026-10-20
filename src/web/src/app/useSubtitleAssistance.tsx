@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import { useSubtitleTranslation } from '../features/ai/useSubtitleTranslation'
 import { SubtitleTranslation } from '../features/ai/SubtitleTranslation'
 import { useSummary } from '../features/ai/useSummary'
@@ -9,12 +9,22 @@ import { preferredSubtitleLanguage, subtitleTargetLabel } from '../features/subt
 import type { SubtitleAssistance } from '../shared/ui/subtitleAssistance'
 import { ReaderActions } from '../shared/reader/ReaderActions'
 export function useSubtitleAssistance(contentId: string, track: SubtitleTrack | null, onSeek?: (seconds: number) => void, source?: SummarySource, showSummary = true): SubtitleAssistance | undefined {
-  const [availableLanguages, setAvailableLanguages] = useState<SubtitleLanguage[]>([])
+  const [platformState, setPlatformState] = useState<{ contentId: string; languages: SubtitleLanguage[]; ready: boolean }>(() => ({ contentId, languages: [], ready: !contentId.startsWith('bilibili:') && !contentId.startsWith('youtube:') }))
   const [selectedTarget, setSelectedTarget] = useState('zh-Hans')
+  const platformStateCurrent = platformState.contentId === contentId
+  const availableLanguages = platformStateCurrent ? platformState.languages : []
+  const platformLanguagesReady = platformStateCurrent ? platformState.ready : !contentId.startsWith('bilibili:') && !contentId.startsWith('youtube:')
   const usableTrack = track?.cues.length ? track : null
   const nativeTarget = preferredSubtitleLanguage(availableLanguages, selectedTarget)
-  const translation = useSubtitleTranslation(contentId, usableTrack ?? undefined, undefined, selectedTarget, availableLanguages)
+  const translation = useSubtitleTranslation(contentId, usableTrack ?? undefined, undefined, selectedTarget, availableLanguages, platformLanguagesReady)
   const summary = useSummary(contentId, 'subtitle', usableTrack ?? undefined, onSeek)
+  const updatePlatformLanguages = useCallback((languages: SubtitleLanguage[], ready: boolean, manualSelection = false) => {
+    const available = manualSelection ? [] : languages
+    setPlatformState(previous => {
+      if (previous.contentId === contentId && previous.ready === ready && previous.languages === available) return previous
+      return { contentId, languages: available, ready }
+    })
+  }, [contentId])
   if (!usableTrack && !nativeTarget && availableLanguages.length === 0) return undefined
-  return { track: usableTrack ?? undefined, nativeTarget, targetLanguage: selectedTarget, onTargetLanguageChange: setSelectedTarget, onPlatformLanguagesChange: setAvailableLanguages, controls: <><SubtitleTranslation translation={translation} targetLabel={subtitleTargetLabel(selectedTarget)} nativeTarget={nativeTarget} targetLanguage={selectedTarget} onTargetLanguageChange={setSelectedTarget} hasSourceTrack={Boolean(usableTrack)} />{usableTrack && showSummary && <ReaderActions><SummaryControl summary={summary} source={source}/></ReaderActions>}</>, texts: translation.show ? translation.inspection?.result.texts : undefined, summary }
+  return { track: usableTrack ?? undefined, nativeTarget, targetLanguage: selectedTarget, onTargetLanguageChange: setSelectedTarget, onPlatformLanguagesChange: updatePlatformLanguages, controls: <><SubtitleTranslation translation={translation} targetLabel={subtitleTargetLabel(selectedTarget)} nativeTarget={nativeTarget} targetLanguage={selectedTarget} onTargetLanguageChange={setSelectedTarget} hasSourceTrack={Boolean(usableTrack)} />{usableTrack && showSummary && <ReaderActions><SummaryControl summary={summary} source={source}/></ReaderActions>}</>, texts: translation.show ? translation.inspection?.result.texts : undefined, summary }
 }

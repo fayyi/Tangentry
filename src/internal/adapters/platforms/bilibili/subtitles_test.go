@@ -348,6 +348,9 @@ func TestReadSubtitlesCapsPrefetchAndLoadsSelectedTrackOnDemand(t *testing.T) {
 	if err != nil || len(selected.Tracks) != 1 || selected.Tracks[0].Language != "ai-en" || selected.Tracks[0].Cues[0].Text != "on demand" {
 		t.Fatalf("selected track was not loaded: %+v %v", selected, err)
 	}
+	if bodyReads["/00.json"] != 1 || bodyReads["/20.json"] != 1 || len(bodyReads) != 19 {
+		t.Fatalf("on-demand read repeated prefetched tracks or the budget blocked the selected language: %v", bodyReads)
+	}
 	if _, err := client.ReadSubtitlesLanguage(context.Background(), "BV17x411w7KC", "../private"); err == nil {
 		t.Fatal("unsafe language selector accepted")
 	}

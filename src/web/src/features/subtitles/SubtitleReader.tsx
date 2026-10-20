@@ -5,6 +5,7 @@ import type { ContentItem, SubtitleAvailability, SubtitleCue, SubtitleLanguage, 
 import { selectedSubtitleAvailability, subtitleDocumentMessage, subtitlePartMessage } from './subtitleAvailability'
 import { subtitlePriority, useSubtitles } from './useSubtitles'
 import { preferredSubtitleLanguage, subtitleTrackMatchesTarget } from './subtitleLanguageMatch'
+import { availableSubtitleLanguages, resolveNativeSubtitleTarget } from './nativeSubtitleTarget'
 import { activeSubtitleCue } from './activeCue'
 import { TranscriptionControls } from './TranscriptionControls'
 import { transcriptParagraphs, transcriptSeparator, transcriptText } from './transcriptParagraphs'
@@ -96,12 +97,14 @@ export function SubtitleReader({ item, source = 'bilibili', position = null, onS
     : doc?.tracks.find(candidate => candidate.language === selectedLanguage)
   const sourceTrack = sourceTrackOverride ?? loadedSourceTrack ?? (!selectedLanguage ? doc?.tracks.reduce<SubtitleTrack | undefined>((best, candidate) => !best || subtitlePriority(candidate) < subtitlePriority(best) ? candidate : best, undefined) : undefined)
   const desiredNative = manualSelection ? undefined : targetCandidate
-  const nativeLoaded = desiredNative && subtitles.origin === 'platform' ? doc?.tracks.find(candidate => candidate.language === desiredNative.language) : undefined
-  const track = nativeLoaded ?? doc?.tracks.find(candidate => candidate.language === displayLanguage) ?? sourceTrack
+  const nativeRead = resolveNativeSubtitleTarget(desiredNative && subtitles.origin === 'platform' ? desiredNative : undefined, doc?.tracks ?? [], subtitles.languageRead, sourceTrack)
+  const nativeLoaded = nativeRead.track
+  const track = nativeLoaded ?? (nativeRead.failed ? sourceTrack : doc?.tracks.find(candidate => candidate.language === displayLanguage) ?? sourceTrack)
   const nativeSingleLanguage = Boolean(nativeLoaded && desiredNative)
+  const visibleChoices = useMemo(() => availableSubtitleLanguages(choices, nativeRead.failed ? desiredNative?.language : undefined), [choices, nativeRead.failed, desiredNative?.language])
   const trackHash = useMemo(() => track ? subtitleTrackHash(track) : '', [track])
   const sourceTrackHash = useMemo(() => sourceTrack ? subtitleTrackHash(sourceTrack) : '', [sourceTrack])
-  useEffect(() => { (onPlatformLanguagesChange ?? assistance?.onPlatformLanguagesChange)?.(platformChoices) }, [platformChoices, onPlatformLanguagesChange, assistance?.onPlatformLanguagesChange])
+  useEffect(() => { (onPlatformLanguagesChange ?? assistance?.onPlatformLanguagesChange)?.(platformChoices, Boolean(doc), manualSelection) }, [platformChoices, onPlatformLanguagesChange, assistance?.onPlatformLanguagesChange, doc, manualSelection])
   const alreadyTarget = useMemo(() => Boolean(track && assistance?.targetLanguage && subtitleTrackMatchesTarget(track, assistance.targetLanguage)), [track, assistance?.targetLanguage])
   const translated = !alreadyTarget && !nativeSingleLanguage && assistance?.track === sourceTrack ? assistance?.texts : undefined
   const hasTranslations = Boolean(!nativeSingleLanguage && sourceTrack?.cues.some((_, index) => translated?.[index]?.trim()))
@@ -253,7 +256,9 @@ export function SubtitleReader({ item, source = 'bilibili', position = null, onS
       </div></details>
     </div>
     {choices.length > 0 && <div className="subtitle-toolbar">
-      <label className="subtitle-language"><span className="visually-hidden">字幕语言</span><select aria-label="字幕语言" value={selectedLanguage ?? track?.language ?? ''} disabled={subtitles.loading || subtitles.pending} onChange={event => { const selected = event.target.value; setLanguage(selected); setSourceTrackOverride(null); setManualSelection(true); setVisibleCount(200); const candidate = choices.find(value => value.language === selected); if ((!candidate || !('hasUrl' in candidate) || candidate.hasUrl !== false) && !doc?.tracks.some(value => value.language === selected)) { attemptedLanguage.current = selected; void subtitles.read(selected, true) } }}>{choices.map(candidate => <option key={candidate.language} value={candidate.language}>{candidate.label}{candidate.automatic ? ' · 自动' : ''}{platformLanguageSourceLabel(candidate, source) ? ` · ${platformLanguageSourceLabel(candidate, source)}` : ''}{'hasUrl' in candidate && candidate.hasUrl === false ? ' · 暂无字幕地址' : ''}</option>)}</select></label>
+      <label className="subtitle-language"><span className="visually-hidden">字幕语言</span><select aria-label="字幕语言" value={nativeRead.failed ? sourceTrack?.language ?? selectedLanguage ?? '' : displayLanguage ?? track?.language ?? ''} disabled={subtitles.pending} onChange={event => { const selected = event.target.value; setLanguage(selected); setSourceTrackOverride(null); setManualSelection(true); setVisibleCount(200); const candidate = choices.find(value => value.language === selected); if ((!candidate || !('hasUrl' in candidate) || candidate.hasUrl !== false) && !doc?.tracks.some(value => value.language === selected)) { attemptedLanguage.current = selected; void subtitles.read(selected, true) } }}>{visibleChoices.map(candidate => <option key={candidate.language} value={candidate.language}>{candidate.label}{candidate.automatic ? ' · 自动' : ''}{platformLanguageSourceLabel(candidate, source) ? ` · ${platformLanguageSourceLabel(candidate, source)}` : ''}{'hasUrl' in candidate && candidate.hasUrl === false ? ' · 暂无字幕地址' : ''}</option>)}</select></label>
+      {desiredNative && nativeRead.status === 'loading' && <p className="subtitle-native-read-state" role="status">正在读取{desiredNative.label}平台字幕…</p>}
+      {desiredNative && nativeRead.status === 'error' && <p className="subtitle-native-read-state" role="alert">{subtitles.languageRead?.error || '平台目标字幕暂时无法读取。'}已切换为当前源字幕，可使用 AI 翻译。</p>}
       <label className="subtitle-search"><Search size={15} aria-hidden="true"/><input type="search" aria-label="搜索字幕" placeholder="搜索字幕" value={query} onChange={event => { setQuery(event.target.value); setVisibleCount(200) }} maxLength={200}/>{query && <button type="button" className="subtitle-search-clear" aria-label="清除字幕搜索" title="清除搜索" onClick={() => { setQuery(''); setVisibleCount(200) }}><X size={14} aria-hidden="true"/></button>}</label>
       <label className="subtitle-follow"><input type="checkbox" checked={follow} disabled={!onSeek} onChange={event => { setFollow(event.target.checked); setFollowPaused(false) }}/>跟随播放</label>
     </div>}

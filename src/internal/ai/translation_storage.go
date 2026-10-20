@@ -63,6 +63,7 @@ func (s *Service) write(ctx context.Context, kind string, result Result) error {
 	if err != nil || len(value) > maxStoredValue {
 		return ErrStorage
 	}
+	// Target is a fixed storage partition key, not the translation language; the language is part of SourceHash and the stored value.
 	if err := s.results.PutAIResult(ctx, StoredResult{Kind: kind, SourceHash: result.Key, Target: targetChinese, Model: result.Model, Value: string(value), CreatedAt: time.Now().Unix()}); err != nil {
 		return ErrStorage
 	}
@@ -70,6 +71,7 @@ func (s *Service) write(ctx context.Context, kind string, result Result) error {
 }
 
 func (s *Service) read(ctx context.Context, kind, key string) (Result, error) {
+	// Keep reads in the same fixed storage partition used by write; the requested target is encoded in the cache identity.
 	row, err := s.results.AIResult(ctx, kind, key, targetChinese)
 	if errors.Is(err, ErrNotFound) {
 		return Result{}, ErrNotFound

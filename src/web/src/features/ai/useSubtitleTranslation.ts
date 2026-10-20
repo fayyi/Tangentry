@@ -6,7 +6,7 @@ import { usePageVisibility } from '../../shared/hooks/usePageVisibility'
 import { preferredSubtitleLanguage, subtitleTargetLabel, subtitleTrackMatchesTarget } from '../subtitles/subtitleLanguageMatch'
 import type { SubtitleLanguage } from '../../shared/api/types'
 
-export function useSubtitleTranslation(contentId: string, track?: SubtitleTrack, source?: 'title' | 'article', targetLanguage = 'zh-Hans', platformLanguages: readonly SubtitleLanguage[] = []) {
+export function useSubtitleTranslation(contentId: string, track?: SubtitleTrack, source?: 'title' | 'article', targetLanguage = 'zh-Hans', platformLanguages: readonly SubtitleLanguage[] = [], platformLanguagesReady = true) {
   const visible = usePageVisibility()
   const nativeAvailable = source !== 'article' && Boolean(preferredSubtitleLanguage(platformLanguages, targetLanguage))
   const alreadyTarget = useMemo(() => Boolean(track && source !== 'article' && subtitleTrackMatchesTarget(track, targetLanguage)), [track, source, targetLanguage])
@@ -36,8 +36,14 @@ export function useSubtitleTranslation(contentId: string, track?: SubtitleTrack,
   }
   useEffect(() => {
     setInspection(null); setError(''); setNotice(''); setPending(false); setLoading(false); setShow(true)
-    const timer = track && !alreadyTarget && !nativeAvailable ? setTimeout(() => void reload(), 0) : undefined
-    return () => { if (timer) clearTimeout(timer); reader.current?.abort(); reader.current = null; mutation.current?.abort(); mutation.current = null }
+    const shouldLoad = track && platformLanguagesReady && !alreadyTarget && !nativeAvailable
+    const timer = shouldLoad ? setTimeout(() => void reload(), 0) : undefined
+    return () => {
+      if (timer) clearTimeout(timer)
+      reader.current?.abort(); reader.current = null
+      mutation.current?.abort(); mutation.current = null
+      setPending(false)
+    }
   }, [scope, alreadyTarget, nativeAvailable])
   useEffect(() => {
     if (!scope) return

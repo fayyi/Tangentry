@@ -108,6 +108,9 @@ func (c *Client) readSubtitles(ctx context.Context, bvid, selectedLanguage strin
 	if len(parts) == 0 || len(parts) > maxSubtitleParts {
 		return subtitles.Document{}, &discovery.PlatformError{Message: "B站没有返回有效的分 P 信息，请重试。"}
 	}
+	if selectedLanguage != "" {
+		return c.readSelectedSubtitleLanguage(ctx, bvid, view, parts[0], selectedLanguage)
+	}
 
 	doc := subtitles.Document{VideoID: bvid, Part: 1, Status: "error", Tracks: []subtitles.Track{}, Parts: make([]subtitles.Part, 0, len(parts))}
 	coolingDown := false
@@ -155,6 +158,36 @@ func (c *Client) readSubtitles(ctx context.Context, bvid, selectedLanguage strin
 		doc.Languages, doc.Tracks = first.Languages, first.Tracks
 	}
 	return doc, nil
+}
+
+func (c *Client) readSelectedSubtitleLanguage(ctx context.Context, bvid string, view subtitleView, page struct {
+	CID   int64  `json:"cid"`
+	Page  int    `json:"page"`
+	Title string `json:"part"`
+}, language string) (subtitles.Document, error) {
+	part := subtitles.Part{CID: page.CID, Page: page.Page, Title: safeSubtitleText(page.Title, 120), Status: "error", Languages: []subtitles.Language{}, Tracks: []subtitles.Track{}}
+	if part.Page < 1 {
+		part.Page = 1
+	}
+	if page.CID <= 0 {
+		part.ErrorMessage = "B站没有返回第一分 P 的 CID。"
+	} else {
+		title := safeSubtitleText(view.Title+" "+page.Title, 240)
+		result, err := c.readSubtitlePart(ctx, bvid, page.CID, title, true, language, nil)
+		if err != nil {
+			if ctx.Err() != nil {
+				return subtitles.Document{}, ctx.Err()
+			}
+			part.ErrorCode, part.ErrorMessage = platformSubtitleError(err)
+		} else {
+			part.Languages, part.Tracks, part.Status, part.AIMismatch = result.Languages, result.Tracks, result.Status, result.AIMismatch
+			part.ErrorCode, part.ErrorMessage = result.ErrorCode, result.ErrorMessage
+		}
+	}
+	return subtitles.Document{
+		VideoID: bvid, Part: part.Page, Status: part.Status, ErrorCode: part.ErrorCode, ErrorMessage: part.ErrorMessage,
+		Languages: part.Languages, Tracks: part.Tracks, Parts: []subtitles.Part{part},
+	}, nil
 }
 
 func (c *Client) readSubtitlePart(ctx context.Context, bvid string, cid int64, title string, readBodies bool, selectedLanguage string, remainingBodyBytes *int) (subtitles.Part, error) {
