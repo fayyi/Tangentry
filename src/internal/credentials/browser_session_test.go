@@ -136,6 +136,68 @@ func TestEncryptedStoreDoesNotPersistBrowserSecretsAsPlaintext(t *testing.T) {
 	}
 }
 
+func TestBackupTargetPasswordUsesSeparateNamespaceAndEncryptsWhenKeyed(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "credentials")
+	key := bytes.Repeat([]byte{0x42}, 32)
+	store, err := OpenWithKey(dir, "", "", key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	password := "fixture-webdav-password"
+	if err := store.SaveBackupTargetPassword("webdav-target-1", password); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "backup-targets.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), password) {
+		t.Fatal("keyed WebDAV password persisted as plaintext")
+	}
+	reopened, err := OpenWithKey(dir, "", "", key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := reopened.BackupTargetPassword("webdav-target-1"); !ok || got != password {
+		t.Fatal("WebDAV password did not survive credential store reopen")
+	}
+	if err := reopened.DeleteBackupTargetPassword("webdav-target-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := reopened.BackupTargetPassword("webdav-target-1"); ok {
+		t.Fatal("WebDAV password was not deleted")
+	}
+}
+
+func TestBackupTargetPasswordOpaqueCiphertextSurvivesUnavailableKey(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "credentials")
+	key := bytes.Repeat([]byte{0x33}, 32)
+	store, err := OpenWithKey(dir, "", "", key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveBackupTargetPassword("webdav-target-1", "fixture-webdav-password"); err != nil {
+		t.Fatal(err)
+	}
+	headless, err := Open(dir, "", "")
+	if err != nil || !headless.BackupTargetConfigured("webdav-target-1") {
+		t.Fatalf("opaque credential did not report configured: %v", err)
+	}
+	if _, ok := headless.BackupTargetPassword("webdav-target-1"); ok {
+		t.Fatal("opaque credential was exposed without key")
+	}
+	if err := headless.DeleteBackupTargetPassword("another-target"); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := OpenWithKey(dir, "", "", key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if password, ok := reopened.BackupTargetPassword("webdav-target-1"); !ok || password != "fixture-webdav-password" {
+		t.Fatal("unrelated credential update discarded opaque ciphertext")
+	}
+}
+
 func TestEncryptedStoreWithWrongLocalKeyDegradesToUnavailable(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "credentials")
 	key := bytes.Repeat([]byte{0x11}, 32)

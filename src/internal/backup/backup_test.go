@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -259,6 +260,278 @@ func (restoreRepo) SaveTask(context.Context, Task) error              { return n
 func (restoreRepo) DeleteTask(context.Context, string) error          { return nil }
 func (restoreRepo) SaveSnapshot(context.Context, Snapshot) error      { return nil }
 func (restoreRepo) ListSnapshots(context.Context) ([]Snapshot, error) { return nil, nil }
+func (restoreRepo) GetSnapshot(context.Context, string) (Snapshot, error) {
+	return Snapshot{}, errors.New("not found")
+}
+func (restoreRepo) SaveTargetRuns(context.Context, string, []TargetRun) error { return nil }
+
+type fanoutRepo struct {
+	mu        sync.Mutex
+	targets   map[string]Target
+	task      Task
+	snapshots map[string]Snapshot
+	runs      map[string][]TargetRun
+}
+
+func (r *fanoutRepo) ListTargets(context.Context) ([]Target, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]Target, 0, len(r.targets))
+	for _, target := range r.targets {
+		out = append(out, target)
+	}
+	return out, nil
+}
+func (r *fanoutRepo) GetTarget(_ context.Context, id string) (Target, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.targets[id], nil
+}
+func (r *fanoutRepo) SaveTarget(_ context.Context, target Target) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	target.Password, target.UpdateCredential = "", false
+	r.targets[target.ID] = target
+	return nil
+}
+func (r *fanoutRepo) DeleteTarget(_ context.Context, id string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.targets, id)
+	return nil
+}
+func (*fanoutRepo) ListTasks(context.Context) ([]Task, error)       { return nil, nil }
+func (r *fanoutRepo) GetTask(context.Context, string) (Task, error) { return r.task, nil }
+func (*fanoutRepo) SaveTask(context.Context, Task) error            { return nil }
+func (*fanoutRepo) DeleteTask(context.Context, string) error        { return nil }
+func (r *fanoutRepo) SaveSnapshot(_ context.Context, snapshot Snapshot) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.snapshots[snapshot.ID] = snapshot
+	return nil
+}
+func (r *fanoutRepo) ListSnapshots(context.Context) ([]Snapshot, error) { return nil, nil }
+func (r *fanoutRepo) GetSnapshot(_ context.Context, id string) (Snapshot, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	snapshot, ok := r.snapshots[id]
+	if !ok {
+		return Snapshot{}, errors.New("not found")
+	}
+	snapshot.Targets = append([]TargetRun(nil), r.runs[id]...)
+	return snapshot, nil
+}
+func (r *fanoutRepo) SaveTargetRuns(_ context.Context, id string, runs []TargetRun) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.runs[id] = append([]TargetRun(nil), runs...)
+	succeeded, failed := countTargetRuns(runs)
+	snapshot := r.snapshots[id]
+	snapshot.Targets = append([]TargetRun(nil), runs...)
+	if failed > 0 && succeeded > 0 {
+		snapshot.Status = "partial_success"
+	} else if failed > 0 {
+		snapshot.Status = "failed"
+	} else {
+		snapshot.Status = "succeeded"
+	}
+	r.snapshots[id] = snapshot
+	return nil
+}
+
+type fanoutStore struct {
+	count   *atomic.Int32
+	fail    bool
+	content *[]byte
+}
+
+func (s fanoutStore) Upload(_ context.Context, _ string, r io.Reader) error {
+	s.count.Add(1)
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return err
+	}
+	if s.content != nil {
+		*s.content = append([]byte(nil), data...)
+	}
+	if s.fail {
+		return errors.New("fixture failure with secret fixture-password")
+	}
+	return nil
+}
+func (fanoutStore) Read(context.Context, string) (io.ReadCloser, error) {
+	return nil, errors.New("unused")
+}
+func (fanoutStore) List(context.Context, string) ([]string, error) { return nil, nil }
+func (fanoutStore) Delete(context.Context, string) error           { return nil }
+func (fanoutStore) TestConnection(context.Context) error           { return nil }
+
+type fixtureTargetCredentials struct{ values map[string]string }
+
+func (c *fixtureTargetCredentials) SaveBackupTargetPassword(id, password string) error {
+	c.values[id] = password
+	return nil
+}
+func (c *fixtureTargetCredentials) BackupTargetPassword(id string) (string, bool) {
+	value, ok := c.values[id]
+	return value, ok
+}
+func (c *fixtureTargetCredentials) BackupTargetConfigured(id string) bool {
+	_, ok := c.values[id]
+	return ok
+}
+func (c *fixtureTargetCredentials) DeleteBackupTargetPassword(id string) error {
+	delete(c.values, id)
+	return nil
+}
+
+func TestFanoutPersistsPartialSuccessAndRetriesOnlyFailedTarget(t *testing.T) {
+	repo := &fanoutRepo{
+		targets: map[string]Target{"good": {ID: "good", Name: "good target", Type: "local", Enabled: true}, "bad": {ID: "bad", Name: "bad target", Type: "local", Enabled: true}},
+		task:    Task{ID: "task-1", TargetIDs: []string{"good", "bad"}}, snapshots: map[string]Snapshot{}, runs: map[string][]TargetRun{},
+	}
+	var goodUploads, badUploads atomic.Int32
+	var uploadedPackage []byte
+	var failedPackage []byte
+	goodContent := &uploadedPackage
+	badContent := &failedPackage
+	workDir := t.TempDir()
+	service := NewService(repo, fanoutSource{}, func(target Target) (ObjectStore, error) {
+		if target.ID == "good" {
+			return fanoutStore{count: &goodUploads, content: goodContent}, nil
+		}
+		return fanoutStore{count: &badUploads, fail: badUploads.Load() == 0, content: badContent}, nil
+	}, workDir, "test")
+	snapshot, err := service.Create(context.Background(), "task-1", "fixture-backup-passphrase")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Status != "partial_success" || snapshot.Targets[0].Status != "succeeded" || snapshot.Targets[1].Status != "failed" {
+		t.Fatalf("partial result: %+v", snapshot)
+	}
+	if !bytes.Equal(uploadedPackage, failedPackage) {
+		t.Fatal("fan-out targets did not receive identical encrypted bytes")
+	}
+	if strings.Contains(snapshot.Targets[1].Error, "fixture-password") {
+		t.Fatal("target error leaked secret material")
+	}
+	if _, err := os.Stat(filepath.Join(workDir, "retry-"+snapshot.ID+".tgb")); err != nil {
+		t.Fatalf("encrypted retry package missing: %v", err)
+	}
+	badUploads.Store(1)
+	retried, err := service.RetryFailed(context.Background(), snapshot.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retried.Status != "succeeded" || goodUploads.Load() != 1 || badUploads.Load() != 2 {
+		t.Fatalf("retry result=%+v uploads good=%d bad=%d", retried, goodUploads.Load(), badUploads.Load())
+	}
+	if _, err := os.Stat(filepath.Join(workDir, "retry-"+snapshot.ID+".tgb")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("retry package retained after success: %v", err)
+	}
+}
+
+func TestRetryFailedPersistsSuccessfulTargetBeforeLaterFailure(t *testing.T) {
+	repo := &fanoutRepo{
+		targets:   map[string]Target{"good": {ID: "good", Name: "Good", Type: "local", Enabled: true}, "bad": {ID: "bad", Name: "Bad", Type: "local", Enabled: true}},
+		task:      Task{ID: "task-1", TargetIDs: []string{"good", "bad"}},
+		snapshots: map[string]Snapshot{"snapshot-retry": {ID: "snapshot-retry", TaskID: "task-1", Status: "partial_success", Targets: []TargetRun{{TargetID: "good", Name: "Good", Status: "succeeded"}, {TargetID: "bad", Name: "Bad", Status: "failed"}}}},
+		runs:      map[string][]TargetRun{"snapshot-retry": {{TargetID: "good", Name: "Good", Status: "succeeded"}, {TargetID: "bad", Name: "Bad", Status: "failed"}}},
+	}
+	packagePath := filepath.Join(t.TempDir(), "retry-snapshot-retry.tgb")
+	if err := os.WriteFile(packagePath, []byte("encrypted-fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var goodUploads, badUploads atomic.Int32
+	service := NewService(repo, fanoutSource{}, func(target Target) (ObjectStore, error) {
+		if target.ID == "good" {
+			return fanoutStore{count: &goodUploads}, nil
+		}
+		return fanoutStore{count: &badUploads, fail: true}, nil
+	}, filepath.Dir(packagePath), "test")
+	if _, err := service.RetryFailed(context.Background(), "snapshot-retry"); err != nil {
+		t.Fatal(err)
+	}
+	if goodUploads.Load() != 0 || badUploads.Load() != 1 {
+		t.Fatalf("retry touched wrong targets: good=%d bad=%d", goodUploads.Load(), badUploads.Load())
+	}
+	if runs := repo.runs["snapshot-retry"]; len(runs) != 2 || runs[0].Status != "succeeded" || runs[1].Status != "failed" {
+		t.Fatalf("retry status was not persisted: %+v", runs)
+	}
+}
+
+type fanoutSource struct{}
+
+func (fanoutSource) Snapshot(_ context.Context, stage string, _ bool) ([]File, error) {
+	data := []byte("fixture database content")
+	if err := os.WriteFile(filepath.Join(stage, "tangentry.db"), data, 0600); err != nil {
+		return nil, err
+	}
+	digest := sha256.Sum256(data)
+	return []File{{Path: "tangentry.db", Type: FileDatabase, Size: int64(len(data)), SHA256: fmt.Sprintf("%x", digest)}}, nil
+}
+
+func TestWebDAVTargetCredentialIsNotReturnedOrStoredInRepository(t *testing.T) {
+	repo := &fanoutRepo{targets: map[string]Target{}, snapshots: map[string]Snapshot{}, runs: map[string][]TargetRun{}}
+	credentials := &fixtureTargetCredentials{values: map[string]string{}}
+	service := NewService(repo, fanoutSource{}, func(Target) (ObjectStore, error) { return nil, errors.New("unused") }, t.TempDir(), "test")
+	service.SetTargetCredentials(credentials)
+	target := Target{ID: "webdav-1", Name: "NAS", Type: "webdav", Endpoint: "https://dav.example.test/root", Username: "fixture-user", Password: "fixture-password", UpdateCredential: true, Enabled: true}
+	if err := service.SaveTarget(context.Background(), target); err != nil {
+		t.Fatal(err)
+	}
+	saved := repo.targets[target.ID]
+	if saved.Password != "" || saved.UpdateCredential || saved.Endpoint == "" || credentials.values[target.ID] != "fixture-password" {
+		t.Fatal("credential handling did not isolate the password")
+	}
+	targets, err := service.Targets(context.Background())
+	if err != nil || len(targets) == 0 || targets[0].Password != "" || !targets[0].CredentialConfigured {
+		t.Fatalf("target query leaked credential or missed state: %+v err=%v", targets, err)
+	}
+	if err := service.DeleteTarget(context.Background(), target.ID); err != nil || len(credentials.values) != 0 {
+		t.Fatalf("credential was not cleared: %v", err)
+	}
+}
+
+func TestSaveWebDAVTargetRejectsEndpointPathTraversal(t *testing.T) {
+	repo := &fanoutRepo{targets: map[string]Target{}, snapshots: map[string]Snapshot{}, runs: map[string][]TargetRun{}}
+	credentials := &fixtureTargetCredentials{values: map[string]string{"webdav-1": "fixture-password"}}
+	service := NewService(repo, fanoutSource{}, func(Target) (ObjectStore, error) { return nil, errors.New("unused") }, t.TempDir(), "test")
+	service.SetTargetCredentials(credentials)
+	for _, endpoint := range []string{"https://dav.example.test/%2e%2e/private", "https://dav.example.test/a/../private", "https://dav.example.test/%252e%252e/private"} {
+		target := Target{ID: "webdav-1", Name: "Fixture", Type: "webdav", Endpoint: endpoint, Username: "fixture-user", Enabled: true}
+		if err := service.SaveTarget(context.Background(), target); err == nil {
+			t.Fatalf("accepted traversing endpoint %q", endpoint)
+		}
+	}
+	for _, remotePath := range []string{"../outside", "%2e%2e/outside", "/absolute"} {
+		target := Target{ID: "webdav-1", Name: "Fixture", Type: "webdav", Endpoint: "https://dav.example.test/root", Username: "fixture-user", RemotePath: remotePath, Enabled: true}
+		if err := service.SaveTarget(context.Background(), target); err == nil {
+			t.Fatalf("accepted traversing remote prefix %q", remotePath)
+		}
+	}
+}
+
+func TestFanoutContinuesAfterEachTargetFactoryAndUploadError(t *testing.T) {
+	repo := &fanoutRepo{
+		targets: map[string]Target{"factory-error": {ID: "factory-error", Name: "Factory error", Type: "local", Enabled: true}, "upload-error": {ID: "upload-error", Name: "Upload error", Type: "local", Enabled: true}, "good": {ID: "good", Name: "Good", Type: "local", Enabled: true}},
+		task:    Task{ID: "task-1", TargetIDs: []string{"factory-error", "upload-error", "good"}}, snapshots: map[string]Snapshot{}, runs: map[string][]TargetRun{},
+	}
+	var uploaded atomic.Int32
+	service := NewService(repo, fanoutSource{}, func(target Target) (ObjectStore, error) {
+		if target.ID == "factory-error" {
+			return nil, errors.New("secret fixture-password")
+		}
+		return fanoutStore{count: &uploaded, fail: target.ID == "upload-error"}, nil
+	}, t.TempDir(), "test")
+	snapshot, err := service.Create(context.Background(), "task-1", "fixture-backup-passphrase")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Status != "partial_success" || snapshot.Targets[0].Status != "failed" || snapshot.Targets[1].Status != "failed" || snapshot.Targets[2].Status != "succeeded" || uploaded.Load() != 2 {
+		t.Fatalf("fan-out did not continue to final target: %+v uploads=%d", snapshot, uploaded.Load())
+	}
+}
 
 type restoreStore struct{ data []byte }
 

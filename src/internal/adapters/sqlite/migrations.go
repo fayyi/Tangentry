@@ -16,7 +16,7 @@ var migrationFiles embed.FS
 
 // Go steps run after a version's SQL in the same transaction, for data
 // rewrites SQL alone cannot express.
-var migrationSteps = map[int]func(*sql.Tx) error{14: archiveLegacySnapshots}
+var migrationSteps = map[int]func(*sql.Tx) error{14: archiveLegacySnapshots, 70: addBackupWebDAVColumns}
 
 // A file holding only one ADD COLUMN is skipped when the column exists:
 // older builds added some columns before recording their version.
@@ -113,4 +113,26 @@ func apply(db *sql.DB, m migration) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+func addBackupWebDAVColumns(tx *sql.Tx) error {
+	for _, statement := range []string{
+		`ALTER TABLE backup_target ADD COLUMN endpoint TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE backup_target ADD COLUMN username TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE backup_target ADD COLUMN remote_path TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE backup_target ADD COLUMN allow_insecure_tls INTEGER NOT NULL DEFAULT 0 CHECK(allow_insecure_tls IN (0,1))`,
+	} {
+		match := regexp.MustCompile(`(?is)^ALTER TABLE (\w+) ADD COLUMN (\w+)`).FindStringSubmatch(statement)
+		var exists int
+		if err := tx.QueryRow(`SELECT count(*) FROM pragma_table_info(?) WHERE name=?`, match[1], match[2]).Scan(&exists); err != nil {
+			return err
+		}
+		if exists > 0 {
+			continue
+		}
+		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
+	}
+	return nil
 }

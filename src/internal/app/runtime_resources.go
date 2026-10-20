@@ -1,12 +1,15 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
+	"time"
 
 	"tangentry/internal/adapters/filesystem"
 	"tangentry/internal/adapters/sqlite"
 	localstorage "tangentry/internal/adapters/storage/local"
+	webdavstorage "tangentry/internal/adapters/storage/webdav"
 	"tangentry/internal/adapters/tools"
 	"tangentry/internal/backup"
 	"tangentry/internal/config"
@@ -66,10 +69,27 @@ func openRuntimeResources(dataDir string, configuration config.Config, option Op
 	records := repositories{xiaohongshu: store, subscription: store}
 	backupWorkDir := filepath.Join(dataDir, ".tangentry-restore")
 	backupService := backup.NewService(store, store, func(target backup.Target) (backup.ObjectStore, error) {
-		if target.Type != "local" {
+		switch target.Type {
+		case "local":
+			return localstorage.New(target.Path)
+		case "webdav":
+			password, ok := cookies.BackupTargetPassword(target.ID)
+			if !ok {
+				return nil, fmt.Errorf("WebDAV 凭据未配置")
+			}
+			return webdavstorage.New(webdavstorage.Config{Endpoint: target.Endpoint, Username: target.Username, Password: password, RemotePath: target.RemotePath, AllowInsecureTLS: target.AllowInsecureTLS, Timeout: 30 * time.Second, TempDir: backupWorkDir})
+		default:
 			return nil, fmt.Errorf("unsupported backup target type")
 		}
-		return localstorage.New(target.Path)
 	}, backupWorkDir, "dev")
+	backupService.SetTargetCredentials(cookies)
+	backupService.SetTargetTester(func(ctx context.Context, target backup.Target) error {
+		store, err := webdavstorage.New(webdavstorage.Config{Endpoint: target.Endpoint, Username: target.Username, Password: target.Password, RemotePath: target.RemotePath, AllowInsecureTLS: target.AllowInsecureTLS, Timeout: 15 * time.Second, TempDir: backupWorkDir})
+		if err != nil {
+			return err
+		}
+		defer store.Close()
+		return store.TestConnection(ctx)
+	})
 	return &runtimeResources{store: store, preferences: preferencesStore, cookies: cookies, toolkit: toolkit, platforms: p, documents: documents, downloads: processing, backup: backupService, repositories: records}, nil
 }

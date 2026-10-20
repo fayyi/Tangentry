@@ -52,6 +52,31 @@ func TestSnapshotCollectsDocumentsAndHonorsDownloadSwitch(t *testing.T) {
 	}
 }
 
+func TestBackupWebDAVConfigurationAndTargetRunStatusesPersist(t *testing.T) {
+	store := inboxTestStore(t)
+	ctx := context.Background()
+	target := backup.Target{ID: "webdav-fixture", Name: "Fixture DAV", Type: "webdav", Endpoint: "https://dav.example.test/base", Username: "fixture-user", RemotePath: "backups", AllowInsecureTLS: true, Enabled: true}
+	if err := store.SaveTarget(ctx, target); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.GetTarget(ctx, target.ID)
+	if err != nil || loaded.Endpoint != target.Endpoint || loaded.RemotePath != target.RemotePath || !loaded.AllowInsecureTLS {
+		t.Fatalf("WebDAV configuration did not persist: %+v %v", loaded, err)
+	}
+	snapshot := backup.Snapshot{ID: "snapshot-fixture", TaskID: "task-fixture", CreatedAt: time.Now().UTC(), Size: 7, Status: "running"}
+	if err := store.SaveSnapshot(ctx, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	runs := []backup.TargetRun{{TargetID: "local-fixture", Name: "Local", Status: "succeeded"}, {TargetID: target.ID, Name: target.Name, Status: "failed", Error: "WebDAV 返回 HTTP 401。"}}
+	if err := store.SaveTargetRuns(ctx, snapshot.ID, runs); err != nil {
+		t.Fatal(err)
+	}
+	loadedSnapshot, err := store.GetSnapshot(ctx, snapshot.ID)
+	if err != nil || loadedSnapshot.Status != "partial_success" || len(loadedSnapshot.Targets) != 2 || loadedSnapshot.Targets[1].Error == "" {
+		t.Fatalf("target run status did not persist: %+v %v", loadedSnapshot, err)
+	}
+}
+
 func TestSnapshotIsReadableDuringWALWrites(t *testing.T) {
 	store := inboxTestStore(t)
 	ctx := context.Background()

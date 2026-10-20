@@ -245,9 +245,10 @@ export interface ToolReport {
 }
 
 export type BackupTargetType = 'local' | 'webdav' | 's3'
-export interface BackupTarget { id: string; name: string; type: BackupTargetType | string; path?: string; enabled: boolean }
+export interface BackupTarget { id: string; name: string; type: BackupTargetType | string; path?: string; endpoint?: string; username?: string; remotePath?: string; allowInsecureTLS?: boolean; credentialConfigured?: boolean; password?: string; updateCredential?: boolean; enabled: boolean }
 export interface BackupTask { id: string; name: string; targetIds: string[]; includeDownloads: boolean; retention: number; enabled: boolean }
-export interface BackupSnapshot { id: string; taskId?: string; createdAt: string; size: number; status: string }
+export interface BackupTargetRun { targetId: string; name: string; status: string; error?: string }
+export interface BackupSnapshot { id: string; taskId?: string; createdAt: string; size: number; status: string; targets?: BackupTargetRun[] }
 export interface BackupValidation { snapshotId: string; size: number; manifest: { formatVersion: number; schemaVersion: number; snapshotID: string; includeDownloads: boolean; files: Array<{ path: string; type: string; size: number; sha256: string }> } }
 export interface BackupRestoreResult { planId: string; snapshotId: string; stagedId: string; preRestoreSnapshotId: string; status: string; restartRequired: boolean }
 

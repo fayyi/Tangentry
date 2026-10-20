@@ -74,6 +74,7 @@ export function backupStatusPresentation(status: string | null | undefined): Bac
   if (normalized === 'failed' || normalized === 'failure' || normalized === 'error' || normalized === 'invalid') {
     return { label: normalized === 'invalid' ? '校验失败' : '失败', tone: 'danger' }
   }
+  if (normalized === 'partial_success' || normalized === 'partial') return { label: '部分成功', tone: 'warning' }
   if (normalized === 'cancelled' || normalized === 'canceled') return { label: '已取消', tone: 'warning' }
   if (normalized === 'staged' || normalized === 'awaiting_restart' || normalized === 'pending_restart') return { label: '待重启生效', tone: 'warning' }
   if (normalized === 'restored' || normalized === 'applied') return { label: '已恢复', tone: 'success' }

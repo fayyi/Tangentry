@@ -10,6 +10,24 @@ import (
 
 type backupHandler struct{ service BackupService }
 
+type backupTargetRequest struct {
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	Type             string `json:"type"`
+	Path             string `json:"path,omitempty"`
+	Endpoint         string `json:"endpoint,omitempty"`
+	Username         string `json:"username,omitempty"`
+	RemotePath       string `json:"remotePath,omitempty"`
+	AllowInsecureTLS bool   `json:"allowInsecureTLS,omitempty"`
+	Password         string `json:"password,omitempty"`
+	UpdateCredential bool   `json:"updateCredential,omitempty"`
+	Enabled          bool   `json:"enabled"`
+}
+
+func (v backupTargetRequest) target() backup.Target {
+	return backup.Target{ID: v.ID, Name: v.Name, Type: v.Type, Path: v.Path, Endpoint: v.Endpoint, Username: v.Username, RemotePath: v.RemotePath, AllowInsecureTLS: v.AllowInsecureTLS, Password: v.Password, UpdateCredential: v.UpdateCredential, Enabled: v.Enabled}
+}
+
 func (h *backupHandler) targets(w http.ResponseWriter, r *http.Request) {
 	v, err := h.service.Targets(r.Context())
 	h.respond(w, v, err)
@@ -23,15 +41,31 @@ func (h *backupHandler) snapshots(w http.ResponseWriter, r *http.Request) {
 	h.respond(w, v, err)
 }
 func (h *backupHandler) saveTarget(w http.ResponseWriter, r *http.Request) {
-	var v backup.Target
-	if !decodeJSON(w, r, &v) {
+	var request backupTargetRequest
+	if !decodeJSON(w, r, &request) {
 		return
 	}
+	v := request.target()
 	if err := h.service.SaveTarget(r.Context(), v); err != nil {
 		h.error(w, err)
 		return
 	}
 	write(w, http.StatusNoContent, nil)
+}
+func (h *backupHandler) testTarget(w http.ResponseWriter, r *http.Request) {
+	var request backupTargetRequest
+	if !decodeJSON(w, r, &request) {
+		return
+	}
+	if err := h.service.TestTarget(r.Context(), request.target()); err != nil {
+		if errors.Is(err, context.Canceled) {
+			write(w, http.StatusRequestTimeout, apiError{"backup_test_cancelled", "连接测试已取消。"})
+			return
+		}
+		write(w, http.StatusBadRequest, apiError{"backup_test_failed", safeBackupTestError(err)})
+		return
+	}
+	write(w, http.StatusOK, map[string]string{"status": "succeeded", "message": "连接成功。"})
 }
 func (h *backupHandler) deleteTarget(w http.ResponseWriter, r *http.Request) {
 	if err := h.service.DeleteTarget(r.Context(), r.PathValue("id")); err != nil {
@@ -71,6 +105,14 @@ func (h *backupHandler) run(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	write(w, http.StatusCreated, snap)
+}
+func (h *backupHandler) retryFailed(w http.ResponseWriter, r *http.Request) {
+	snapshot, err := h.service.RetryFailed(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.error(w, err)
+		return
+	}
+	write(w, http.StatusOK, snapshot)
 }
 func (h *backupHandler) restore(w http.ResponseWriter, r *http.Request) {
 	var v struct {
@@ -138,6 +180,13 @@ func safeBackupError(err error) string {
 		return "备份密码错误或快照已损坏。"
 	}
 	return "备份操作未完成，请检查目标设置后重试。"
+}
+func safeBackupTestError(err error) string {
+	var summary interface{ ErrorSummary() string }
+	if errors.As(err, &summary) {
+		return summary.ErrorSummary()
+	}
+	return "连接失败，请检查地址、账号、密码和网络。"
 }
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(v); err != nil {

@@ -215,6 +215,10 @@
 .backup-warning { display: flex; align-items: center; gap: 6px; color: var(--danger); }
 .backup-checkbox { display: inline-flex; align-items: center; gap: 8px; margin-top: 16px; color: var(--muted); font-size: 12px; cursor: pointer; }
 .backup-checkbox input { accent-color: var(--accent); }
+.backup-target-checkboxes { display: flex; flex-wrap: wrap; gap: 10px 16px; margin: 0; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); color: var(--muted); font-size: 12px; }
+.backup-target-checkboxes legend { padding: 0 5px; color: var(--muted); }
+.backup-target-checkboxes label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.backup-target-checkboxes input { accent-color: var(--accent); }
 .backup-success { display: inline-flex; align-items: center; gap: 5px; color: var(--accent-ink); font-size: 12px; }
 .backup-empty { display: flex; align-items: flex-start; gap: 10px; margin: 16px 0 4px; padding: 14px; border: 1px dashed var(--line-strong); border-radius: var(--radius); color: var(--muted); background: var(--surface); }
 .backup-empty > svg { flex: 0 0 auto; color: var(--accent-ink); margin-top: 2px; }
@@ -223,6 +227,10 @@
 .backup-snapshot-main { display: grid; gap: 4px; min-width: 0; }
 .backup-snapshot-main small { color: var(--faint); font-size: 11px; overflow-wrap: anywhere; }
 .backup-snapshot-main .field-hint { margin: 2px 0 0; overflow-wrap: anywhere; }
+.backup-validation-details { margin-top: 6px; color: var(--muted); font-size: 12px; }
+.backup-validation-details summary { cursor: pointer; color: var(--accent-ink); }
+.backup-validation-details > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--line); }
+.backup-validation-details code { color: var(--ink); overflow-wrap: anywhere; }
 .backup-snapshot-actions > span { color: var(--muted); font-size: 12px; white-space: nowrap; }
 .backup-status { display: inline-flex; width: max-content; padding: 2px 7px; border-radius: 999px; font-size: 11px; background: var(--surface); color: var(--muted); }
 .backup-status-success { color: var(--accent-ink); background: var(--accent-soft); }
