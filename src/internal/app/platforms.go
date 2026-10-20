@@ -111,6 +111,7 @@ func newPlatforms(dataDir string, configuration config.Config, toolkit *tools.To
 		}
 		return playback.Source{URL: media.URL, Backups: media.Backups, Platform: "douyin", Referer: "https://www.douyin.com/video/" + id}, nil
 	})
+	toolkit.SetYouTubeHTTPClient(public)
 	notesClient := &xiaohongshu.Client{HTTP: public, Cookie: cookieFor(cookies, "xiaohongshu"), UserAgent: userAgentFor(cookies, "xiaohongshu"), Page: option.PlatformPageFetcher}
 	forumClient := &discourse.Client{HTTP: public, UserAgent: userAgentFor(cookies, "linuxdo"), Session: cookies.PrepareLinuxdoSession, UserKey: cookies.LinuxdoUserKey, Page: option.PlatformPageFetcher}
 	return &platforms{
