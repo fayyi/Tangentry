@@ -13,22 +13,14 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"tangentry/internal/platformfetch"
 )
 
 const maxCompatibilityInput = 256 << 20
 const MaxCompatibilityOutput = 384 << 20
 
-var compatibilityCDNSuffixes = []struct {
-	suffix string
-	douyin bool
-}{
-	{suffix: ".xhscdn.com"},
-	{suffix: ".douyinvod.com", douyin: true},
-	{suffix: ".douyinvod.net", douyin: true},
-	{suffix: ".bytecdn.cn", douyin: true},
-	{suffix: ".zjcdn.com", douyin: true},
-	{suffix: ".amemv.com", douyin: true},
-}
+var compatibilityOtherCDNSuffixes = []string{".xhscdn.com"}
 
 // PlaybackFormat is the small subset of container metadata needed to decide
 // whether WKWebView can play a temporary file directly.
@@ -85,15 +77,16 @@ type Compatibility struct {
 
 func compatibilityURL(raw string) bool {
 	u, err := url.Parse(raw)
-	if err != nil || len(raw) > 8192 || u.Scheme != "https" || u.User != nil || u.Port() != "" {
+	if err != nil || len(raw) > 8192 || u.Scheme != "https" || u.User != nil || (u.Port() != "" && u.Port() != "443") {
 		return false
 	}
 	host := strings.ToLower(u.Hostname())
-	// These are the CDN suffixes currently emitted by the platform resolvers.
-	// Keep this explicit: resolver output must never turn this service into a
-	// general-purpose URL fetcher.
-	for _, cdn := range compatibilityCDNSuffixes {
-		if strings.HasSuffix(host, cdn.suffix) && host != cdn.suffix[1:] {
+	if platformfetch.IsDouyinCDNHost(host) {
+		return true
+	}
+	// Resolver output must never turn this service into a general-purpose URL fetcher.
+	for _, suffix := range compatibilityOtherCDNSuffixes {
+		if strings.HasSuffix(host, suffix) && host != suffix[1:] {
 			return true
 		}
 	}
@@ -204,6 +197,14 @@ func (s *Compatibility) run(ctx context.Context, entry *compatibilityEntry, loca
 		s.update(entry, "failed", compatibilityResolveMessage(err, douyin))
 		return
 	}
+	if douyin {
+		normalized, reason := platformfetch.NormalizeDouyinMediaURL(source.URL, time.Now())
+		if reason != "" {
+			s.update(entry, "failed", "未能取得适合兼容播放的视频，请下载视频或打开原内容。")
+			return
+		}
+		source.URL = normalized
+	}
 	if !compatibilityURL(source.URL) || source.Duration > 1800 {
 		s.update(entry, "failed", "未能取得适合兼容播放的视频，请下载视频或打开原内容。")
 		return
@@ -292,7 +293,7 @@ func (s *Compatibility) fetch(ctx context.Context, raw, path string) error {
 	r, _ := http.NewRequestWithContext(ctx, "GET", raw, nil)
 	r.Header.Set("User-Agent", "Mozilla/5.0")
 	r.Header.Set("Accept-Encoding", "identity")
-	if host := strings.ToLower(r.URL.Hostname()); strings.HasSuffix(host, ".douyinvod.com") || strings.HasSuffix(host, ".douyinvod.net") || strings.HasSuffix(host, ".bytecdn.cn") || strings.HasSuffix(host, ".zjcdn.com") || strings.HasSuffix(host, ".amemv.com") {
+	if host := strings.ToLower(r.URL.Hostname()); platformfetch.IsDouyinCDNHost(host) {
 		r.Header.Set("Referer", "https://www.douyin.com/")
 	}
 	res, err := s.http.Do(r)

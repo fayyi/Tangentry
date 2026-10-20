@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"tangentry/internal/discovery"
+	"tangentry/internal/platformfetch"
 )
 
 type DiagnosticOutcome string
@@ -30,44 +31,45 @@ const (
 // DiagnosticStage is a credential-free projection of one Douyin playback phase.
 // Optional values remain explicit nulls in JSON to make missing evidence clear.
 type DiagnosticStage struct {
-	Stage                         string            `json:"stage"`
-	Outcome                       DiagnosticOutcome `json:"outcome"`
-	HTTPStatus                    *int              `json:"http_status"`
-	ContentType                   *string           `json:"content_type"`
-	ResponseURL                   *string           `json:"response_url"`
-	PageURL                       *string           `json:"page_url"`
-	BlockedNavigationURL          *string           `json:"blocked_navigation_url"`
-	PageReadyState                *string           `json:"page_ready_state"`
-	IsDouyinContext               *bool             `json:"is_douyin_context"`
-	YTDLPVersion                  *string           `json:"ytdlp_version"`
-	YTDLPExitCode                 *int              `json:"ytdlp_exit_code"`
-	YTDLPStderrFirstErrorRedacted *string           `json:"ytdlp_stderr_first_error_redacted"`
-	Reason                        *string           `json:"reason"`
-	APICode                       *string           `json:"api_code"`
-	BusinessStatus                *int              `json:"business_status"`
-	CandidateCount                *int              `json:"candidate_count"`
-	AcceptedCount                 *int              `json:"accepted_count"`
-	VideoElementCount             *int              `json:"video_element_count"`
-	Attempted                     *int              `json:"attempted"`
-	Refreshed                     *bool             `json:"refreshed"`
-	CookieConfigured              *bool             `json:"cookie_configured"`
-	FrontendMediaCode             *int              `json:"frontend_media_code"`
-	FrontendMessage               *string           `json:"frontend_message"`
-	BytesRead                     *int64            `json:"bytes_read"`
-	ResponseBytes                 *int64            `json:"response_bytes"`
-	DetailURLCount                *int              `json:"detail_url_count"`
-	VideoSourceCount              *int              `json:"video_source_count"`
-	TargetMatchCount              *int              `json:"target_match_count"`
-	ResponseSnippetRedacted       *string           `json:"response_snippet_redacted"`
-	FetchHookInstalled            *bool             `json:"fetch_hook_installed"`
-	XHRHookInstalled              *bool             `json:"xhr_hook_installed"`
-	Protocol                      *string           `json:"protocol"`
-	Extension                     *string           `json:"extension"`
-	VideoCodec                    *string           `json:"video_codec"`
-	AudioCodec                    *string           `json:"audio_codec"`
-	DurationSeconds               *int              `json:"duration_seconds"`
-	CDNAllowed                    *bool             `json:"cdn_allowed"`
-	SignatureDeadlineUnix         *int64            `json:"signature_deadline_unix"`
+	Stage                         string                                   `json:"stage"`
+	Outcome                       DiagnosticOutcome                        `json:"outcome"`
+	HTTPStatus                    *int                                     `json:"http_status"`
+	ContentType                   *string                                  `json:"content_type"`
+	ResponseURL                   *string                                  `json:"response_url"`
+	PageURL                       *string                                  `json:"page_url"`
+	BlockedNavigationURL          *string                                  `json:"blocked_navigation_url"`
+	PageReadyState                *string                                  `json:"page_ready_state"`
+	IsDouyinContext               *bool                                    `json:"is_douyin_context"`
+	YTDLPVersion                  *string                                  `json:"ytdlp_version"`
+	YTDLPExitCode                 *int                                     `json:"ytdlp_exit_code"`
+	YTDLPStderrFirstErrorRedacted *string                                  `json:"ytdlp_stderr_first_error_redacted"`
+	Reason                        *string                                  `json:"reason"`
+	APICode                       *string                                  `json:"api_code"`
+	BusinessStatus                *int                                     `json:"business_status"`
+	CandidateCount                *int                                     `json:"candidate_count"`
+	AcceptedCount                 *int                                     `json:"accepted_count"`
+	VideoElementCount             *int                                     `json:"video_element_count"`
+	Attempted                     *int                                     `json:"attempted"`
+	Refreshed                     *bool                                    `json:"refreshed"`
+	CookieConfigured              *bool                                    `json:"cookie_configured"`
+	FrontendMediaCode             *int                                     `json:"frontend_media_code"`
+	FrontendMessage               *string                                  `json:"frontend_message"`
+	BytesRead                     *int64                                   `json:"bytes_read"`
+	ResponseBytes                 *int64                                   `json:"response_bytes"`
+	DetailURLCount                *int                                     `json:"detail_url_count"`
+	VideoSourceCount              *int                                     `json:"video_source_count"`
+	TargetMatchCount              *int                                     `json:"target_match_count"`
+	ResponseSnippetRedacted       *string                                  `json:"response_snippet_redacted"`
+	FetchHookInstalled            *bool                                    `json:"fetch_hook_installed"`
+	XHRHookInstalled              *bool                                    `json:"xhr_hook_installed"`
+	Protocol                      *string                                  `json:"protocol"`
+	Extension                     *string                                  `json:"extension"`
+	VideoCodec                    *string                                  `json:"video_codec"`
+	AudioCodec                    *string                                  `json:"audio_codec"`
+	DurationSeconds               *int                                     `json:"duration_seconds"`
+	CDNAllowed                    *bool                                    `json:"cdn_allowed"`
+	SignatureDeadlineUnix         *int64                                   `json:"signature_deadline_unix"`
+	CandidateRejections           []platformfetch.DouyinCandidateRejection `json:"candidate_rejections"`
 }
 
 type AttemptDiagnostics struct {
@@ -295,6 +297,23 @@ func SanitizeDiagnosticStage(stage DiagnosticStage) DiagnosticStage {
 	stage.Extension = safeEnum(stage.Extension, "mp4", "m4a", "webm", "unknown")
 	stage.VideoCodec = safeCodec(stage.VideoCodec)
 	stage.AudioCodec = safeCodec(stage.AudioCodec)
+	if len(stage.CandidateRejections) > 6 {
+		stage.CandidateRejections = stage.CandidateRejections[:6]
+	}
+	for index := range stage.CandidateRejections {
+		rejection := &stage.CandidateRejections[index]
+		host := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(rejection.Host), "."))
+		if len(host) > 253 || strings.ContainsAny(host, " /\\%:@?#\r\n\t") {
+			rejection.Host = ""
+		} else {
+			rejection.Host = host
+		}
+		switch rejection.Reason {
+		case "scheme", "host_not_allowed", "expired", "too_long", "redirect_unresolved":
+		default:
+			rejection.Reason = "host_not_allowed"
+		}
+	}
 	return stage
 }
 
@@ -406,12 +425,7 @@ func sanitizeDiagnosticPath(host, escapedPath string) string {
 }
 
 func isDouyinCDNHost(host string) bool {
-	for _, cdn := range compatibilityCDNSuffixes {
-		if cdn.douyin && strings.HasSuffix(host, cdn.suffix) && host != cdn.suffix[1:] {
-			return true
-		}
-	}
-	return false
+	return platformfetch.IsDouyinCDNHost(host)
 }
 
 func sensitivePathSegment(value string) bool {

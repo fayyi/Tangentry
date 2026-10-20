@@ -3,7 +3,10 @@ package playback
 import (
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
+
+	"tangentry/internal/platformfetch"
 )
 
 // Only API-supplied, allowlisted addresses for this one representation are
@@ -11,6 +14,13 @@ import (
 func normalizeSource(source Source) (Source, error) {
 	if source.Platform == "" {
 		source.Platform = "bilibili"
+	}
+	if source.Platform == "douyin" {
+		value, reason := platformfetch.NormalizeDouyinMediaURL(source.URL, time.Now())
+		if reason != "" {
+			return Source{}, ErrUnavailable
+		}
+		source.URL = value
 	}
 	if !allowedFor(source.Platform, source.URL) {
 		return Source{}, ErrUnavailable
@@ -22,6 +32,13 @@ func normalizeSource(source Source) (Source, error) {
 	seen := map[string]bool{source.URL: true}
 	backups := make([]string, 0, 3)
 	for _, raw := range source.Backups {
+		if source.Platform == "douyin" {
+			normalized, reason := platformfetch.NormalizeDouyinMediaURL(raw, now)
+			if reason != "" {
+				continue
+			}
+			raw = normalized
+		}
 		deadline := sourceDeadline(raw)
 		if allowedFor(source.Platform, raw) && (deadline.IsZero() || deadline.After(now)) && !seen[raw] {
 			seen[raw] = true
@@ -39,6 +56,9 @@ func sourceDeadline(raw string) time.Time {
 	u, err := url.Parse(raw)
 	if err != nil {
 		return time.Time{}
+	}
+	if platformfetch.IsDouyinCDNHost(strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))) {
+		return platformfetch.DouyinMediaDeadline(raw)
 	}
 	value, err := strconv.ParseInt(u.Query().Get("deadline"), 10, 64)
 	if err != nil || value <= 0 {

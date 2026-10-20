@@ -38,6 +38,33 @@ func TestDouyinCaptureObserverProjectsTargetForFetchAndXHR(t *testing.T) {
 	}
 }
 
+func TestDouyinObserverReinstallsWhenLegacyInstalledFlagExists(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is unavailable for isolated capture observer fixture")
+	}
+	harness := `
+global.location={href:'https://www.douyin.com/video/6961737553342991651',pathname:'/video/6961737553342991651'};
+global.sessionStorage={getItem(){return '6961737553342991651'}};
+class FixtureXHR{open(){}send(){}}
+global.XMLHttpRequest=FixtureXHR;
+global.window={__tangentryDouyinFeedInstalled:true,__tangentryDouyinFeed:[],__tangentryDouyinMedia:[],fetch(){return Promise.resolve({});}};
+` + douyinFeedCaptureScript + `
+console.log(JSON.stringify({version:window.__tangentryDouyinObserverVersion,fetch:window.fetch===window.__tangentryDouyinFetchWrapper,xhr:XMLHttpRequest.prototype.send===window.__tangentryDouyinXHRSend}));`
+	output, err := exec.Command(node, "-e", harness).CombinedOutput()
+	if err != nil {
+		t.Fatalf("observer fixture failed: %s", strings.TrimSpace(string(output)))
+	}
+	var result struct {
+		Version int  `json:"version"`
+		Fetch   bool `json:"fetch"`
+		XHR     bool `json:"xhr"`
+	}
+	if err := json.Unmarshal(output, &result); err != nil || result.Version != 2 || !result.Fetch || !result.XHR {
+		t.Fatalf("legacy observer flag prevented install: %+v err=%v output=%s", result, err, output)
+	}
+}
+
 type douyinObserverFixture struct {
 	RequestURL    string `json:"requestURL"`
 	ContentType   string `json:"contentType"`
@@ -424,6 +451,132 @@ func TestMediaCaptureDiagnosticsReportFilteredCandidates(t *testing.T) {
 	}
 }
 
+func TestDouyinMediaNormalizationUpgradesHTTPAndUsesSharedHosts(t *testing.T) {
+	for _, raw := range []string{"http://v26-web.douyinvod.com/video.mp4", "http://media.zjcdn.com/video.mp4", "https://cdn.douyinvod.net/video.mp4"} {
+		got := safeDouyinMedia([]string{raw})
+		if len(got) != 1 || !strings.HasPrefix(got[0], "https://") {
+			t.Fatalf("allowlisted candidate not normalized: %q -> %v", raw, got)
+		}
+	}
+	if got := safeDouyinMedia([]string{"https://media.evil.example/video.mp4"}); len(got) != 0 {
+		t.Fatalf("non-allowlisted host accepted: %v", got)
+	}
+}
+
+func TestDouyinMediaRejectsExpiredXExpiresAndReportsSafeRejection(t *testing.T) {
+	url := "https://v26-web.douyinvod.com/video.mp4?x-expires=1&signature=private"
+	filtered, rejected := filterDouyinMedia([]string{url})
+	if len(filtered) != 0 || len(rejected) != 1 || rejected[0].Host != "v26-web.douyinvod.com" || rejected[0].Reason != "expired" {
+		t.Fatalf("expired candidate result = %v, %+v", filtered, rejected)
+	}
+	if strings.Contains(strings.Join([]string{rejected[0].Host, rejected[0].Reason}, " "), "private") {
+		t.Fatal("candidate rejection leaked query data")
+	}
+}
+
+func TestDouyinPlayRedirectResolutionScriptRequiresSameOriginAndManualPageContext(t *testing.T) {
+	code := douyinPlayRedirectScript([]string{"https://www.douyin.com/aweme/v1/play/?video_id=fixture"})
+	for _, expected := range []string{"target.origin!==location.origin", "redirect:'follow'", "credentials:'same-origin'", "response.url", "'HEAD'", "'GET'"} {
+		if !strings.Contains(code, expected) {
+			t.Fatalf("redirect resolver missing %q", expected)
+		}
+	}
+	if !isDouyinPlayRedirect("https://aweme.snssdk.com/aweme/v1/play/?video_id=fixture") || isDouyinPlayRedirect("https://www.douyin.com/aweme/v1/feed/?token=fixture") {
+		t.Fatal("play redirect URL recognition is incorrect")
+	}
+	filtered, rejected, err := resolveAndFilterDouyinMedia(context.Background(), nil, []string{"https://www.douyin.com/aweme/v1/play/?video_id=fixture"})
+	if err != nil || len(filtered) != 0 || len(rejected) != 1 || rejected[0].Reason != "redirect_unresolved" {
+		t.Fatalf("unresolved redirect result = %v, %+v, %v", filtered, rejected, err)
+	}
+}
+
+func TestDouyinCandidateProjectionCapsAAndCSources(t *testing.T) {
+	status := 200
+	contentType := "application/json"
+	bytes := int64(10)
+	candidates := make([]platformfetch.VideoMediaCandidate, douyinMediaCandidateMax+1)
+	for index := range candidates {
+		candidates[index] = platformfetch.VideoMediaCandidate{ID: "6961737553342991651", URLs: []string{"https://v1.douyinvod.com/video.mp4"}}
+	}
+	capture := platformfetch.VideoMediaCapture{HasResponse: true, Status: &status, ContentType: &contentType, ResponseBytes: &bytes, Candidates: candidates}
+	if got := rawMediaCandidatesFromCaptures([]platformfetch.VideoMediaCapture{capture}, "6961737553342991651"); len(got) != douyinMediaCandidateMax {
+		t.Fatalf("A candidate projection count = %d, want %d", len(got), douyinMediaCandidateMax)
+	}
+	if got := candidatesForID(candidates, "6961737553342991651"); len(got) != douyinDOMCandidateMax {
+		t.Fatalf("C candidate projection count = %d, want %d", len(got), douyinDOMCandidateMax)
+	}
+}
+
+func TestDouyinPlayRedirectResolverAcceptsOnlyResolvedAllowlistedHost(t *testing.T) {
+	pageScript := douyinPlayRedirectScript([]string{"https://www.douyin.com/aweme/v1/play/?video_id=fixture"})
+	if strings.Contains(pageScript, "Authorization") || strings.Contains(pageScript, "Cookie") || !strings.Contains(pageScript, "target.origin!==location.origin") {
+		t.Fatal("play resolver is not same-origin or includes credentials explicitly")
+	}
+	playURL := "https://www.douyin.com/aweme/v1/play/?video_id=fixture"
+	resolved, unresolved, err := applyDouyinPlayRedirects([]string{playURL}, []string{playURL}, []string{"https://cdn.zjcdn.com/video.mp4"})
+	if err != nil || unresolved[playURL] || len(resolved) != 1 || resolved[0] != "https://cdn.zjcdn.com/video.mp4" {
+		t.Fatalf("play URL was not mapped to its final CDN URL: %v %v %v", resolved, unresolved, err)
+	}
+	if got, rejected := filterDouyinMedia(resolved); len(got) != 1 || len(rejected) != 0 {
+		t.Fatalf("resolved allowlisted CDN rejected: %v %+v", got, rejected)
+	}
+	if got, rejected := filterDouyinMedia([]string{"https://evil.example/video.mp4"}); len(got) != 0 || len(rejected) != 1 || rejected[0].Reason != "host_not_allowed" {
+		t.Fatalf("resolved non-allowlisted CDN accepted: %v %+v", got, rejected)
+	}
+	if _, unresolved, err := applyDouyinPlayRedirects([]string{playURL}, []string{playURL}, []string{""}); err != nil || !unresolved[playURL] {
+		t.Fatalf("unresolved play URL did not remain marked: %v %v", unresolved, err)
+	}
+}
+
+func TestDouyinPlayRedirectResolverRunsInPageContextAndResolvesResponseURL(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is unavailable for isolated redirect fixture")
+	}
+	pageScript, err := json.Marshal(douyinPlayRedirectScript([]string{"https://www.douyin.com/aweme/v1/play/?video_id=fixture"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	harness := `
+global.location={href:'https://www.douyin.com/video/6961737553342991651',origin:'https://www.douyin.com'};
+const requests=[];
+global.fetch=async (url,options)=>{requests.push({url,options});return {url:'https://media.zjcdn.com/video.mp4',body:{cancel:async()=>{}}};};
+(async()=>{const result=await eval(` + string(pageScript) + `);console.log(JSON.stringify({result:result,requests:requests}));})().catch(error=>{console.error(error);process.exitCode=1;});`
+	output, err := exec.Command(node, "-e", harness).CombinedOutput()
+	if err != nil {
+		t.Fatalf("redirect fixture failed: %s", strings.TrimSpace(string(output)))
+	}
+	var result struct {
+		Result   []string `json:"result"`
+		Requests []struct {
+			URL     string `json:"url"`
+			Options struct {
+				Method      string `json:"method"`
+				Redirect    string `json:"redirect"`
+				Credentials string `json:"credentials"`
+			} `json:"options"`
+		} `json:"requests"`
+	}
+	if err := json.Unmarshal(output, &result); err != nil || len(result.Result) != 1 || result.Result[0] != "https://media.zjcdn.com/video.mp4" || len(result.Requests) != 1 || result.Requests[0].Options.Method != "HEAD" || result.Requests[0].Options.Redirect != "follow" || result.Requests[0].Options.Credentials != "same-origin" {
+		t.Fatalf("page-context play redirect result = %+v err=%v output=%s", result, err, output)
+	}
+}
+
+func TestDouyinCandidateSelectionFallsThroughExpiredAAndUsesABCOrder(t *testing.T) {
+	got := selectDouyinMediaCandidates(
+		[]string{"https://v1.douyinvod.com/expired.mp4?deadline=1"},
+		[]string{"https://media.zjcdn.com/b.mp4"},
+		[]string{"https://v1.douyinvod.com/c.mp4"},
+	)
+	if len(got) != 1 || got[0] != "https://media.zjcdn.com/b.mp4" {
+		t.Fatalf("expired A did not fall through to B: media=%v", got)
+	}
+	got = selectDouyinMediaCandidates(nil, nil, []string{"https://v1.douyinvod.com/c.mp4"})
+	if len(got) != 1 || got[0] != "https://v1.douyinvod.com/c.mp4" {
+		t.Fatalf("C did not remain last in A -> B -> C selection: %v", got)
+	}
+}
+
 func TestMediaCapturesDoneRecognizesMatchedJSONWithoutMedia(t *testing.T) {
 	status := 200
 	contentType := "application/json"
@@ -454,13 +607,13 @@ func TestDouyinMediaFallbackRequiresConfirmedSafeContext(t *testing.T) {
 }
 
 func TestSelectDouyinMediaCandidatesUsesReliabilityOrder(t *testing.T) {
-	if got := selectDouyinMediaCandidates([]string{"detail-a"}, []string{"feed-b"}, []string{"dom-c"}); len(got) != 1 || got[0] != "detail-a" {
+	if got := selectDouyinMediaCandidates([]string{"https://v1.douyinvod.com/detail.mp4"}, []string{"https://v1.douyinvod.com/feed.mp4"}, []string{"https://v1.douyinvod.com/dom.mp4"}); len(got) != 1 || got[0] != "https://v1.douyinvod.com/detail.mp4" {
 		t.Fatalf("A candidate did not win: %v", got)
 	}
-	if got := selectDouyinMediaCandidates(nil, []string{"feed-b"}, []string{"dom-c"}); len(got) != 1 || got[0] != "feed-b" {
+	if got := selectDouyinMediaCandidates(nil, []string{"https://v1.douyinvod.com/feed.mp4"}, []string{"https://v1.douyinvod.com/dom.mp4"}); len(got) != 1 || got[0] != "https://v1.douyinvod.com/feed.mp4" {
 		t.Fatalf("B candidate did not win over C: %v", got)
 	}
-	if got := selectDouyinMediaCandidates(nil, nil, []string{"dom-c"}); len(got) != 1 || got[0] != "dom-c" {
+	if got := selectDouyinMediaCandidates(nil, nil, []string{"https://v1.douyinvod.com/dom.mp4"}); len(got) != 1 || got[0] != "https://v1.douyinvod.com/dom.mp4" {
 		t.Fatalf("C candidate was not used as final fallback: %v", got)
 	}
 }
@@ -677,6 +830,7 @@ func TestPlatformPageURLAllowed(t *testing.T) {
 		{"douyin", "https://www.douyin.com/", true},
 		{"douyin", "https://douyin.com/", false},
 		{"douyin", "https://passport.douyin.com/", false},
+		{"douyin", "https://aweme.snssdk.com/aweme/v1/play/?video_id=fixture", true},
 		{"douyin", "https://www.douyin.com.evil.example/", false},
 		{"xiaohongshu", "https://www.xiaohongshu.com/", true},
 		{"xiaohongshu", "https://xiaohongshu.com/", false},

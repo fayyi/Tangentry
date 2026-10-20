@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"tangentry/internal/discovery"
+	"tangentry/internal/platformfetch"
 )
 
 func TestDiagnosticSanitizersRemoveSensitiveURLAndStderrData(t *testing.T) {
@@ -32,6 +33,19 @@ func TestDiagnosticSanitizersRemoveSensitiveURLAndStderrData(t *testing.T) {
 		if strings.Contains(*got, secret) {
 			t.Fatalf("sanitized stderr leaked %q: %s", secret, *got)
 		}
+	}
+}
+
+func TestCandidateRejectionsAreBoundedAndCredentialFree(t *testing.T) {
+	rejections := make([]platformfetch.DouyinCandidateRejection, 8)
+	for index := range rejections {
+		rejections[index] = platformfetch.DouyinCandidateRejection{Host: "V1.ZJCDN.com.", Reason: "expired"}
+	}
+	rejections[0].Host = "cdn.example.com/path?token=private"
+	rejections[1].Reason = "unsafe"
+	stage := SanitizeDiagnosticStage(DiagnosticStage{Stage: "webview_detail_capture", Outcome: OutcomeNoURL, CandidateRejections: rejections})
+	if len(stage.CandidateRejections) != 6 || stage.CandidateRejections[0].Host != "" || stage.CandidateRejections[1].Reason != "host_not_allowed" || stage.CandidateRejections[2].Host != "v1.zjcdn.com" {
+		t.Fatalf("candidate rejections were not sanitized: %+v", stage.CandidateRejections)
 	}
 }
 

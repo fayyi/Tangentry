@@ -182,6 +182,8 @@ func TestCompatibilityAllowsDouyinCDNAndRejectsLookalikes(t *testing.T) {
 		{raw: "https://media.bytecdn.cn/video.mp4", want: true},
 		{raw: "https://v2.zjcdn.com/video.mp4", want: true},
 		{raw: "https://v3.amemv.com/video.mp4", want: true},
+		{raw: "https://media.zjcdn.com/video.mp4", want: true},
+		{raw: "https://cdn.douyinvod.net/video.mp4", want: true},
 		{raw: "https://douyinvod.com/video.mp4", want: false},
 		{raw: "https://douyinvod.com.evil.example/video.mp4", want: false},
 		{raw: "http://v3.douyinvod.com/video.mp4", want: false},
