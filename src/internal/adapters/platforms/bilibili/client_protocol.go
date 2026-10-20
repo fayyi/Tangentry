@@ -38,7 +38,7 @@ func (c *Client) getFrom(ctx context.Context, origin, referer, endpoint string, 
 	if body.Code != 0 && !(allowAnonymousNav && body.Code == -101) {
 		switch body.Code {
 		case -352, -412, -799, -509:
-			return c.restricted()
+			return c.restrictedAPI(body.Code)
 		case -101:
 			return &discovery.PlatformError{Message: "此内容需要 B站登录态，或现有登录态已过期。"}
 		case -404, 62002:
@@ -99,7 +99,7 @@ func (c *Client) fetchEnvelope(ctx context.Context, origin, referer, endpoint st
 	}
 	defer response.Body.Close()
 	if response.StatusCode == http.StatusPreconditionFailed || response.StatusCode == http.StatusTooManyRequests || response.StatusCode == http.StatusForbidden {
-		return envelope{}, c.restricted()
+		return envelope{}, c.restrictedHTTP(response.StatusCode, safeSubtitleText(response.Header.Get("Content-Type"), 80))
 	}
 	if response.StatusCode != http.StatusOK {
 		return envelope{}, &discovery.PlatformError{Message: "B站服务暂时不可用，请稍后重试。"}
@@ -112,10 +112,30 @@ func (c *Client) fetchEnvelope(ctx context.Context, origin, referer, endpoint st
 }
 
 func (c *Client) restricted() error {
+	return c.restrictedFor("", "")
+}
+
+func (c *Client) restrictedAPI(code int) error {
+	return c.restrictedFor(strconv.Itoa(code), "接口状态 "+strconv.Itoa(code))
+}
+
+func (c *Client) restrictedHTTP(status int, contentType string) error {
+	cause := "HTTP " + strconv.Itoa(status)
+	if contentType != "" {
+		cause += " " + contentType
+	}
+	return c.restrictedFor(strconv.Itoa(status), cause)
+}
+
+func (c *Client) restrictedFor(code, cause string) error {
 	c.mu.Lock()
 	c.restrictedUntil = time.Now().Add(time.Minute)
 	c.mu.Unlock()
-	return &discovery.PlatformError{Message: "B站暂时限制了请求。请等待一分钟后重试；登录态或网络环境也可能影响访问。", Restricted: true}
+	message := "B站暂时限制了请求。请等待一分钟后重试；登录态或网络环境也可能影响访问。"
+	if cause != "" {
+		message = "B站暂时限制了请求（" + cause + "），请等待一分钟后重试；登录态或网络环境也可能影响访问。"
+	}
+	return &discovery.PlatformError{Message: message, Code: code, Restricted: true}
 }
 
 func (c *Client) mixinKey(ctx context.Context) (string, error) {

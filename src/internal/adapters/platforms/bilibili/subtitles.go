@@ -73,7 +73,15 @@ func (c *Client) ReadSubtitles(ctx context.Context, bvid string) (subtitles.Docu
 	}
 	var view subtitleView
 	if err := c.get(ctx, "/x/web-interface/view", url.Values{"bvid": {bvid}}, &view, false); err != nil {
-		return subtitles.Document{}, err
+		if ctx.Err() != nil {
+			return subtitles.Document{}, ctx.Err()
+		}
+		status := "error"
+		if isSubtitleRateLimited(err) {
+			status = "rate_limited"
+		}
+		code, message := platformSubtitleError(err)
+		return subtitles.Document{VideoID: bvid, Part: 1, Status: status, ErrorCode: code, ErrorMessage: message, Tracks: []subtitles.Track{}}, nil
 	}
 	parts := view.Pages
 	if len(parts) == 0 && view.CID > 0 {
@@ -89,6 +97,7 @@ func (c *Client) ReadSubtitles(ctx context.Context, bvid string) (subtitles.Docu
 
 	doc := subtitles.Document{VideoID: bvid, Part: 1, Status: "error", Tracks: []subtitles.Track{}, Parts: make([]subtitles.Part, 0, len(parts))}
 	coolingDown := false
+	var restrictionCode int
 	for i, page := range parts {
 		part := subtitles.Part{CID: page.CID, Page: page.Page, Title: safeSubtitleText(page.Title, 120), Status: "error", Languages: []subtitles.Language{}, Tracks: []subtitles.Track{}}
 		if part.Page < 1 {
@@ -101,7 +110,8 @@ func (c *Client) ReadSubtitles(ctx context.Context, bvid string) (subtitles.Docu
 		}
 		if coolingDown {
 			part.Status = "rate_limited"
-			part.ErrorMessage = "B站暂时限制访问，请稍后重试。"
+			part.ErrorMessage = "B站暂时限制访问（" + strconv.Itoa(restrictionCode) + "），请稍后重试。"
+			part.ErrorCode = restrictionCode
 			doc.Parts = append(doc.Parts, part)
 			continue
 		}
@@ -114,8 +124,8 @@ func (c *Client) ReadSubtitles(ctx context.Context, bvid string) (subtitles.Docu
 			part.ErrorCode, part.ErrorMessage = platformSubtitleError(err)
 			if isSubtitleRateLimited(err) {
 				part.Status = "rate_limited"
-				part.ErrorMessage = "B站暂时限制访问，请稍后重试。"
 				coolingDown = true
+				restrictionCode = part.ErrorCode
 			}
 			doc.Parts = append(doc.Parts, part)
 			continue
@@ -202,7 +212,7 @@ func (c *Client) playerSubtitles(ctx context.Context, endpoint string, params ur
 	}
 	if body.Code != 0 {
 		if body.Code == -352 || body.Code == -412 || body.Code == -799 || body.Code == -509 {
-			return playerSubtitleResponse{}, c.restricted()
+			return playerSubtitleResponse{}, c.restrictedAPI(body.Code)
 		}
 		return playerSubtitleResponse{}, apiSubtitleError{code: body.Code, message: body.Message}
 	}
@@ -237,7 +247,11 @@ func platformSubtitleError(err error) (int, string) {
 	}
 	var platform *discovery.PlatformError
 	if errors.As(err, &platform) {
-		return 0, safeSubtitleText(platform.Message, 160)
+		code, _ := strconv.Atoi(platform.Code)
+		if code < -100000 || code > 100000 {
+			code = 0
+		}
+		return code, safeSubtitleText(platform.Message, 160)
 	}
 	return 0, safeSubtitleText(err.Error(), 160)
 }
@@ -255,7 +269,10 @@ func (c *Client) buildSubtitlePart(ctx context.Context, candidates []playerSubti
 		}
 		label := safeSubtitleText(html.UnescapeString(candidate.Label), 200)
 		if label == "" {
-			label = language
+			label = subtitleLanguageLabel(language)
+			if label == "" {
+				label = language
+			}
 		}
 		source := subtitleSource(candidate)
 		hasURL := strings.TrimSpace(candidate.URL) != ""
@@ -322,7 +339,7 @@ func isSubtitleRateLimited(err error) bool {
 }
 
 func subtitleSource(candidate playerSubtitle) string {
-	if candidate.AIType > 0 || candidate.AIStatus > 0 || candidate.Type == 1 {
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(candidate.Language)), "ai-") || candidate.AIType > 0 || candidate.AIStatus > 0 || candidate.Type == 1 {
 		return "ai"
 	}
 	return "cc"
@@ -346,8 +363,8 @@ func subtitleTrackPriority(track subtitles.Track) int {
 }
 
 func subtitlePriority(language, source string) int {
-	language = strings.ToLower(strings.NewReplacer("_", "-", "-orig", "").Replace(language))
-	chinese := strings.HasPrefix(language, "zh")
+	language = normalizedSubtitleLanguage(language)
+	chinese := isChineseSubtitleLanguage(language)
 	if chinese && source == "cc" {
 		return 0
 	}
@@ -355,6 +372,32 @@ func subtitlePriority(language, source string) int {
 		return 1
 	}
 	return 2
+}
+
+func normalizedSubtitleLanguage(language string) string {
+	language = strings.ToLower(strings.ReplaceAll(strings.TrimSpace(language), "_", "-"))
+	language = strings.TrimPrefix(language, "ai-")
+	return strings.TrimSuffix(language, "-orig")
+}
+
+func isChineseSubtitleLanguage(language string) bool {
+	language = normalizedSubtitleLanguage(language)
+	return language == "zh" || strings.HasPrefix(language, "zh-")
+}
+
+func isTraditionalChineseSubtitleLanguage(language string) bool {
+	language = normalizedSubtitleLanguage(language)
+	return language == "zh-hant" || strings.HasPrefix(language, "zh-hant-") || language == "zh-tw" || strings.HasPrefix(language, "zh-tw-") || language == "zh-hk" || strings.HasPrefix(language, "zh-hk-") || language == "zh-mo" || strings.HasPrefix(language, "zh-mo-")
+}
+
+func subtitleLanguageLabel(language string) string {
+	if isTraditionalChineseSubtitleLanguage(language) {
+		return "繁体中文"
+	}
+	if isChineseSubtitleLanguage(language) {
+		return "简体中文"
+	}
+	return ""
 }
 
 func (c *Client) fetchSubtitleCues(ctx context.Context, raw string) ([]subtitles.Cue, error) {
@@ -411,6 +454,11 @@ func (c *Client) fetchSubtitleCues(ctx context.Context, raw string) ([]subtitles
 func validateSubtitleURL(raw string) (string, error) {
 	if len(raw) == 0 || len(raw) > 2048 {
 		return "", errors.New("invalid subtitle URL")
+	}
+	if strings.HasPrefix(raw, "//") {
+		raw = "https:" + raw
+	} else if strings.HasPrefix(strings.ToLower(raw), "http://") {
+		raw = "https://" + raw[len("http://"):]
 	}
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Scheme != "https" || parsed.User != nil || parsed.Port() != "" || parsed.Hostname() == "" || !subtitleCDNHosts[strings.ToLower(parsed.Hostname())] || parsed.Opaque != "" {

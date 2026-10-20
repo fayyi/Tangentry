@@ -201,14 +201,85 @@ func TestReadSubtitlesOnlyDownloadsFirstPartBodyAndMarksMixedAIMismatch(t *testi
 }
 
 func TestSubtitleURLValidationAndSafeErrorText(t *testing.T) {
-	for _, raw := range []string{"http://subtitle.hdslb.com/a", "https://evil.invalid/a", "https://subtitle.hdslb.com:8443/a", "https://user:pass@subtitle.hdslb.com/a"} {
+	for _, raw := range []string{"https://evil.invalid/a", "https://subtitle.hdslb.com:8443/a", "https://user:fixture@subtitle.hdslb.com/a"} {
 		if _, err := validateSubtitleURL(raw); err == nil {
 			t.Errorf("accepted unsafe subtitle URL %q", raw)
+		}
+	}
+	for raw, want := range map[string]string{
+		"//aisubtitle.hdslb.com/caption.json?fixture=1": "https://aisubtitle.hdslb.com/caption.json?fixture=1",
+		"http://subtitle.hdslb.com/caption.json":        "https://subtitle.hdslb.com/caption.json",
+	} {
+		if got, err := validateSubtitleURL(raw); err != nil || got != want {
+			t.Errorf("validateSubtitleURL(%q) = %q, %v; want %q", raw, got, err, want)
 		}
 	}
 	if safe := safeSubtitleText("Cookie=secret bili_jct=synthetic-value https://subtitle.hdslb.com/private?token=x 请登录", 100); strings.Contains(safe, "secret") || strings.Contains(safe, "synthetic-value") || strings.Contains(safe, "https://") || !strings.Contains(safe, "已隐藏") {
 		t.Fatalf("unsafe message was not redacted: %q", safe)
 	}
+}
+
+func TestReadSubtitlesAcceptsProtocolRelativeAIChineseTrack(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/x/web-interface/view":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"title":"课程","cid":111,"pages":[]}}`))
+		case "/x/player/v2":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"subtitle":{"list":[{"lan":"ai-zh","lan_doc":"简体中文 AI","subtitle_url":"//aisubtitle.hdslb.com/caption.json?fixture=1"},{"lan":"en-US","lan_doc":"English","subtitle_url":"https://subtitle.hdslb.com/en.json"}]}}}`))
+		case "/caption.json", "/en.json":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"body":[{"from":0,"to":1,"content":"夹具字幕正文"}]}`))
+		default:
+			t.Errorf("unexpected request: %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	})
+	client := NewClient(subtitleFixtureClient(handler), "")
+	client.baseURL = "https://api.fixture.invalid"
+	doc, err := client.ReadSubtitles(context.Background(), "BV17x411w7KC")
+	if err != nil || doc.Status != "ai" || len(doc.Tracks) != 2 {
+		t.Fatalf("protocol-relative subtitle track was not read: %+v, %v", doc, err)
+	}
+	if doc.Tracks[0].Language != "ai-zh" || doc.Tracks[0].Source != "ai" || !doc.Tracks[0].Automatic || doc.Tracks[0].Label != "简体中文 AI" || doc.Tracks[0].Cues[0].Text != "夹具字幕正文" {
+		t.Fatalf("AI Chinese identity or content lost: %+v", doc.Tracks[0])
+	}
+	if subtitlePriority("ai-zh", "ai") >= subtitlePriority("en-US", "cc") {
+		t.Fatal("ai-zh was not prioritized as Chinese")
+	}
+}
+
+func TestReadSubtitlesMaps412HTMLAndBiliRestrictionCodes(t *testing.T) {
+	t.Run("412 html view", func(t *testing.T) {
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusPreconditionFailed)
+			_, _ = w.Write([]byte("<html>fixture block page</html>"))
+		})
+		client := NewClient(subtitleFixtureClient(handler), "")
+		client.baseURL = "https://api.fixture.invalid"
+		doc, err := client.ReadSubtitles(context.Background(), "BV17x411w7KC")
+		if err != nil || doc.Status != "rate_limited" || doc.ErrorCode != http.StatusPreconditionFailed || !strings.Contains(doc.ErrorMessage, "HTTP 412 text/html") || strings.Contains(doc.ErrorMessage, "fixture block page") {
+			t.Fatalf("412 HTML response was not safely classified: %+v, %v", doc, err)
+		}
+	})
+	t.Run("api -352", func(t *testing.T) {
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/x/web-interface/view":
+				_, _ = w.Write([]byte(`{"code":0,"data":{"title":"夹具","cid":111}}`))
+			case "/x/player/v2":
+				_, _ = w.Write([]byte(`{"code":-352,"message":"risk fixture"}`))
+			default:
+				t.Errorf("unexpected request: %s", r.URL.Path)
+			}
+		})
+		client := NewClient(subtitleFixtureClient(handler), "")
+		client.baseURL = "https://api.fixture.invalid"
+		doc, err := client.ReadSubtitles(context.Background(), "BV17x411w7KC")
+		if err != nil || doc.Status != "rate_limited" || doc.ErrorCode != -352 || strings.Contains(doc.ErrorMessage, "risk fixture") {
+			t.Fatalf("-352 response was not safely classified: %+v, %v", doc, err)
+		}
+	})
 }
 
 func TestSubtitleCDNRedirectIsNotFollowed(t *testing.T) {
@@ -227,6 +298,16 @@ func TestSubtitleCDNRedirectIsNotFollowed(t *testing.T) {
 func TestSubtitlePriorityAndMismatchArePure(t *testing.T) {
 	if subtitlePriority("zh-CN", "cc") >= subtitlePriority("zh-Hans", "ai") || subtitlePriority("zh-Hans", "ai") >= subtitlePriority("en", "cc") {
 		t.Fatal("subtitle priority is not CC zh, AI zh, then other")
+	}
+	for _, language := range []string{"ai-zh", "zh-CN", "zh-Hans", "zh-Hant"} {
+		if !isChineseSubtitleLanguage(language) {
+			t.Errorf("%q was not recognized as Chinese", language)
+		}
+	}
+	for _, language := range []string{"ai-zh-Hant", "zh-TW", "zh-HK"} {
+		if !isTraditionalChineseSubtitleLanguage(language) {
+			t.Errorf("%q was not recognized as traditional Chinese", language)
+		}
 	}
 	track := subtitlesTrackForMismatchFixture()
 	if !aiSubtitleMismatch(track, "量子计算机的奇妙运行方式") || aiSubtitleMismatch(track, "课程讲解欢迎大家学习") {

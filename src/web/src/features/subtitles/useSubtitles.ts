@@ -5,7 +5,7 @@ import { cachedSubtitles, cacheSubtitles, clearSubtitleCache } from './platformC
 
 export function subtitlePriority(track: { language: string; automatic?: boolean; source?: string }) {
   const language = track.language.toLowerCase().replace(/^ai-/, '').replace(/-orig$/, '').replaceAll('_', '-')
-  const chinese = /^(zh|zh-hans|zh-cn|zh-sg)(?:-|$)/.test(language)
+  const chinese = /^zh(?:-|$)/.test(language)
   if (chinese && track.source === 'cc') return 0
   if (chinese && (track.source === 'ai' || track.automatic)) return 1
   return 2

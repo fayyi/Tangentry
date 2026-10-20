@@ -19,7 +19,7 @@ function validDocument(value: unknown): value is SubtitleDocument {
   const validLanguage = (value: { language: string; label: string; automatic?: boolean; source?: string; hasUrl?: boolean }) =>
     value && typeof value.language === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value.language) &&
     typeof value.label === 'string' && value.label.length <= 200 && (value.automatic === undefined || typeof value.automatic === 'boolean') &&
-    (value.source === undefined || value.source === 'cc' || value.source === 'ai') && (value.hasUrl === undefined || typeof value.hasUrl === 'boolean')
+    (value.source === undefined || value.source === 'cc' || value.source === 'ai' || value.source === 'yt-dlp') && (value.hasUrl === undefined || typeof value.hasUrl === 'boolean')
   const validTrack = (track: SubtitleDocument['tracks'][number], requireCues: boolean) => {
     if (!validLanguage(track) || (track.mismatch !== undefined && typeof track.mismatch !== 'boolean') || !Array.isArray(track.cues) || requireCues && !track.cues.length) return false
     let previous = -1
@@ -101,7 +101,7 @@ export function cacheSubtitles(key: string, document: SubtitleDocument) {
   if (!validDocument(document)) return
   if (document.status === 'rate_limited' || document.parts?.some(part => part.status === 'rate_limited')) return
   // Store only the public caption contract, never arbitrary response fields.
-  const language = (value: { language: string; label: string; automatic?: boolean; source?: 'cc' | 'ai'; hasUrl?: boolean }) =>
+  const language = (value: { language: string; label: string; automatic?: boolean; source?: 'cc' | 'ai' | 'yt-dlp'; hasUrl?: boolean }) =>
     ({ language: value.language, label: value.label, automatic: value.automatic ?? false, ...(value.source ? { source: value.source } : {}), ...(value.hasUrl !== undefined ? { hasUrl: value.hasUrl } : {}) })
   const track = (value: SubtitleDocument['tracks'][number]) => ({ ...language(value), ...(value.mismatch !== undefined ? { mismatch: value.mismatch } : {}), cues: value.cues.map(cue => ({ start: cue.start, end: cue.end, text: cue.text })) })
   const clean: SubtitleDocument = {
