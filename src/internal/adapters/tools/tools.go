@@ -35,6 +35,8 @@ type Toolkit struct {
 	youtubeSessions    map[string]*youtubePageState
 	youtubeMu          sync.Mutex
 	youtubeHome        func(context.Context, string, json.RawMessage) youtube.HomeResult
+	youtubePlayer      func(context.Context, string, string) youtube.PlayerResult
+	youtubeHTTP        *http.Client
 	youtubeUserAgent   func() string
 	credentials        *credentials.Store
 	config             config.Config
@@ -159,6 +161,17 @@ func (t *Toolkit) SetDouyinPlaybackResolver(resolve func(context.Context, string
 func (t *Toolkit) SetDouyinHTTPClient(client *http.Client) { t.douyinHTTP = client }
 
 func (t *Toolkit) SetYouTubeUserAgent(provider func() string) { t.youtubeUserAgent = provider }
+
+func (t *Toolkit) SetYouTubeHTTPClient(client *http.Client) {
+	t.youtubeHTTP = client
+	t.youtubePlayer = func(ctx context.Context, videoID, cookie string) youtube.PlayerResult {
+		player := youtube.NewPlayer(client)
+		if t.youtubeUserAgent != nil {
+			player.UserAgent = t.youtubeUserAgent()
+		}
+		return player.Fetch(ctx, videoID, cookie)
+	}
+}
 
 // Invocations snapshot their own platform jar; no shared file is passed to yt-dlp.
 func (t *Toolkit) cookieArguments(rawURL string) ([]string, func(), error) {

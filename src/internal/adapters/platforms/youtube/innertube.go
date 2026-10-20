@@ -141,12 +141,22 @@ func (r *requester) do(ctx context.Context, req *http.Request) ([]byte, error) {
 	}
 	defer response.Body.Close()
 	switch response.StatusCode {
-	case http.StatusUnauthorized, http.StatusForbidden:
+	case http.StatusUnauthorized:
+		r.code = "auth"
+	case http.StatusForbidden:
 		r.code = "auth"
 	case http.StatusTooManyRequests:
 		r.code = "restricted"
 	}
 	if response.StatusCode < 200 || response.StatusCode > 299 {
+		if response.StatusCode == http.StatusForbidden || response.StatusCode == http.StatusTooManyRequests {
+			body, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+			if restrictedSignal(string(body)) {
+				r.code = "restricted"
+			} else if response.StatusCode == http.StatusForbidden && loginSignal(string(body)) {
+				r.code = "auth"
+			}
+		}
 		return nil, fmt.Errorf("youtube request failed: HTTP %d", response.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, innertubeBodyLimit+1))
@@ -157,6 +167,11 @@ func (r *requester) do(ctx context.Context, req *http.Request) ([]byte, error) {
 		return nil, errors.New("youtube response is too large")
 	}
 	return body, nil
+}
+
+func loginSignal(value string) bool {
+	lower := strings.ToLower(value)
+	return strings.Contains(lower, "sign in") || strings.Contains(lower, "log in") || strings.Contains(lower, "login required") || strings.Contains(lower, "authentication required") || strings.Contains(lower, "age verification required")
 }
 
 // browse posts one InnerTube browse request with the session context.

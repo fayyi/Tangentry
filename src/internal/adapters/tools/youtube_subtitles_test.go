@@ -4,16 +4,29 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 
+	"tangentry/internal/adapters/platforms/youtube"
 	"tangentry/internal/config"
 	"tangentry/internal/credentials"
 	"tangentry/internal/subtitles"
 )
+
+type youtubeCaptionRoundTrip func(*http.Request) (*http.Response, error)
+
+func (f youtubeCaptionRoundTrip) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func youtubeCaptionResponse(status int, body string, req *http.Request) *http.Response {
+	return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header), Request: req}
+}
 
 func TestYouTubeCaptionFailureSeparatesAccessAndRateLimitsWithoutForwardingLogs(t *testing.T) {
 	for _, test := range []struct {
@@ -148,6 +161,221 @@ func TestYouTubePreferenceMatchesBilibiliLanguagePriority(t *testing.T) {
 	}
 }
 
+func TestYouTubeAutomaticOverlapMergeKeepsTimeAndNormalRepeats(t *testing.T) {
+	cues := []subtitles.Cue{
+		{Start: 4, End: 5, Text: "we are going home"},
+		{Start: 2, End: 3, Text: "we are going"},
+		{Start: 6, End: 7, Text: "we are really home"},
+		{Start: 8, End: 9, Text: "really home today"},
+		{Start: 10, End: 11, Text: "   "},
+		{Start: 15, End: 16, Text: "we are going home"},
+		{Start: 17, End: 18, Text: "你好世界，欢迎"},
+		{Start: 18, End: 19, Text: "世界，欢迎大家"},
+		{Start: 20, End: 21, Text: "thank you"},
+		{Start: 21, End: 22, Text: "thank you very much"},
+	}
+	got := mergeYouTubeAutoCues(cues)
+	if len(got) != 9 || got[0].Text != "we are going" || got[1].Text != "home" || got[1].Start != 4 || got[2].Text != "we are really home" || got[3].Text != "today" || got[3].Start != 8 || got[4].Text != "we are going home" || got[5].Text != "你好世界，欢迎" || got[6].Text != "大家" || got[6].Start != 18 || got[7].Text != "thank you" || got[8].Text != "thank you very much" {
+		t.Fatalf("unexpected merged cues: %+v", got)
+	}
+}
+
+func TestYouTubeInnerTubeCaptionsFallbackAndNoCaptionClassification(t *testing.T) {
+	var calls []string
+	client := &http.Client{Transport: youtubeCaptionRoundTrip(func(req *http.Request) (*http.Response, error) {
+		calls = append(calls, req.URL.Path)
+		if req.URL.Path == "/sw.js_data" {
+			return youtubeCaptionResponse(500, "bootstrap fixture", req), nil
+		}
+		if req.URL.Path == "/youtubei/v1/player" {
+			return youtubeCaptionResponse(200, `{"playabilityStatus":{"status":"OK"},"videoDetails":{"videoId":"jNQXAC9IVRw"},"captions":{"playerCaptionsTracklistRenderer":{"captionTracks":[{"baseUrl":"https://www.youtube.com/api/timedtext?lang=en&v=jNQXAC9IVRw","languageCode":"en","kind":"asr"},{"baseUrl":"https://www.youtube.com/api/timedtext?lang=zh-Hans&v=jNQXAC9IVRw","languageCode":"zh-Hans","kind":"asr"}]}}}`, req), nil
+		}
+		if req.URL.Path == "/api/timedtext" {
+			if req.URL.Query().Get("fmt") != "json3" {
+				t.Fatal("timedtext format was not constrained")
+			}
+			return youtubeCaptionResponse(200, `{"events":[{"tStartMs":0,"dDurationMs":1000,"segs":[{"utf8":"we are going home"}]},{"tStartMs":1000,"dDurationMs":1000,"segs":[{"utf8":"going home now"}]}]}`, req), nil
+		}
+		return nil, errors.New("unexpected local URL")
+	})}
+	kit := New(config.Config{})
+	kit.SetYouTubeHTTPClient(client)
+	doc, err := kit.ReadYouTubeSubtitles(context.Background(), "jNQXAC9IVRw", "")
+	if err != nil || doc.Status != "available" || len(doc.Tracks) != 1 || !doc.Tracks[0].Automatic || doc.Tracks[0].Language != "zh-Hans" || len(doc.Tracks[0].Cues) != 2 || doc.Tracks[0].Cues[1].Text != "now" {
+		t.Fatalf("InnerTube auto captions: %+v %v", doc, err)
+	}
+	if len(calls) != 3 || calls[0] != "/sw.js_data" || calls[1] != "/youtubei/v1/player" || calls[2] != "/api/timedtext" {
+		t.Fatal("unexpected fallback order", calls)
+	}
+
+	kit.youtubePlayer = func(context.Context, string, string) youtube.PlayerResult {
+		return youtube.PlayerResult{Tracks: []youtube.CaptionTrack{{Language: "en", URL: "https://www.youtube.com/api/timedtext?lang=en&v=jNQXAC9IVRw"}}}
+	}
+	kit.status.Tools[0].Available = false
+	kit.youtubeHTTP = &http.Client{Transport: youtubeCaptionRoundTrip(func(req *http.Request) (*http.Response, error) {
+		return youtubeCaptionResponse(http.StatusOK, `{"events":[{"tStartMs":0,"dDurationMs":1000,"segs":[{"utf8":"manual fallback"}]}]}`, req), nil
+	})}
+	doc, err = kit.ReadYouTubeSubtitles(context.Background(), "jNQXAC9IVRw", "")
+	if err != nil || doc.Status != "available" || len(doc.Tracks) != 1 || doc.Tracks[0].Automatic || doc.Tracks[0].Cues[0].Text != "manual fallback" {
+		t.Fatal("InnerTube manual captions were not usable without yt-dlp", doc, err)
+	}
+	kit.youtubePlayer = func(context.Context, string, string) youtube.PlayerResult {
+		return youtube.PlayerResult{Tracks: []youtube.CaptionTrack{}}
+	}
+	doc, err = kit.ReadYouTubeSubtitles(context.Background(), "jNQXAC9IVRw", "")
+	if err != nil || doc.Status != "none" || len(doc.Tracks) != 0 {
+		t.Fatal("confirmed no captions was not returned as none", doc, err)
+	}
+	kit.youtubePlayer = func(context.Context, string, string) youtube.PlayerResult { return youtube.PlayerResult{Error: "auth"} }
+	if _, err = kit.ReadYouTubeSubtitles(context.Background(), "jNQXAC9IVRw", ""); !errors.Is(err, subtitles.ErrLogin) {
+		t.Fatal("login failure was confused with no captions", err)
+	}
+}
+
+func TestYouTubeInnerTubeManualPriorityAndExplicitLanguage(t *testing.T) {
+	kit := New(config.Config{})
+	kit.youtubePlayer = func(context.Context, string, string) youtube.PlayerResult {
+		return youtube.PlayerResult{Tracks: []youtube.CaptionTrack{
+			{Language: "zh-Hans", URL: "https://www.youtube.com/api/timedtext?lang=zh-Hans&v=jNQXAC9IVRw", Kind: "asr"},
+			{Language: "en", URL: "https://www.youtube.com/api/timedtext?lang=en&v=jNQXAC9IVRw"},
+			{Language: "zh-Hant", URL: "https://www.youtube.com/api/timedtext?lang=zh-Hant&v=jNQXAC9IVRw"},
+		}}
+	}
+	if track, ok := choosePlayerCaption([]youtube.CaptionTrack{{Language: "zh-Hans", Kind: "asr"}, {Language: "en"}}, "", true); !ok || track.Language != "zh-Hans" {
+		t.Fatal("ASR track language priority failed", track)
+	}
+	if track, ok := choosePlayerCaption([]youtube.CaptionTrack{{Language: "zh-Hans"}, {Language: "en"}}, "en", false); !ok || track.Language != "en" {
+		t.Fatal("explicit language was not exact", track)
+	}
+}
+
+func TestYouTubeTimedTextUsesScopedCookieAndRejectsUnsafeResponses(t *testing.T) {
+	root := t.TempDir()
+	jar, err := credentials.Open(filepath.Join(root, "credentials"), "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const cookie = "SID=synthetic-timedtext-cookie"
+	if err := jar.Save("youtube", "header", cookie); err != nil {
+		t.Fatal(err)
+	}
+	track := youtube.CaptionTrack{Language: "en", URL: "https://www.youtube.com/api/timedtext?lang=en&v=jNQXAC9IVRw", Kind: "asr"}
+	kit := New(config.Config{})
+	kit.SetCredentials(jar)
+	kit.youtubeUserAgent = func() string { return "Fixture Browser" }
+	cookieHeader := jar.Header("youtube", track.URL)
+	kit.youtubeHTTP = &http.Client{Transport: youtubeCaptionRoundTrip(func(req *http.Request) (*http.Response, error) {
+		if req.Header.Get("Cookie") != cookie || req.Header.Get("Authorization") != "" || req.Header.Get("User-Agent") != "Fixture Browser" || req.URL.Query().Get("fmt") != "json3" {
+			t.Fatal("timedtext request escaped its scoped headers or format")
+		}
+		return youtubeCaptionResponse(http.StatusOK, `{"events":[{"tStartMs":0,"dDurationMs":1000,"segs":[{"utf8":"safe fixture"}]}]}`, req), nil
+	})}
+	doc, err := kit.readInnerTubeCaption(context.Background(), "jNQXAC9IVRw", track, cookieHeader, []youtube.CaptionTrack{track})
+	if err != nil || len(doc.Tracks) != 1 || !doc.Tracks[0].Automatic || doc.Tracks[0].Cues[0].Text != "safe fixture" || strings.Contains(doc.Tracks[0].Cues[0].Text, cookie) {
+		t.Fatalf("timedtext cookie handling: %+v %v", doc, err)
+	}
+	if err := jar.Clear("youtube"); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, test := range []struct {
+		name   string
+		status int
+		body   string
+		want   error
+	}{
+		{"login", http.StatusForbidden, "Sign in to confirm your age", subtitles.ErrLogin},
+		{"restriction", http.StatusForbidden, "Confirm you're not a bot", subtitles.ErrRestricted},
+		{"rate-limit", http.StatusTooManyRequests, "private fixture", subtitles.ErrRestricted},
+		{"redirect", http.StatusFound, "redirect fixture", subtitles.ErrUnavailable},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			kit.youtubeHTTP = &http.Client{Transport: youtubeCaptionRoundTrip(func(req *http.Request) (*http.Response, error) {
+				response := youtubeCaptionResponse(test.status, test.body, req)
+				if test.status == http.StatusFound {
+					response.Header.Set("Location", "https://outside.example/caption")
+				}
+				return response, nil
+			})}
+			_, err := kit.readInnerTubeCaption(context.Background(), "jNQXAC9IVRw", track, cookieHeader, []youtube.CaptionTrack{track})
+			if !errors.Is(err, test.want) || strings.Contains(err.Error(), cookie) || strings.Contains(err.Error(), test.body) {
+				t.Fatalf("unsafe or misclassified timedtext error: %v", err)
+			}
+		})
+	}
+
+	kit.youtubeHTTP = &http.Client{Transport: youtubeCaptionRoundTrip(func(req *http.Request) (*http.Response, error) {
+		return youtubeCaptionResponse(http.StatusOK, strings.Repeat("x", (2<<20)+1), req), nil
+	})}
+	if _, err := kit.readInnerTubeCaption(context.Background(), "jNQXAC9IVRw", track, cookieHeader, nil); !errors.Is(err, subtitles.ErrFormat) {
+		t.Fatal("oversized timedtext response was accepted", err)
+	}
+
+	started := make(chan struct{})
+	kit.youtubeHTTP = &http.Client{Transport: youtubeCaptionRoundTrip(func(req *http.Request) (*http.Response, error) {
+		close(started)
+		<-req.Context().Done()
+		return nil, req.Context().Err()
+	})}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := kit.readInnerTubeCaption(ctx, "jNQXAC9IVRw", track, cookieHeader, nil)
+		done <- err
+	}()
+	<-started
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatal("timedtext request ignored cancellation", err)
+	}
+}
+
+func TestYouTubeFallbackReadsManualThenInnerTubeThenYTDLPAuto(t *testing.T) {
+	root := t.TempDir()
+	exe := filepath.Join(root, "yt-dlp-fixture.sh")
+	logPath := filepath.Join(root, "calls")
+	script := `#!/bin/sh
+if [ "$1" = "--version" ]; then printf 'fixture\n'; exit 0; fi
+write=0
+directory=
+next_paths=0
+for argument in "$@"; do
+  if [ "$argument" = "--write-subs" ] || [ "$argument" = "--write-auto-subs" ]; then write=1; fi
+  if [ "$next_paths" = 1 ]; then directory=$argument; next_paths=0; fi
+  if [ "$argument" = "--paths" ]; then next_paths=1; fi
+done
+if [ "$write" = 1 ]; then
+  printf '%s\n' 'yt-write' >> 'CALL_LOG'
+  printf '%s' '{"events":[{"tStartMs":0,"dDurationMs":1000,"segs":[{"utf8":"automatic fallback"}]}]}' > "$directory/caption.zh-Hans.json3"
+  printf '%s\n' '{"id":"jNQXAC9IVRw","requested_subtitles":{"zh-Hans":{"ext":"json3","url":"https://www.youtube.com/api/timedtext?lang=zh-Hans&v=jNQXAC9IVRw"}}}'
+else
+  printf '%s\n' 'yt-metadata' >> 'CALL_LOG'
+  printf '%s\n' '{"id":"jNQXAC9IVRw","subtitles":{},"automatic_captions":{"zh-Hans":[{"ext":"json3","url":"https://www.youtube.com/api/timedtext?lang=zh-Hans&v=jNQXAC9IVRw"}]}}'
+fi
+`
+	script = strings.ReplaceAll(script, "CALL_LOG", logPath)
+	if err := os.WriteFile(exe, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	kit := New(config.Config{YTDLPPath: exe})
+	var stages []string
+	kit.youtubePlayer = func(context.Context, string, string) youtube.PlayerResult {
+		stages = append(stages, "player")
+		return youtube.PlayerResult{Tracks: []youtube.CaptionTrack{}}
+	}
+	doc, err := kit.ReadYouTubeSubtitles(context.Background(), "jNQXAC9IVRw", "")
+	if err != nil || doc.Status != "available" || len(doc.Tracks) != 1 || !doc.Tracks[0].Automatic || doc.Tracks[0].Language != "zh-Hans" || doc.Tracks[0].Cues[0].Text != "automatic fallback" {
+		t.Fatalf("yt-dlp automatic fallback: %+v %v", doc, err)
+	}
+	if len(stages) != 1 || stages[0] != "player" {
+		t.Fatalf("InnerTube did not run between yt-dlp stages: %v", stages)
+	}
+	raw, err := os.ReadFile(logPath)
+	if err != nil || strings.Split(strings.TrimSpace(string(raw)), "\n")[0] != "yt-metadata" || strings.Split(strings.TrimSpace(string(raw)), "\n")[1] != "yt-metadata" || strings.Split(strings.TrimSpace(string(raw)), "\n")[2] != "yt-write" {
+		t.Fatalf("unexpected yt-dlp fallback invocations: %q %v", raw, err)
+	}
+}
+
 func TestYouTubeJSON3PlainTextAndStrictTimes(t *testing.T) {
 	raw := []byte(`{"events":[{"tStartMs":5000,"dDurationMs":1000,"segs":[{"utf8":"second"}]},{"tStartMs":1250,"dDurationMs":2750,"segs":[{"utf8":"Hello &amp; "},{"utf8":"<script>plain text</script>"}]},{"tStartMs":0,"segs":[{"utf8":"\n"}]}]}`)
 	cues, err := parseJSON3(raw)
@@ -240,20 +468,29 @@ func TestYouTubeToolFetchesOneLanguageAndRemovesPrivateFiles(t *testing.T) {
 		t.Skip("POSIX process fixture")
 	}
 	root := t.TempDir()
-	exe := filepath.Join(root, "fixture.py")
-	script := `#!/usr/bin/env python3
-import sys,pathlib,json
-if '--version' in sys.argv: print('fixture');raise SystemExit
-with open('ARG_LOG','a') as log: log.write(json.dumps(sys.argv[1:])+'\n')
-id='jNQXAC9IVRw'
-track={'ext':'json3','url':'https://www.youtube.com/api/timedtext?lang=en'}
-data={'id':id,'subtitles':{'en':[track],'zh-Hans':[track]},'automatic_captions':{}}
-if '--write-subs' in sys.argv:
-    assert '--no-simulate' in sys.argv and '--skip-download' in sys.argv
-    root=pathlib.Path(sys.argv[sys.argv.index('--paths')+1])
-    (root/'caption.zh-Hans.json3').write_text(json.dumps({'events':[{'tStartMs':0,'dDurationMs':1000,'segs':[{'utf8':'Chinese fixture'}]}]}))
-    data['requested_subtitles']={'zh-Hans':{'ext':'json3','url':track['url']}}
-print(json.dumps(data))
+	captionDirsBefore, _ := filepath.Glob(filepath.Join(os.TempDir(), "tangentry-youtube-captions-*"))
+	captionDirsExisting := make(map[string]bool, len(captionDirsBefore))
+	for _, directory := range captionDirsBefore {
+		captionDirsExisting[directory] = true
+	}
+	exe := filepath.Join(root, "fixture.sh")
+	script := `#!/bin/sh
+if [ "$1" = "--version" ]; then printf 'fixture\n'; exit 0; fi
+printf '%s\n' "$*" >> 'ARG_LOG'
+write=0
+directory=
+next_paths=0
+for argument in "$@"; do
+  if [ "$argument" = "--write-subs" ]; then write=1; fi
+  if [ "$next_paths" = 1 ]; then directory=$argument; next_paths=0; fi
+  if [ "$argument" = "--paths" ]; then next_paths=1; fi
+done
+if [ "$write" = 1 ]; then
+  printf '%s' '{"events":[{"tStartMs":0,"dDurationMs":1000,"segs":[{"utf8":"English fixture"}]}]}' > "$directory/caption.en.json3"
+  printf '%s\n' '{"id":"jNQXAC9IVRw","requested_subtitles":{"en":{"ext":"json3","url":"https://www.youtube.com/api/timedtext?lang=en&v=jNQXAC9IVRw"}}}'
+else
+  printf '%s\n' '{"id":"jNQXAC9IVRw","subtitles":{"en":[{"ext":"json3","url":"https://www.youtube.com/api/timedtext?lang=en&v=jNQXAC9IVRw"}]},"automatic_captions":{"zh-Hans":[{"ext":"json3","url":"https://www.youtube.com/api/timedtext?lang=zh-Hans&v=jNQXAC9IVRw"}]}}'
+fi
 `
 	script = strings.ReplaceAll(script, "ARG_LOG", filepath.Join(root, "arguments"))
 	if err := os.WriteFile(exe, []byte(script), 0700); err != nil {
@@ -269,27 +506,34 @@ print(json.dumps(data))
 	tk := New(config.Config{YTDLPPath: exe})
 	tk.SetCredentials(jar)
 	doc, err := tk.ReadYouTubeSubtitles(context.Background(), "jNQXAC9IVRw", "")
-	if err != nil || doc.Tracks[0].Language != "zh-Hans" || doc.Status != "available" {
+	if err != nil || len(doc.Tracks) != 1 || doc.Tracks[0].Language != "en" || doc.Tracks[0].Automatic || doc.Status != "available" {
 		t.Fatalf("tool caption retrieval: %+v %v", doc, err)
 	}
 	raw, err := os.ReadFile(filepath.Join(root, "arguments"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
-		var args []string
-		if json.Unmarshal([]byte(line), &args) != nil {
-			t.Fatal("fixture arguments")
-		}
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	if len(lines) != 2 {
+		t.Fatal("fixture arguments")
+	}
+	for _, line := range lines {
+		args := strings.Fields(line)
 		for i, arg := range args {
-			if arg == "--cookies" || arg == "--paths" {
+			if (arg == "--cookies" || arg == "--paths") && i+1 < len(args) {
 				if _, err := os.Stat(args[i+1]); !os.IsNotExist(err) {
 					t.Fatal("private temporary artifact retained")
 				}
 			}
 		}
 	}
-	for _, value := range []string{"--skip-download", "--simulate", "--no-simulate", "--sub-format", "json3/srt/vtt", "^zh-Hans$", "youtube:skip=translated_subs"} {
+	captionDirsAfter, _ := filepath.Glob(filepath.Join(os.TempDir(), "tangentry-youtube-captions-*"))
+	for _, directory := range captionDirsAfter {
+		if !captionDirsExisting[directory] {
+			t.Fatal("private caption directory retained", directory)
+		}
+	}
+	for _, value := range []string{"--skip-download", "--simulate", "--no-simulate", "--sub-format", "json3/srt/vtt", "^en$", "youtube:skip=translated_subs"} {
 		if !strings.Contains(string(raw), value) {
 			t.Fatal("missing controlled option", value)
 		}
@@ -312,22 +556,26 @@ func TestYouTubeCaptionFormatFallbacks(t *testing.T) {
 	} {
 		t.Run(tc.ext, func(t *testing.T) {
 			root := t.TempDir()
-			exe := filepath.Join(root, "fixture.py")
-			script := `#!/usr/bin/env python3
-import sys,pathlib,json
-if '--version' in sys.argv: print('fixture');raise SystemExit
-ext=EXTENSION
-data={'id':'jNQXAC9IVRw','subtitles':{'en':[{'ext':ext,'url':'https://www.youtube.com/api/timedtext?lang=en'}]},'automatic_captions':{}}
-if '--write-subs' in sys.argv:
-    assert sys.argv[sys.argv.index('--sub-format')+1]=='json3/srt/vtt'
-    assert '--skip-download' in sys.argv and '--no-simulate' in sys.argv
-    root=pathlib.Path(sys.argv[sys.argv.index('--paths')+1])
-    (root/('caption.en.'+ext)).write_text(CAPTION)
-    data['requested_subtitles']={'en':{'ext':ext,'url':'https://www.youtube.com/api/timedtext?lang=en'}}
-print(json.dumps(data))
+			exe := filepath.Join(root, "fixture.sh")
+			script := `#!/bin/sh
+if [ "$1" = "--version" ]; then printf 'fixture\n'; exit 0; fi
+write=0
+directory=
+next_paths=0
+for argument in "$@"; do
+  if [ "$argument" = "--write-subs" ]; then write=1; fi
+  if [ "$next_paths" = 1 ]; then directory=$argument; next_paths=0; fi
+  if [ "$argument" = "--paths" ]; then next_paths=1; fi
+done
+if [ "$write" = 1 ]; then
+			printf '%s' CAPTION > "$directory/caption.en.EXTENSION"
+  printf '%s\n' '{"id":"jNQXAC9IVRw","requested_subtitles":{"en":{"ext":"EXTENSION","url":"https://www.youtube.com/api/timedtext?lang=en&v=jNQXAC9IVRw"}}}'
+else
+  printf '%s\n' '{"id":"jNQXAC9IVRw","subtitles":{"en":[{"ext":"EXTENSION","url":"https://www.youtube.com/api/timedtext?lang=en&v=jNQXAC9IVRw"}]},"automatic_captions":{}}'
+fi
 `
-			script = strings.ReplaceAll(script, "EXTENSION", strconv.Quote(tc.ext))
-			script = strings.ReplaceAll(script, "CAPTION", strconv.Quote(tc.body))
+			script = strings.ReplaceAll(script, "CAPTION", shellSingleQuote(tc.body))
+			script = strings.ReplaceAll(script, "EXTENSION", tc.ext)
 			if err := os.WriteFile(exe, []byte(script), 0700); err != nil {
 				t.Fatal(err)
 			}
@@ -348,6 +596,10 @@ print(json.dumps(data))
 			t.Fatal("untrusted caption URL accepted", ext, err)
 		}
 	}
+}
+
+func shellSingleQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
 func TestWebVTTRejectsMalformedAndUnboundedCaptions(t *testing.T) {
