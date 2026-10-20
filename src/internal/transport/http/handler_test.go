@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -45,6 +47,48 @@ func TestWriteEncodesNilListsAsEmptyArrays(t *testing.T) {
 	}
 	if value["payload"] != "Zml4dHVyZQ==" {
 		t.Fatalf("byte slice JSON behavior changed: %v", value["payload"])
+	}
+}
+
+func TestPlatformErrorCodesAndDefaultMappings(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		err    *discovery.PlatformError
+		status int
+		code   string
+	}{
+		{"coded unavailable", &discovery.PlatformError{Code: "xiaohongshu_note_unavailable", Message: "fixture message"}, http.StatusBadGateway, "xiaohongshu_note_unavailable"},
+		{"coded restricted", &discovery.PlatformError{Code: "xiaohongshu_restricted", Message: "fixture message", Restricted: true}, http.StatusTooManyRequests, "xiaohongshu_restricted"},
+		{"redacted xhs detail", &discovery.PlatformError{Code: "xiaohongshu_page_structure_changed", Message: "页面片段 https://www.xiaohongshu.com/explore/fixture?xsec_token=fixture-token-secret&xsec_source=share"}, http.StatusBadGateway, "xiaohongshu_page_structure_changed"},
+		{"default unavailable", &discovery.PlatformError{Message: "fixture message"}, http.StatusBadGateway, "platform_unavailable"},
+		{"default restricted", &discovery.PlatformError{Message: "fixture message", Restricted: true}, http.StatusTooManyRequests, "platform_restricted"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			fail(w, tc.err)
+			var got apiError
+			if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || w.Code != tc.status || got.Code != tc.code {
+				t.Fatalf("platform error mapping: status=%d body=%s err=%v", w.Code, w.Body.String(), err)
+			}
+			if tc.name == "redacted xhs detail" {
+				if !strings.Contains(got.Message, "xsec_token=[已脱敏]") || !strings.Contains(got.Message, "xsec_source=[已脱敏]") || strings.Contains(got.Message, "fixture-token-secret") {
+					t.Fatalf("sensitive detail was not redacted: %s", got.Message)
+				}
+				var logs bytes.Buffer
+				previous := slog.Default()
+				slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+				t.Cleanup(func() { slog.SetDefault(previous) })
+				fail(httptest.NewRecorder(), tc.err)
+				if strings.Contains(logs.String(), "fixture-token-secret") {
+					t.Fatalf("sensitive detail was logged: %s", logs.String())
+				}
+			} else if got.Message != tc.err.Message {
+				t.Fatalf("platform message changed: %s", got.Message)
+			}
+			if tc.err.Restricted && w.Header().Get("Retry-After") != "60" {
+				t.Fatal("restricted response lost retry guidance")
+			}
+		})
 	}
 }
 

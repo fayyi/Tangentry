@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -58,6 +59,39 @@ func TestDownloadArgumentsUseTitleContainerAndLiteralChoices(t *testing.T) {
 				t.Fatalf("missing %q in %s", want, text)
 			}
 		}
+	}
+}
+
+func TestSmallXiaohongshuVideoDownloadFailsAt100KiBBoundaryOnly(t *testing.T) {
+	if os.PathSeparator != '/' {
+		t.Skip("POSIX fake tool")
+	}
+	run := func(size int64, rawURL string, options downloads.Options) (downloads.Result, error) {
+		root := t.TempDir()
+		ytdlp := filepath.Join(root, "yt-dlp")
+		ffmpeg := filepath.Join(root, "ffmpeg")
+		script := "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo fixture; exit 0; fi\ndir=\nwhile [ $# -gt 0 ]; do if [ \"$1\" = \"--paths\" ]; then shift; dir=$1; fi; shift; done\nmkdir -p \"$dir\"\ntruncate -s " + strconv.FormatInt(size, 10) + " \"$dir/fixture.mp4\"\nprintf '%s\\n' \"$dir/fixture.mp4\"\n"
+		if err := os.WriteFile(ytdlp, []byte(script), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(ffmpeg, []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
+			t.Fatal(err)
+		}
+		tk := New(config.Config{YTDLPPath: ytdlp, FFmpegPath: ffmpeg})
+		return tk.DownloadMedia(context.Background(), rawURL, filepath.Join(root, "output"), 0, options)
+	}
+	const signed = "https://www.xiaohongshu.com/explore/6411cf99000000001300b6d9?xsec_token=fixture"
+	if _, err := run(100<<10-1, signed, downloads.Options{Mode: "video"}); err == nil || !strings.Contains(err.Error(), "疑似触发风控") || !strings.Contains(err.Error(), "工具设置") {
+		t.Fatalf("small Xiaohongshu video did not produce actionable error: %v", err)
+	}
+	if _, err := run(100<<10, signed, downloads.Options{Mode: "video"}); err != nil {
+		t.Fatalf("100 KiB boundary rejected: %v", err)
+	}
+	if _, err := run(100, signed, downloads.Options{Mode: "audio"}); err != nil {
+		t.Fatalf("small Xiaohongshu audio rejected: %v", err)
+	}
+	if _, err := run(100, "https://www.example.com/video.mp4", downloads.Options{Mode: "video"}); err != nil {
+		t.Fatalf("small non-Xiaohongshu video rejected: %v", err)
 	}
 }
 

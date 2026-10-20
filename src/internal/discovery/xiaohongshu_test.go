@@ -7,6 +7,9 @@ import (
 
 func TestXiaohongshuShareNormalization(t *testing.T) {
 	id := "6411cf99000000001300b6d9"
+	if ref, err := ParseXiaohongshu(id); err != nil || ref.ID != id || strings.Contains(ref.URL, "xsec_token") {
+		t.Fatalf("bare note ID was not normalized: %#v %v", ref, err)
+	}
 	for _, raw := range []string{"https://www.xiaohongshu.com/explore/" + id, "http://xiaohongshu.com/discovery/item/" + id + "?share=discard&xsec_token=fixture+access&xsec_source=pc_share#ignored", "复制 https://www.xiaohongshu.com/explore/" + id + " 这条分享"} {
 		ref, err := ParseXiaohongshu(raw)
 		if err != nil || ref.ID != id || !strings.HasPrefix(ref.URL, "https://www.xiaohongshu.com/explore/"+id) || strings.Contains(ref.URL, "discard") {

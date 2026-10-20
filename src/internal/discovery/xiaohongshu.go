@@ -17,7 +17,11 @@ func ParseXiaohongshu(raw string) (XiaohongshuReference, error) {
 	if len(raw) > 2048 {
 		return XiaohongshuReference{}, ErrInvalidQuery
 	}
-	links := sharedLink.FindAllString(strings.TrimSpace(raw), -1)
+	raw = strings.TrimSpace(raw)
+	if content.ValidID("xiaohongshu:" + raw) {
+		return XiaohongshuReference{ID: raw, URL: "https://www.xiaohongshu.com/explore/" + raw}, nil
+	}
+	links := sharedLink.FindAllString(raw, -1)
 	if len(links) != 1 {
 		return XiaohongshuReference{}, ErrInvalidQuery
 	}

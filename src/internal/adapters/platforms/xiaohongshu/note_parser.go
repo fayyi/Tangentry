@@ -66,12 +66,12 @@ func Parse(data []byte, ref discovery.XiaohongshuReference) (content.Item, error
 		}
 		candidate, parseErr := stateJSON(strings.TrimSpace(script[1:]))
 		if parseErr != nil || payload != nil {
-			return content.Item{}, unavailable()
+			return content.Item{}, initializerUnavailable()
 		}
 		payload = candidate
 	}
 	if len(payload) == 0 {
-		return content.Item{}, unavailable()
+		return content.Item{}, initializerUnavailable()
 	}
 	var state struct {
 		Note struct {
@@ -81,7 +81,7 @@ func Parse(data []byte, ref discovery.XiaohongshuReference) (content.Item, error
 		} `json:"note"`
 	}
 	if json.Unmarshal(payload, &state) != nil {
-		return content.Item{}, unavailable()
+		return content.Item{}, initializerUnavailable()
 	}
 	entry, ok := state.Note.Detail[ref.ID]
 	n := entry.Note
@@ -105,7 +105,7 @@ func Parse(data []byte, ref discovery.XiaohongshuReference) (content.Item, error
 			picked = imageURL(image.Preview)
 		}
 		if picked == "" && n.Type != "video" {
-			return content.Item{}, &discovery.PlatformError{Message: "这份笔记的图片地址暂时无法读取，未导入不完整图集。"}
+			return content.Item{}, &discovery.PlatformError{Code: "xiaohongshu_media_unavailable", Message: "这份笔记的图片地址暂时无法读取，未导入不完整图集。"}
 		}
 		if picked != "" {
 			images = append(images, content.Image{URL: picked, Width: image.Width, Height: image.Height})

@@ -17,6 +17,7 @@ var ErrUnavailable = errors.New("platform unavailable")
 
 type PlatformError struct {
 	Message    string
+	Code       string
 	Restricted bool
 }
 
