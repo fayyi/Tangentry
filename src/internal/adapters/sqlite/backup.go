@@ -175,7 +175,7 @@ func describeFiles(root, dbPath string) ([]backup.File, error) {
 }
 
 func (s *Store) BackupTargets(ctx context.Context) ([]backup.Target, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,type,path,enabled FROM backup_target ORDER BY name,id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,type,path,enabled,endpoint,username,remote_path,allow_insecure_tls FROM backup_target ORDER BY name,id`)
 	if err != nil {
 		return nil, err
 	}
@@ -184,10 +184,12 @@ func (s *Store) BackupTargets(ctx context.Context) ([]backup.Target, error) {
 	for rows.Next() {
 		var t backup.Target
 		var enabled int
-		if err := rows.Scan(&t.ID, &t.Name, &t.Type, &t.Path, &enabled); err != nil {
+		var allowInsecure int
+		if err := rows.Scan(&t.ID, &t.Name, &t.Type, &t.Path, &enabled, &t.Endpoint, &t.Username, &t.RemotePath, &allowInsecure); err != nil {
 			return nil, err
 		}
 		t.Enabled = enabled != 0
+		t.AllowInsecureTLS = allowInsecure != 0
 		out = append(out, t)
 	}
 	return out, rows.Err()
@@ -195,12 +197,14 @@ func (s *Store) BackupTargets(ctx context.Context) ([]backup.Target, error) {
 func (s *Store) BackupTarget(ctx context.Context, id string) (backup.Target, error) {
 	var t backup.Target
 	var enabled int
-	err := s.db.QueryRowContext(ctx, `SELECT id,name,type,path,enabled FROM backup_target WHERE id=?`, id).Scan(&t.ID, &t.Name, &t.Type, &t.Path, &enabled)
+	var allowInsecure int
+	err := s.db.QueryRowContext(ctx, `SELECT id,name,type,path,enabled,endpoint,username,remote_path,allow_insecure_tls FROM backup_target WHERE id=?`, id).Scan(&t.ID, &t.Name, &t.Type, &t.Path, &enabled, &t.Endpoint, &t.Username, &t.RemotePath, &allowInsecure)
 	t.Enabled = enabled != 0
+	t.AllowInsecureTLS = allowInsecure != 0
 	return t, err
 }
 func (s *Store) SaveBackupTarget(ctx context.Context, t backup.Target) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO backup_target(id,name,type,path,enabled) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,type=excluded.type,path=excluded.path,enabled=excluded.enabled`, t.ID, t.Name, t.Type, t.Path, boolInt(t.Enabled))
+	_, err := s.db.ExecContext(ctx, `INSERT INTO backup_target(id,name,type,path,enabled,endpoint,username,remote_path,allow_insecure_tls) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,type=excluded.type,path=excluded.path,enabled=excluded.enabled,endpoint=excluded.endpoint,username=excluded.username,remote_path=excluded.remote_path,allow_insecure_tls=excluded.allow_insecure_tls`, t.ID, t.Name, t.Type, t.Path, boolInt(t.Enabled), t.Endpoint, t.Username, t.RemotePath, boolInt(t.AllowInsecureTLS))
 	return err
 }
 func (s *Store) DeleteBackupTarget(ctx context.Context, id string) error {
@@ -283,11 +287,11 @@ func (s *Store) DeleteBackupTask(ctx context.Context, id string) error {
 	return err
 }
 func (s *Store) SaveBackupSnapshot(ctx context.Context, v backup.Snapshot) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO backup_run(id,task_id,created_at,size,status) VALUES(?,?,?,?,?)`, v.ID, v.TaskID, v.CreatedAt.Unix(), v.Size, v.Status)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO backup_run(id,task_id,created_at,size,status,retry_available,retry_unavailable_reason) VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET task_id=excluded.task_id,created_at=excluded.created_at,size=excluded.size,status=excluded.status,retry_available=excluded.retry_available,retry_unavailable_reason=excluded.retry_unavailable_reason`, v.ID, v.TaskID, v.CreatedAt.Unix(), v.Size, v.Status, boolInt(v.RetryAvailable), v.RetryUnavailableReason)
 	return err
 }
 func (s *Store) BackupSnapshots(ctx context.Context) ([]backup.Snapshot, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,task_id,created_at,size,status FROM backup_run ORDER BY created_at DESC`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,task_id,created_at,size,status,retry_available,retry_unavailable_reason FROM backup_run ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -296,13 +300,99 @@ func (s *Store) BackupSnapshots(ctx context.Context) ([]backup.Snapshot, error) 
 	for rows.Next() {
 		var v backup.Snapshot
 		var ts int64
-		if err := rows.Scan(&v.ID, &v.TaskID, &ts, &v.Size, &v.Status); err != nil {
+		var retryAvailable int
+		if err := rows.Scan(&v.ID, &v.TaskID, &ts, &v.Size, &v.Status, &retryAvailable, &v.RetryUnavailableReason); err != nil {
 			return nil, err
 		}
+		v.RetryAvailable = retryAvailable != 0
 		v.CreatedAt = time.Unix(ts, 0).UTC()
+		v.Targets, err = s.backupTargetRuns(ctx, v.ID)
+		if err != nil {
+			return nil, err
+		}
 		out = append(out, v)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) GetBackupSnapshot(ctx context.Context, id string) (backup.Snapshot, error) {
+	var v backup.Snapshot
+	var ts int64
+	var retryAvailable int
+	err := s.db.QueryRowContext(ctx, `SELECT id,task_id,created_at,size,status,retry_available,retry_unavailable_reason FROM backup_run WHERE id=?`, id).Scan(&v.ID, &v.TaskID, &ts, &v.Size, &v.Status, &retryAvailable, &v.RetryUnavailableReason)
+	if err != nil {
+		return v, err
+	}
+	v.CreatedAt = time.Unix(ts, 0).UTC()
+	v.RetryAvailable = retryAvailable != 0
+	v.Targets, err = s.backupTargetRuns(ctx, id)
+	return v, err
+}
+
+func (s *Store) backupTargetRuns(ctx context.Context, runID string) ([]backup.TargetRun, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT target_id,name,status,error_summary FROM backup_run_target WHERE run_id=? ORDER BY position,target_id`, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []backup.TargetRun
+	for rows.Next() {
+		var v backup.TargetRun
+		if err := rows.Scan(&v.TargetID, &v.Name, &v.Status, &v.Error); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(out) == 0 {
+		var status string
+		if err := s.db.QueryRowContext(ctx, `SELECT status FROM backup_run WHERE id=?`, runID).Scan(&status); err != nil {
+			return nil, err
+		}
+		if status == "running" {
+			return []backup.TargetRun{}, nil
+		}
+	}
+	return out, nil
+}
+
+func (s *Store) SaveBackupTargetRuns(ctx context.Context, runID string, runs []backup.TargetRun) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM backup_run_target WHERE run_id=?`, runID); err != nil {
+		return err
+	}
+	succeeded, failed, pending := 0, 0, 0
+	for i, run := range runs {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO backup_run_target(run_id,target_id,name,status,error_summary,position) VALUES(?,?,?,?,?,?)`, runID, run.TargetID, run.Name, run.Status, run.Error, i); err != nil {
+			return err
+		}
+		switch run.Status {
+		case "succeeded":
+			succeeded++
+		case "failed":
+			failed++
+		case "pending":
+			pending++
+		}
+	}
+	status := "succeeded"
+	if pending > 0 {
+		status = "running"
+	} else if failed > 0 && succeeded > 0 {
+		status = "partial_success"
+	} else if failed > 0 || succeeded == 0 {
+		status = "failed"
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE backup_run SET status=?,retry_available=? WHERE id=?`, status, boolInt(status != "succeeded"), runID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) ListTargets(ctx context.Context) ([]backup.Target, error) {
@@ -328,6 +418,12 @@ func (s *Store) SaveSnapshot(ctx context.Context, v backup.Snapshot) error {
 }
 func (s *Store) ListSnapshots(ctx context.Context) ([]backup.Snapshot, error) {
 	return s.BackupSnapshots(ctx)
+}
+func (s *Store) GetSnapshot(ctx context.Context, id string) (backup.Snapshot, error) {
+	return s.GetBackupSnapshot(ctx, id)
+}
+func (s *Store) SaveTargetRuns(ctx context.Context, id string, runs []backup.TargetRun) error {
+	return s.SaveBackupTargetRuns(ctx, id, runs)
 }
 func boolInt(v bool) int {
 	if v {

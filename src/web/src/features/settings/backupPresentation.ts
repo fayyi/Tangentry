@@ -74,6 +74,7 @@ export function backupStatusPresentation(status: string | null | undefined): Bac
   if (normalized === 'failed' || normalized === 'failure' || normalized === 'error' || normalized === 'invalid') {
     return { label: normalized === 'invalid' ? '校验失败' : '失败', tone: 'danger' }
   }
+  if (normalized === 'partial_success' || normalized === 'partial') return { label: '部分成功', tone: 'warning' }
   if (normalized === 'cancelled' || normalized === 'canceled') return { label: '已取消', tone: 'warning' }
   if (normalized === 'staged' || normalized === 'awaiting_restart' || normalized === 'pending_restart') return { label: '待重启生效', tone: 'warning' }
   if (normalized === 'restored' || normalized === 'applied') return { label: '已恢复', tone: 'success' }
@@ -161,7 +162,11 @@ export function backupActionAvailability(input: BackupActionAvailabilityInput): 
 }
 
 export function immediateBackupAvailability(input: Pick<BackupActionAvailabilityInput, 'targetCount' | 'hasTarget' | 'password' | 'hasPassword' | 'pendingAction'>): BackupActionAvailability {
-  return backupActionAvailability(input).run
+	const availability = backupActionAvailability(input).run
+	if ((input.hasTarget ?? (input.targetCount ?? 0) > 0) === false) {
+		return { disabled: true, reason: '请至少选择一个备份目标' }
+	}
+	return availability
 }
 
 function toDate(value: string | number | Date | null | undefined): Date | null {

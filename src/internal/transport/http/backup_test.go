@@ -10,7 +10,7 @@ import (
 	"tangentry/internal/backup"
 )
 
-type backupHTTPFixture struct{}
+type backupHTTPFixture struct{ tested backup.Target }
 
 func (backupHTTPFixture) Targets(context.Context) ([]backup.Target, error)     { return nil, nil }
 func (backupHTTPFixture) Tasks(context.Context) ([]backup.Task, error)         { return nil, nil }
@@ -21,6 +21,13 @@ func (backupHTTPFixture) SaveTask(context.Context, backup.Task) error          {
 func (backupHTTPFixture) DeleteTask(context.Context, string) error             { return nil }
 func (backupHTTPFixture) Create(context.Context, string, string) (backup.Snapshot, error) {
 	return backup.Snapshot{ID: "snapshot-1", Status: "succeeded"}, nil
+}
+func (backupHTTPFixture) RetryFailed(context.Context, string) (backup.Snapshot, error) {
+	return backup.Snapshot{ID: "snapshot-1", Status: "succeeded"}, nil
+}
+func (f backupHTTPFixture) TestTarget(_ context.Context, target backup.Target) error {
+	f.tested = target
+	return nil
 }
 func (backupHTTPFixture) Validate(context.Context, string, string, string) (backup.Validation, error) {
 	return backup.Validation{SnapshotID: "snapshot-1"}, nil
@@ -76,5 +83,19 @@ func TestBackupListRoutesReturnEmptyArrays(t *testing.T) {
 				t.Fatalf("GET %s = %d %s, want 200 []", path, w.Code, w.Body.String())
 			}
 		})
+	}
+}
+
+func TestBackupTargetTestDoesNotEchoOrPersistSubmittedPassword(t *testing.T) {
+	fixture := backupHTTPFixture{}
+	h := NewWithDependencies(Dependencies{Backup: fixture}, nil)
+	password := "fixture-webdav-password"
+	r := httptest.NewRequest(http.MethodPost, "/api/backup/targets/test", strings.NewReader(`{"type":"webdav","endpoint":"https://dav.example.test/root","username":"fixture-user","password":"`+password+`","updateCredential":true}`))
+	r.Host = "127.0.0.1"
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusOK || strings.Contains(w.Body.String(), password) {
+		t.Fatalf("test endpoint failed or echoed password: %d %s", w.Code, w.Body.String())
 	}
 }

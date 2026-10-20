@@ -57,6 +57,9 @@ type Store struct {
 	revisions                    map[string]uint64
 	fallbackHeader, fallbackFile string
 	secretKey                    []byte
+	backupTargets                map[string]string
+	backupTargetSecrets          map[string]string
+	legacyBackupTargetPasswords  map[string]string
 }
 
 func Open(directory, header, file string) (*Store, error) {
@@ -80,9 +83,12 @@ func open(directory, header, file string, key []byte) (*Store, error) {
 	if err := os.Chmod(directory, 0700); err != nil {
 		return nil, ErrStorage
 	}
-	s := &Store{directory: directory, entries: map[string]entry{}, revisions: map[string]uint64{}, fallbackHeader: header, fallbackFile: file, secretKey: append([]byte(nil), key...)}
+	s := &Store{directory: directory, entries: map[string]entry{}, revisions: map[string]uint64{}, fallbackHeader: header, fallbackFile: file, secretKey: append([]byte(nil), key...), backupTargets: map[string]string{}, backupTargetSecrets: map[string]string{}, legacyBackupTargetPasswords: map[string]string{}}
 	raw, err := os.ReadFile(filepath.Join(directory, "cookies.json"))
 	if errors.Is(err, os.ErrNotExist) {
+		if err := s.loadBackupTargetPasswords(); err != nil {
+			return nil, err
+		}
 		return s, nil
 	}
 	if err != nil || len(raw) > 1<<20 {
@@ -157,7 +163,271 @@ func open(directory, header, file string, key []byte) (*Store, error) {
 			break
 		}
 	}
+	if err := s.loadBackupTargetPasswords(); err != nil {
+		return nil, err
+	}
 	return s, nil
+}
+
+type backupTargetCredential struct {
+	Password string `json:"password,omitempty"`
+	Secret   string `json:"secret,omitempty"`
+}
+
+func (s *Store) loadBackupTargetPasswords() error {
+	path := filepath.Join(s.directory, "backup-targets.json")
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil || len(raw) > 1<<20 {
+		return ErrStorage
+	}
+	var entries map[string]backupTargetCredential
+	if json.Unmarshal(raw, &entries) != nil || entries == nil {
+		return ErrStorage
+	}
+	for id, value := range entries {
+		if !validBackupTargetID(id) || value.Password != "" && value.Secret != "" {
+			return ErrStorage
+		}
+		if value.Secret != "" {
+			if len(s.secretKey) == 0 {
+				s.backupTargetSecrets[id] = value.Secret
+				continue
+			}
+			var private entry
+			if !decryptPrivate(s.secretKey, value.Secret, &private) || private.Jar == "" {
+				// Match platform credential behavior when a desktop key is
+				// temporarily unavailable: retain opaque ciphertext and expose
+				// only the configured/unavailable state.
+				s.backupTargetSecrets[id] = value.Secret
+				continue
+			}
+			value.Password = private.Jar
+		} else if value.Password == "" {
+			return ErrStorage
+		} else if len(s.secretKey) == 0 {
+			s.legacyBackupTargetPasswords[id] = value.Password
+			continue
+		}
+		s.backupTargets[id] = value.Password
+	}
+	if os.Chmod(path, 0600) != nil {
+		return ErrStorage
+	}
+	if len(s.secretKey) > 0 {
+		changed := false
+		for id, value := range entries {
+			if value.Secret != "" && value.Password == "" {
+				continue
+			}
+			secret, err := encryptPrivate(s.secretKey, entry{Jar: value.Password})
+			if err != nil {
+				return ErrStorage
+			}
+			entries[id] = backupTargetCredential{Secret: secret}
+			s.backupTargets[id] = value.Password
+			changed = true
+		}
+		if changed {
+			return s.persistBackupTargetEntries(entries)
+		}
+	}
+	return nil
+}
+
+func validBackupTargetID(id string) bool {
+	if id == "" || len(id) > 160 {
+		return false
+	}
+	for _, r := range id {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.') {
+			return false
+		}
+	}
+	return id != "." && id != ".."
+}
+
+func (s *Store) BackupTargetPassword(id string) (string, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	password, ok := s.backupTargets[id]
+	if !ok {
+		password, ok = s.legacyBackupTargetPasswords[id]
+	}
+	return password, ok
+}
+
+func (s *Store) BackupTargetConfigured(id string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, ok := s.backupTargets[id]
+	if !ok {
+		_, ok = s.backupTargetSecrets[id]
+	}
+	if !ok {
+		_, ok = s.legacyBackupTargetPasswords[id]
+	}
+	return ok
+}
+
+func (s *Store) SaveBackupTargetPassword(id, password string) error {
+	if !validBackupTargetID(id) || password == "" || len(password) > 4096 {
+		return ErrStorage
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := make(map[string]string, len(s.backupTargets)+1)
+	for key, value := range s.backupTargets {
+		next[key] = value
+	}
+	for key, value := range s.legacyBackupTargetPasswords {
+		next[key] = value
+	}
+	next[id] = password
+	if err := s.persistBackupTargetPasswords(next); err != nil {
+		return err
+	}
+	s.backupTargets = next
+	delete(s.backupTargetSecrets, id)
+	delete(s.legacyBackupTargetPasswords, id)
+	return nil
+}
+
+func (s *Store) DeleteBackupTargetPassword(id string) error {
+	if !validBackupTargetID(id) {
+		return ErrStorage
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := make(map[string]string, len(s.backupTargets)+len(s.legacyBackupTargetPasswords))
+	for key, value := range s.backupTargets {
+		if key != id {
+			next[key] = value
+		}
+	}
+	nextSecrets := make(map[string]string, len(s.backupTargetSecrets))
+	for key, value := range s.backupTargetSecrets {
+		if key != id {
+			nextSecrets[key] = value
+		}
+	}
+	nextLegacy := make(map[string]string, len(s.legacyBackupTargetPasswords))
+	for key, value := range s.legacyBackupTargetPasswords {
+		if key != id {
+			nextLegacy[key] = value
+		}
+	}
+	if len(s.secretKey) == 0 {
+		for key, value := range nextLegacy {
+			next[key] = value
+		}
+	}
+	previousSecrets, previousLegacy := s.backupTargetSecrets, s.legacyBackupTargetPasswords
+	s.backupTargetSecrets, s.legacyBackupTargetPasswords = nextSecrets, nextLegacy
+	if err := s.persistBackupTargetPasswords(next); err != nil {
+		s.backupTargetSecrets, s.legacyBackupTargetPasswords = previousSecrets, previousLegacy
+		return err
+	}
+	s.backupTargets = next
+	return nil
+}
+
+func (s *Store) CleanupBackupTargetPasswords(targetIDs []string) error {
+	keep := make(map[string]bool, len(targetIDs))
+	for _, id := range targetIDs {
+		if !validBackupTargetID(id) {
+			return ErrStorage
+		}
+		keep[id] = true
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := make(map[string]string, len(s.backupTargets))
+	for id, password := range s.backupTargets {
+		if keep[id] {
+			next[id] = password
+		}
+	}
+	nextSecrets := make(map[string]string, len(s.backupTargetSecrets))
+	for id, secret := range s.backupTargetSecrets {
+		if keep[id] {
+			nextSecrets[id] = secret
+		}
+	}
+	nextLegacy := make(map[string]string, len(s.legacyBackupTargetPasswords))
+	for id := range s.legacyBackupTargetPasswords {
+		if keep[id] {
+			nextLegacy[id] = s.legacyBackupTargetPasswords[id]
+		}
+	}
+	if len(s.secretKey) == 0 {
+		for id, password := range nextLegacy {
+			next[id] = password
+		}
+	}
+	previousSecrets, previousLegacy := s.backupTargetSecrets, s.legacyBackupTargetPasswords
+	s.backupTargetSecrets, s.legacyBackupTargetPasswords = nextSecrets, nextLegacy
+	if err := s.persistBackupTargetPasswords(next); err != nil {
+		s.backupTargetSecrets, s.legacyBackupTargetPasswords = previousSecrets, previousLegacy
+		return err
+	}
+	s.backupTargets = next
+	return nil
+}
+
+func (s *Store) persistBackupTargetPasswords(values map[string]string) error {
+	entries := make(map[string]backupTargetCredential, len(values)+len(s.backupTargetSecrets))
+	for id, secret := range s.backupTargetSecrets {
+		entries[id] = backupTargetCredential{Secret: secret}
+	}
+	for id, password := range values {
+		credential := backupTargetCredential{}
+		if len(s.secretKey) > 0 {
+			secret, err := encryptPrivate(s.secretKey, entry{Jar: password})
+			if err != nil {
+				return ErrStorage
+			}
+			credential.Secret = secret
+		} else {
+			credential.Password = password
+		}
+		entries[id] = credential
+	}
+	return s.persistBackupTargetEntries(entries)
+}
+
+func (s *Store) persistBackupTargetEntries(entries map[string]backupTargetCredential) error {
+	raw, err := json.Marshal(entries)
+	if err != nil {
+		return ErrStorage
+	}
+	f, err := os.CreateTemp(s.directory, ".backup-targets-*")
+	if err != nil {
+		return ErrStorage
+	}
+	name := f.Name()
+	defer os.Remove(name)
+	if err := f.Chmod(0600); err != nil {
+		f.Close()
+		return ErrStorage
+	}
+	if _, err := f.Write(raw); err != nil {
+		f.Close()
+		return ErrStorage
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return ErrStorage
+	}
+	if err := f.Close(); err != nil {
+		return ErrStorage
+	}
+	if err := os.Rename(name, filepath.Join(s.directory, "backup-targets.json")); err != nil {
+		return ErrStorage
+	}
+	return nil
 }
 func (s *Store) States() []State {
 	s.mu.RLock()

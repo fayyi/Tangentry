@@ -39,7 +39,7 @@ test('validation presentation exposes manifest versions, file hashes and scope',
 })
 
 test('immediate backup is disabled until a target and password exist and while running', () => {
-  expect(immediateBackupAvailability({ targetCount: 0, password: '' })).toMatchObject({ disabled: true, reason: '请先添加备份目标。' })
+  expect(immediateBackupAvailability({ targetCount: 0, password: '' })).toMatchObject({ disabled: true, reason: '请至少选择一个备份目标' })
   expect(immediateBackupAvailability({ targetCount: 1, password: '' })).toMatchObject({ disabled: true })
   expect(immediateBackupAvailability({ targetCount: 1, password: '' }).reason).toContain('请先设置备份密码。')
   expect(immediateBackupAvailability({ targetCount: 1, password: 'fixture-password', pendingAction: 'backup' }).reason).toContain('备份正在进行')

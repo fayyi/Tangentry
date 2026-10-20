@@ -16,6 +16,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -37,7 +39,7 @@ const (
 	KDFMemory           = 64 * 1024
 	KDFThreads          = 2
 	KDFKeyLen           = 32
-	SchemaVersion       = 69
+	SchemaVersion       = 70
 	MaxArchiveSize      = 1 << 30
 	MaxPackageSize      = MaxArchiveSize + (MaxArchiveSize/ChunkSize+2)*64 + headerSize
 	MaxEntries          = 10000
@@ -113,11 +115,25 @@ type ObjectStore interface {
 }
 
 type Target struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Type    string `json:"type"`
-	Path    string `json:"path,omitempty"`
-	Enabled bool   `json:"enabled"`
+	ID                   string `json:"id"`
+	Name                 string `json:"name"`
+	Type                 string `json:"type"`
+	Path                 string `json:"path,omitempty"`
+	Endpoint             string `json:"endpoint,omitempty"`
+	Username             string `json:"username,omitempty"`
+	RemotePath           string `json:"remotePath,omitempty"`
+	AllowInsecureTLS     bool   `json:"allowInsecureTLS,omitempty"`
+	CredentialConfigured bool   `json:"credentialConfigured,omitempty"`
+	Password             string `json:"-"`
+	UpdateCredential     bool   `json:"-"`
+	Enabled              bool   `json:"enabled"`
+}
+
+type TargetRun struct {
+	TargetID string `json:"targetId"`
+	Name     string `json:"name"`
+	Status   string `json:"status"`
+	Error    string `json:"error,omitempty"`
 }
 
 type Task struct {
@@ -130,11 +146,14 @@ type Task struct {
 }
 
 type Snapshot struct {
-	ID        string    `json:"id"`
-	TaskID    string    `json:"taskId,omitempty"`
-	CreatedAt time.Time `json:"createdAt"`
-	Size      int64     `json:"size"`
-	Status    string    `json:"status"`
+	ID                     string      `json:"id"`
+	TaskID                 string      `json:"taskId,omitempty"`
+	CreatedAt              time.Time   `json:"createdAt"`
+	Size                   int64       `json:"size"`
+	Status                 string      `json:"status"`
+	Targets                []TargetRun `json:"targets,omitempty"`
+	RetryAvailable         bool        `json:"retryAvailable"`
+	RetryUnavailableReason string      `json:"retryUnavailableReason,omitempty"`
 }
 
 type Validation struct {
@@ -530,18 +549,33 @@ type Repository interface {
 	DeleteTask(context.Context, string) error
 	SaveSnapshot(context.Context, Snapshot) error
 	ListSnapshots(context.Context) ([]Snapshot, error)
+	GetSnapshot(context.Context, string) (Snapshot, error)
+	SaveTargetRuns(context.Context, string, []TargetRun) error
 }
+
+type TargetCredentials interface {
+	SaveBackupTargetPassword(string, string) error
+	BackupTargetPassword(string) (string, bool)
+	BackupTargetConfigured(string) bool
+	DeleteBackupTargetPassword(string) error
+	CleanupBackupTargetPasswords([]string) error
+}
+
+type TargetTester func(context.Context, Target) error
 
 type StoreFactory func(Target) (ObjectStore, error)
 
 type Service struct {
-	repo    Repository
-	source  Source
-	stores  StoreFactory
-	workDir string
-	version string
-	mu      sync.Mutex
-	plans   map[string]restorePlan
+	repo        Repository
+	source      Source
+	stores      StoreFactory
+	workDir     string
+	version     string
+	credentials TargetCredentials
+	testTarget  TargetTester
+	runMu       sync.Mutex
+	mu          sync.Mutex
+	plans       map[string]restorePlan
 }
 
 func (s *Service) withRestoreLock(ctx context.Context, fn func() error) error {
@@ -555,19 +589,183 @@ func (s *Service) withRestoreLock(ctx context.Context, fn func() error) error {
 
 func NewService(repo Repository, source Source, stores StoreFactory, workDir, version string) *Service {
 	_ = cleanupRestoreWorkDir(workDir)
-	return &Service{repo: repo, source: source, stores: stores, workDir: workDir, version: version, plans: make(map[string]restorePlan)}
+	service := &Service{repo: repo, source: source, stores: stores, workDir: workDir, version: version, plans: make(map[string]restorePlan)}
+	_ = service.cleanupRetryPackages(context.Background())
+	return service
 }
 
-func (s *Service) Targets(ctx context.Context) ([]Target, error) { return s.repo.ListTargets(ctx) }
-func (s *Service) Tasks(ctx context.Context) ([]Task, error)     { return s.repo.ListTasks(ctx) }
+func (s *Service) SetTargetCredentials(credentials TargetCredentials) { s.credentials = credentials }
+func (s *Service) SetTargetTester(tester TargetTester)                { s.testTarget = tester }
+
+func (s *Service) CleanupOrphanTargetCredentials(ctx context.Context) error {
+	if s.credentials == nil {
+		return nil
+	}
+	targets, err := s.repo.ListTargets(ctx)
+	if err != nil {
+		return err
+	}
+	ids := make([]string, 0, len(targets))
+	for _, target := range targets {
+		if target.Type == "webdav" {
+			ids = append(ids, target.ID)
+		}
+	}
+	if err := s.credentials.CleanupBackupTargetPasswords(ids); err != nil {
+		logCredentialCleanupFailure()
+	}
+	return nil
+}
+
+func logCredentialCleanupFailure() {
+	slog.Warn("backup target credential cleanup failed; it will be retried on startup")
+}
+
+func (s *Service) Targets(ctx context.Context) ([]Target, error) {
+	targets, err := s.repo.ListTargets(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range targets {
+		if targets[i].Type == "webdav" && s.credentials != nil {
+			targets[i].CredentialConfigured = s.credentials.BackupTargetConfigured(targets[i].ID)
+		}
+		targets[i].Password = ""
+		targets[i].UpdateCredential = false
+	}
+	return targets, nil
+}
+func (s *Service) Tasks(ctx context.Context) ([]Task, error) { return s.repo.ListTasks(ctx) }
 func (s *Service) Snapshots(ctx context.Context) ([]Snapshot, error) {
-	return s.repo.ListSnapshots(ctx)
+	snapshots, err := s.repo.ListSnapshots(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range snapshots {
+		if snapshots[i].Status == "succeeded" {
+			snapshots[i].RetryAvailable = false
+			continue
+		}
+		if snapshots[i].RetryUnavailableReason != "" {
+			continue
+		}
+		packageFile, err := openPrivateRetryPackage(filepath.Join(s.workDir, "retry-"+snapshots[i].ID+".tgb"))
+		if err != nil {
+			snapshots[i].RetryAvailable = false
+			snapshots[i].RetryUnavailableReason = retryPackageUnavailableReason(filepath.Join(s.workDir, "retry-"+snapshots[i].ID+".tgb"))
+			if err := s.repo.SaveSnapshot(ctx, snapshots[i]); err != nil {
+				return nil, err
+			}
+		} else {
+			_ = packageFile.Close()
+			snapshots[i].RetryAvailable = true
+		}
+	}
+	return snapshots, nil
+}
+
+func (s *Service) TestTarget(ctx context.Context, target Target) error {
+	if target.Type != "webdav" || s.testTarget == nil || target.Endpoint == "" || target.Username == "" {
+		return errors.New("invalid WebDAV connection test")
+	}
+	if target.Password == "" && target.ID != "" && s.credentials != nil {
+		target.Password, _ = s.credentials.BackupTargetPassword(target.ID)
+	}
+	if target.Password == "" {
+		return errors.New("WebDAV password is required")
+	}
+	return s.testTarget(ctx, target)
 }
 func (s *Service) SaveTarget(ctx context.Context, target Target) error {
-	if target.ID == "" || target.Name == "" || target.Type != "local" || target.Path == "" {
+	updateCredential := target.UpdateCredential
+	previousPassword := ""
+	previousConfigured := false
+	if target.ID == "" || target.Name == "" || target.Type != "local" && target.Type != "webdav" || target.Type == "local" && target.Path == "" || target.Type == "webdav" && (target.Endpoint == "" || target.Username == "") {
 		return errors.New("invalid backup target")
 	}
-	return s.repo.SaveTarget(ctx, target)
+	if target.Type == "webdav" {
+		endpoint, err := url.Parse(strings.TrimSpace(target.Endpoint))
+		if err != nil || endpoint.Host == "" || endpoint.Scheme != "http" && endpoint.Scheme != "https" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" || hasPathTraversal(endpoint.Path) {
+			return errors.New("invalid WebDAV endpoint")
+		}
+		if err := validateRemotePath(target.RemotePath); err != nil {
+			return err
+		}
+		if target.UpdateCredential && target.Password == "" {
+			return errors.New("empty WebDAV password")
+		}
+		var configured bool
+		if s.credentials != nil {
+			configured = s.credentials.BackupTargetConfigured(target.ID)
+			previousPassword, previousConfigured = s.credentials.BackupTargetPassword(target.ID)
+		}
+		if target.UpdateCredential {
+			if s.credentials == nil {
+				return errors.New("backup credentials unavailable")
+			}
+			if err := s.credentials.SaveBackupTargetPassword(target.ID, target.Password); err != nil {
+				return err
+			}
+			configured = true
+		}
+		if !configured {
+			return errors.New("WebDAV password is required")
+		}
+		target.CredentialConfigured = true
+		target.Password = ""
+		target.UpdateCredential = false
+	} else {
+		target.Endpoint, target.Username, target.RemotePath = "", "", ""
+		target.AllowInsecureTLS = false
+		target.CredentialConfigured = false
+		target.Password = ""
+		target.UpdateCredential = false
+	}
+	previous, previousErr := s.repo.GetTarget(ctx, target.ID)
+	if err := s.repo.SaveTarget(ctx, target); err != nil {
+		if target.Type == "webdav" && updateCredential && s.credentials != nil {
+			if previousConfigured {
+				_ = s.credentials.SaveBackupTargetPassword(target.ID, previousPassword)
+			} else {
+				_ = s.credentials.DeleteBackupTargetPassword(target.ID)
+			}
+		}
+		return err
+	}
+	if previousErr == nil && previous.Type == "webdav" && target.Type != "webdav" && s.credentials != nil {
+		if err := s.credentials.DeleteBackupTargetPassword(target.ID); err != nil {
+			logCredentialCleanupFailure()
+		}
+	}
+	return nil
+}
+
+func hasPathTraversal(value string) bool {
+	decoded := strings.TrimSpace(strings.ReplaceAll(value, "\\", "/"))
+	for range 4 {
+		for _, part := range strings.Split(decoded, "/") {
+			if part == ".." {
+				return true
+			}
+		}
+		next, err := url.PathUnescape(decoded)
+		if err != nil || next == decoded {
+			return err != nil
+		}
+		decoded = next
+	}
+	return false
+}
+
+func validateRemotePath(value string) error {
+	value = strings.TrimSpace(strings.ReplaceAll(value, "\\", "/"))
+	if value == "" || value == "/" {
+		return nil
+	}
+	if strings.HasPrefix(value, "/") || strings.ContainsRune(value, '\x00') || hasPathTraversal(value) {
+		return errors.New("invalid WebDAV remote path")
+	}
+	return nil
 }
 func (s *Service) SaveTask(ctx context.Context, task Task) error {
 	if task.ID == "" || task.Name == "" || len(task.TargetIDs) == 0 {
@@ -576,11 +774,24 @@ func (s *Service) SaveTask(ctx context.Context, task Task) error {
 	return s.repo.SaveTask(ctx, task)
 }
 func (s *Service) DeleteTarget(ctx context.Context, id string) error {
-	return s.repo.DeleteTarget(ctx, id)
+	if err := s.repo.DeleteTarget(ctx, id); err != nil {
+		return err
+	}
+	if s.credentials != nil {
+		if err := s.credentials.DeleteBackupTargetPassword(id); err != nil {
+			logCredentialCleanupFailure()
+		}
+	}
+	return nil
 }
 func (s *Service) DeleteTask(ctx context.Context, id string) error { return s.repo.DeleteTask(ctx, id) }
 
 func (s *Service) Create(ctx context.Context, taskID, password string) (Snapshot, error) {
+	s.runMu.Lock()
+	defer s.runMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return Snapshot{}, err
+	}
 	task, err := s.repo.GetTask(ctx, taskID)
 	if err != nil {
 		return Snapshot{}, err
@@ -641,7 +852,12 @@ func (s *Service) create(ctx context.Context, task Task, password string) (Snaps
 		archive.Close()
 		return Snapshot{}, err
 	}
-	defer removeAll(packagePath)
+	packageRenamed := false
+	defer func() {
+		if !packageRenamed {
+			_ = removeAllErr(packagePath)
+		}
+	}()
 	defer packageFile.Close()
 	if err := EncryptReader(archive, archiveInfo.Size(), password, &manifest, packageFile); err != nil {
 		archive.Close()
@@ -661,42 +877,375 @@ func (s *Service) create(ctx context.Context, task Task, password string) (Snaps
 		packageFile.Close()
 		return Snapshot{}, ErrInvalidPackage
 	}
-	if _, err := packageFile.Seek(0, io.SeekStart); err != nil {
-		packageFile.Close()
-		return Snapshot{}, err
-	}
-	name := "tangentry/v1/snapshots/" + id + ".tgb"
-	for _, targetID := range task.TargetIDs {
-		target, e := s.repo.GetTarget(ctx, targetID)
-		if e != nil {
-			return Snapshot{}, e
-		}
-		if !target.Enabled {
-			continue
-		}
-		store, e := s.stores(target)
-		if e != nil {
-			packageFile.Close()
-			return Snapshot{}, e
-		}
-		defer closeStore(store)
-		if _, e = packageFile.Seek(0, io.SeekStart); e != nil {
-			packageFile.Close()
-			return Snapshot{}, e
-		}
-		if e = store.Upload(ctx, name, packageFile); e != nil {
-			packageFile.Close()
-			return Snapshot{}, e
-		}
-	}
 	if err := packageFile.Close(); err != nil {
 		return Snapshot{}, err
 	}
-	snap := Snapshot{ID: id, TaskID: task.ID, CreatedAt: manifest.CreatedAt, Size: packageInfo.Size(), Status: "succeeded"}
+	retryPath := filepath.Join(s.workDir, "retry-"+id+".tgb")
+	if err := os.Rename(packagePath, retryPath); err != nil {
+		return Snapshot{}, err
+	}
+	packageRenamed = true
+	name := "tangentry/v1/snapshots/" + id + ".tgb"
+	runs := make([]TargetRun, 0, len(task.TargetIDs))
+	active := make([]Target, 0, len(task.TargetIDs))
+	for _, targetID := range task.TargetIDs {
+		target, e := s.repo.GetTarget(ctx, targetID)
+		if e != nil {
+			runs = append(runs, TargetRun{TargetID: targetID, Status: "failed", Error: "目标设置无法读取。"})
+			continue
+		}
+		if !target.Enabled {
+			runs = append(runs, TargetRun{TargetID: targetID, Name: target.Name, Status: "failed", Error: "目标已停用，请启用后重试。"})
+			continue
+		}
+		active = append(active, target)
+		runs = append(runs, TargetRun{TargetID: target.ID, Name: target.Name, Status: "pending"})
+	}
+	keepPackage := false
+	var runErr error
+	defer func() {
+		if !keepPackage {
+			_ = removeAllErr(retryPath)
+		}
+	}()
+	snap := Snapshot{ID: id, TaskID: task.ID, CreatedAt: manifest.CreatedAt, Size: packageInfo.Size(), Status: "running", Targets: runs}
 	if err = s.repo.SaveSnapshot(ctx, snap); err != nil {
 		return Snapshot{}, err
 	}
+	// Once the run row exists, retain its encrypted payload even if a later
+	// status write fails so it remains recoverable through retry.
+	keepPackage = true
+	if err := s.persistTargetRuns(ctx, id, runs); err != nil {
+		return Snapshot{}, err
+	}
+	for activeIndex, target := range active {
+		if err := ctx.Err(); err != nil {
+			runErr = err
+			for _, remaining := range active[activeIndex:] {
+				if index := targetRunIndex(runs, remaining.ID); index >= 0 && runs[index].Status == "pending" {
+					runs[index].Error = "等待重试。"
+				}
+			}
+			_ = s.persistTargetRuns(ctx, id, runs)
+			break
+		}
+		store, e := s.stores(target)
+		if e != nil {
+			runsForTarget := targetRunIndex(runs, target.ID)
+			runs[runsForTarget].Status = "failed"
+			runs[runsForTarget].Error = safeTargetError(e)
+			_ = s.persistTargetRuns(ctx, id, runs)
+			continue
+		}
+		runIndex := targetRunIndex(runs, target.ID)
+		e = uploadPackage(ctx, store, name, retryPath)
+		closeStore(store)
+		if e != nil {
+			if isContextError(e) || ctx.Err() != nil {
+				runs[runIndex].Status = "pending"
+				runs[runIndex].Error = "等待重试。"
+				runErr = ctx.Err()
+				if runErr == nil {
+					runErr = e
+				}
+				for _, remaining := range active[activeIndex+1:] {
+					if index := targetRunIndex(runs, remaining.ID); index >= 0 && runs[index].Status == "pending" {
+						runs[index].Error = "等待重试。"
+					}
+				}
+				_ = s.persistTargetRuns(ctx, id, runs)
+				break
+			}
+			runs[runIndex].Status = "failed"
+			runs[runIndex].Error = safeTargetError(e)
+		} else {
+			runs[runIndex].Status = "succeeded"
+		}
+		if err := s.persistTargetRuns(ctx, id, runs); err != nil {
+			return Snapshot{}, err
+		}
+	}
+	status := targetRunsStatus(runs)
+	snap.Status, snap.Targets = status, runs
+	snap.RetryAvailable = status != "succeeded"
+	if err = s.persistTargetRuns(ctx, id, runs); err != nil {
+		return Snapshot{}, err
+	}
+	if err = s.persistSnapshot(ctx, snap); err != nil {
+		return Snapshot{}, err
+	}
+	if status != "succeeded" {
+		keepPackage = true
+	} else {
+		keepPackage = false
+	}
+	if runErr != nil {
+		return snap, runErr
+	}
 	return snap, nil
+}
+
+func (s *Service) RetryFailed(ctx context.Context, snapshotID string) (Snapshot, error) {
+	s.runMu.Lock()
+	defer s.runMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return Snapshot{}, err
+	}
+	if err := ensurePrivateDir(s.workDir); err != nil {
+		return Snapshot{}, err
+	}
+	if !validSnapshotID(snapshotID) {
+		return Snapshot{}, ErrInvalidPackage
+	}
+	snap, err := s.repo.GetSnapshot(ctx, snapshotID)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	if snap.Status == "succeeded" {
+		return snap, nil
+	}
+	if snap.RetryUnavailableReason != "" {
+		return snap, nil
+	}
+	path := filepath.Join(s.workDir, "retry-"+snapshotID+".tgb")
+	packageFile, err := openPrivateRetryPackage(path)
+	if err != nil {
+		snap.RetryAvailable = false
+		snap.RetryUnavailableReason = retryPackageUnavailableReason(path)
+		if saveErr := s.repo.SaveSnapshot(ctx, snap); saveErr != nil {
+			return Snapshot{}, saveErr
+		}
+		return snap, nil
+	}
+	_ = packageFile.Close()
+	runs := snap.Targets
+	if len(runs) == 0 {
+		task, taskErr := s.repo.GetTask(ctx, snap.TaskID)
+		if taskErr != nil {
+			return Snapshot{}, errors.New("backup run targets are unavailable")
+		}
+		for _, targetID := range task.TargetIDs {
+			runs = append(runs, TargetRun{TargetID: targetID, Status: "pending"})
+		}
+	}
+	var runErr error
+	for i := range runs {
+		if err := ctx.Err(); err != nil {
+			runErr = err
+			if runs[i].Status == "pending" {
+				runs[i].Error = "等待重试。"
+			}
+			break
+		}
+		if runs[i].Status != "failed" && runs[i].Status != "pending" {
+			continue
+		}
+		target, targetErr := s.repo.GetTarget(ctx, runs[i].TargetID)
+		if targetErr != nil || !target.Enabled {
+			runs[i].Status = "failed"
+			runs[i].Error = "目标设置不可用或已停用。"
+			continue
+		}
+		store, targetErr := s.stores(target)
+		if targetErr == nil {
+			targetErr = uploadPackage(ctx, store, "tangentry/v1/snapshots/"+snapshotID+".tgb", path)
+			closeStore(store)
+		}
+		if targetErr != nil {
+			if isContextError(targetErr) || ctx.Err() != nil {
+				runs[i].Status = "pending"
+				runs[i].Error = "等待重试。"
+				runErr = ctx.Err()
+				if runErr == nil {
+					runErr = targetErr
+				}
+				if saveErr := s.persistTargetRuns(ctx, snapshotID, runs); saveErr != nil {
+					return Snapshot{}, saveErr
+				}
+				break
+			}
+			runs[i].Status = "failed"
+			runs[i].Error = safeTargetError(targetErr)
+		} else {
+			runs[i].Status = "succeeded"
+			runs[i].Error = ""
+		}
+		// Persist after every target so a process restart never causes an
+		// already-successful target to be uploaded again.
+		if saveErr := s.persistTargetRuns(ctx, snapshotID, runs); saveErr != nil {
+			return Snapshot{}, saveErr
+		}
+	}
+	snap.Status = targetRunsStatus(runs)
+	snap.Targets = runs
+	snap.RetryAvailable = snap.Status != "succeeded"
+	snap.RetryUnavailableReason = ""
+	if err := s.persistTargetRuns(ctx, snapshotID, runs); err != nil {
+		return Snapshot{}, err
+	}
+	if err := s.persistSnapshot(ctx, snap); err != nil {
+		return Snapshot{}, err
+	}
+	if snap.Status == "succeeded" {
+		if err := removeAllErr(path); err != nil {
+			return snap, err
+		}
+	}
+	snap.RetryAvailable = snap.Status != "succeeded"
+	snap.RetryUnavailableReason = ""
+	if runErr != nil {
+		return snap, runErr
+	}
+	return snap, nil
+}
+
+func openPrivateRetryPackage(path string) (*os.File, error) {
+	before, err := os.Lstat(path)
+	if err != nil || !before.Mode().IsRegular() || before.Mode()&os.ModeSymlink != 0 || before.Mode().Perm()&0077 != 0 || before.Size() > MaxPackageSize || time.Since(before.ModTime()) > 7*24*time.Hour {
+		return nil, ErrInvalidPackage
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	after, err := file.Stat()
+	if err != nil || !after.Mode().IsRegular() || after.Mode().Perm()&0077 != 0 || !os.SameFile(before, after) || after.Size() > MaxPackageSize || time.Since(after.ModTime()) > 7*24*time.Hour {
+		_ = file.Close()
+		return nil, ErrInvalidPackage
+	}
+	return file, nil
+}
+
+func retryPackageUnavailableReason(path string) string {
+	info, err := os.Stat(path)
+	if err == nil && time.Since(info.ModTime()) > 7*24*time.Hour {
+		return "加密快照已超过 7 天，无法重试。"
+	}
+	return "加密快照不可用，无法重试。"
+}
+
+func (s *Service) cleanupRetryPackages(ctx context.Context) error {
+	workDir := s.workDir
+	entries, err := os.ReadDir(workDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	snapshots, err := s.repo.ListSnapshots(ctx)
+	if err != nil {
+		return err
+	}
+	byID := make(map[string]Snapshot, len(snapshots))
+	for _, snapshot := range snapshots {
+		byID[snapshot.ID] = snapshot
+	}
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), "retry-") || !strings.HasSuffix(entry.Name(), ".tgb") {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		id := strings.TrimSuffix(strings.TrimPrefix(entry.Name(), "retry-"), ".tgb")
+		snapshot, exists := byID[id]
+		expired := time.Since(info.ModTime()) > 7*24*time.Hour
+		if exists && expired && snapshot.Status != "succeeded" && snapshot.RetryUnavailableReason == "" {
+			snapshot.RetryAvailable = false
+			snapshot.RetryUnavailableReason = "加密快照已超过 7 天，无法重试。"
+			if err := s.repo.SaveSnapshot(ctx, snapshot); err != nil {
+				return err
+			}
+		}
+		if !exists || snapshot.Status == "succeeded" || expired {
+			if err := os.Remove(filepath.Join(workDir, entry.Name())); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func uploadPackage(ctx context.Context, store ObjectStore, name, packagePath string) error {
+	f, err := openPrivateRetryPackage(packagePath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return store.Upload(ctx, name, f)
+}
+
+func targetRunIndex(runs []TargetRun, id string) int {
+	for i := range runs {
+		if runs[i].TargetID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+func countTargetRuns(runs []TargetRun) (succeeded, failed int) {
+	for _, run := range runs {
+		switch run.Status {
+		case "succeeded":
+			succeeded++
+		case "failed":
+			failed++
+		}
+	}
+	return
+}
+
+func targetRunsStatus(runs []TargetRun) string {
+	succeeded, failed := countTargetRuns(runs)
+	for _, run := range runs {
+		if run.Status == "pending" {
+			return "running"
+		}
+	}
+	if failed > 0 && succeeded > 0 {
+		return "partial_success"
+	}
+	if failed > 0 || succeeded == 0 {
+		return "failed"
+	}
+	return "succeeded"
+}
+
+func isContextError(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+func (s *Service) persistTargetRuns(ctx context.Context, id string, runs []TargetRun) error {
+	err := s.repo.SaveTargetRuns(ctx, id, runs)
+	if err == nil || ctx.Err() == nil {
+		return err
+	}
+	background, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return s.repo.SaveTargetRuns(background, id, runs)
+}
+
+func (s *Service) persistSnapshot(ctx context.Context, snapshot Snapshot) error {
+	err := s.repo.SaveSnapshot(ctx, snapshot)
+	if err == nil || ctx.Err() == nil {
+		return err
+	}
+	background, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return s.repo.SaveSnapshot(background, snapshot)
+}
+
+type safeSummary interface{ ErrorSummary() string }
+
+func safeTargetError(err error) string {
+	var summary safeSummary
+	if errors.As(err, &summary) {
+		return summary.ErrorSummary()
+	}
+	return "目标连接或上传失败，请检查地址、权限和网络后重试。"
 }
 
 func (s *Service) Validate(ctx context.Context, targetID, snapshotID, password string) (Validation, error) {
