@@ -35,6 +35,20 @@ describe('Douyin playback diagnostics', () => {
     expect(diagnosticStageFacts(stage!)).toEqual(['HTTP 200', '非抖音页面上下文'])
   })
 
+  it('shows bounded candidate rejection hosts and reason labels', () => {
+    const [stage] = parseDouyinDiagnostics([{
+      stage: 'webview_detail_capture', outcome: 'no_url', reason: 'candidate_filtered',
+      candidate_rejections: [
+        { host: 'v26-web.douyinvod.com', reason: 'expired' },
+        { host: 'unsafe.example', reason: 'host_not_allowed' },
+        { host: 'v1.douyinvod.com', reason: 'redirect_unresolved' },
+      ],
+    }])
+    expect(diagnosticStageFacts(stage!)).toContain('候选 v26-web.douyinvod.com：地址已过期')
+    expect(diagnosticStageFacts(stage!)).toContain('候选 unsafe.example：主机不在白名单')
+    expect(JSON.stringify(stage)).not.toContain('?')
+  })
+
   it('shows page readiness, blocked navigation, player code and retry count without unsafe text', () => {
     const [stage] = parseDouyinDiagnostics([{
       stage: 'frontend_media', outcome: 'exception', frontend_media_code: 2, attempted: 1,

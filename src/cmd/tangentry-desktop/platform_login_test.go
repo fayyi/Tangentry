@@ -18,6 +18,7 @@ func TestPlatformLoginURLAllowlist(t *testing.T) {
 		{"linuxdo", "http://linux.do/", false},
 		{"linuxdo", "https://linux.do.evil.example/", false},
 		{"douyin", "https://www.douyin.com/", true},
+		{"douyin", "https://aweme.snssdk.com/aweme/v1/play/?video_id=fixture", true},
 		{"douyin", "https://passport.douyin.com/login", true},
 		{"douyin", "https://www.iesdouyin.com/share", true},
 		{"douyin", "https://douyin.com.evil.example/", false},

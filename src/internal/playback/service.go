@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"tangentry/internal/platformfetch"
 )
 
 var (
@@ -136,7 +138,7 @@ func allowedFor(platform, raw string) bool {
 	}
 	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
 	if platform == "douyin" {
-		return host == "douyinvod.com" || strings.HasSuffix(host, ".douyinvod.com")
+		return u.Scheme == "https" && platformfetch.IsDouyinCDNHost(host)
 	}
 	return strings.HasSuffix(host, ".bilivideo.com") || strings.HasSuffix(host, ".bilivideo.cn")
 }
@@ -207,6 +209,9 @@ func (s *Service) open(ctx context.Context, id string) (Session, error) {
 	source, err := s.resolve(ctx, id)
 	if err != nil {
 		return Session{}, err
+	}
+	if ValidDouyinID(id) && source.Platform == "" {
+		source.Platform = "douyin"
 	}
 	rawSource := source
 	source, err = normalizeSource(source)

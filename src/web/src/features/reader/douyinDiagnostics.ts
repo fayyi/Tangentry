@@ -39,6 +39,7 @@ export type DouyinDiagnosticStage = {
   duration_seconds: number | null
   cdn_allowed: boolean | null
   signature_deadline_unix: number | null
+  candidate_rejections: { host: string; reason: string }[]
 }
 
 const outcomes = new Set<DiagnosticOutcome>(['ok', 'restricted', 'timeout', 'too_large', 'no_url', 'http_error', 'exception'])
@@ -59,6 +60,7 @@ const reasonNames: Record<string, string> = {
   navigation_blocked: '导航被安全策略阻止', page_load_error: '页面加载失败', javascript_error: '页面脚本执行失败', network_error: '网络请求失败', fetch_reject: 'fetch 未取得响应', xhr_network_error: 'XHR 网络失败', request_timeout: '页面请求超时', request_aborted: '页面请求中止', response_unavailable: '响应不可读取', observer_no_response: '未捕获到目标响应', observer_not_installed: '页面请求观察器未安装', target_not_matched: '响应未匹配目标视频',
   detail_success: '详情读取成功', http_status: 'HTTP 请求失败', business_verification: '业务验证状态', non_json: '响应不是 JSON', invalid_json: 'JSON 格式异常', response_too_large: '响应超过大小限制',
   media_found: '找到媒体候选', media_not_found: '没有媒体候选', candidate_filtered: '候选不符合白名单或已过期', candidate_expired: '候选已过期', cdn_rejected: 'CDN 不在白名单', source_expired: '签名已过期', source_valid: '播放地址有效',
+  scheme: '协议不符合要求', host_not_allowed: '主机不在白名单', expired: '地址已过期', too_long: '地址过长', redirect_unresolved: '播放跳转地址未解析',
   tool_unavailable: 'yt-dlp 不可用', cookie_read_error: 'Cookie 配置读取失败', cookie_configured: 'Cookie 已配置', command_error: 'yt-dlp 命令创建失败', command_failed: 'yt-dlp 执行失败', cancelled: '请求已取消', stdout_too_large: 'yt-dlp 输出过大',
   format_invalid: '播放格式不兼容', json_invalid: 'yt-dlp 输出格式异常', timeout: '等待超时', signature_refresh: '刷新签名地址', candidate_http_error: '媒体地址请求失败', invalid_media_response: '媒体响应格式不兼容',
   stream_error: '媒体流读取失败', media_aborted: '播放已中止', media_decode_error: '媒体解码失败', media_network_error: '播放器网络错误', media_src_not_supported: '媒体格式不受支持', api_error: 'API 请求失败', request_error: '请求失败',
@@ -174,6 +176,13 @@ export function parseDouyinDiagnostics(value: unknown): DouyinDiagnosticStage[] 
       extension: nullableString(raw.extension, 16), video_codec: nullableString(raw.video_codec, 32),
       audio_codec: nullableString(raw.audio_codec, 32), duration_seconds: nullableNumber(raw.duration_seconds),
       cdn_allowed: nullableBoolean(raw.cdn_allowed), signature_deadline_unix: nullableNumber(raw.signature_deadline_unix),
+      candidate_rejections: Array.isArray(raw.candidate_rejections) ? raw.candidate_rejections.slice(0, 6).flatMap((item: unknown) => {
+        if (!item || typeof item !== 'object') return []
+        const rejection = item as Record<string, unknown>
+        const host = nullableString(rejection.host, 253)
+        const reason = nullableString(rejection.reason, 32)
+        return reason && ['scheme', 'host_not_allowed', 'expired', 'too_long', 'redirect_unresolved'].includes(reason) ? [{ host: host ?? '', reason }] : []
+      }) : [],
     }]
   }).sort((a, b) => stageOrder.indexOf(a.stage) - stageOrder.indexOf(b.stage))
 }
@@ -195,6 +204,7 @@ export function diagnosticStageFacts(stage: DouyinDiagnosticStage): string[] {
   if (stage.business_status !== null) facts.push(`业务状态 ${stage.business_status}`)
   if (stage.candidate_count !== null) facts.push(`候选 ${stage.candidate_count}`)
   if (stage.accepted_count !== null) facts.push(`白名单通过 ${stage.accepted_count}`)
+  for (const rejection of stage.candidate_rejections) facts.push(`候选 ${rejection.host || '未知主机'}：${reasonNames[rejection.reason]}`)
   if (stage.video_element_count !== null) facts.push(`video 元素 ${stage.video_element_count}`)
   if (stage.detail_url_count !== null) facts.push(`详情地址 ${stage.detail_url_count}`)
   if (stage.target_match_count !== null) facts.push(`目标匹配 ${stage.target_match_count}`)

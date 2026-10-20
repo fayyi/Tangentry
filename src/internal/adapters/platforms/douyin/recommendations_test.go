@@ -281,6 +281,15 @@ func TestResolveVideoMediaFiltersRestrictedAndExpiredCandidates(t *testing.T) {
 	}
 }
 
+func TestPlaybackURLAcceptsSharedCDNsAndUpgradesHTTP(t *testing.T) {
+	if !PlaybackURL("http://v26-web.douyinvod.com/video.mp4") || !PlaybackURL("https://media.zjcdn.com/video.mp4") || !PlaybackURL("https://media.douyinvod.net/video.mp4") {
+		t.Fatal("shared Douyin CDN URL was rejected")
+	}
+	if PlaybackURL("https://media.example.com/video.mp4") || PlaybackURL("https://media.zjcdn.com/video.mp4?x-expires=1") {
+		t.Fatal("unsafe or expired URL was accepted")
+	}
+}
+
 func TestCaptureBusinessStatusRejectsVerificationResponse(t *testing.T) {
 	page := captureFetcherFunc(func(context.Context, string, int) (platformfetch.FeedCaptureResponse, error) {
 		return platformfetch.FeedCaptureResponse{FeedParsed: true, Responses: []platformfetch.FeedResponse{{Status: http.StatusOK, APIStatus: 401, Parsed: true, ContentType: "application/json", URL: "https://www.douyin.com/aweme/v2/web/module/feed/"}}}, nil

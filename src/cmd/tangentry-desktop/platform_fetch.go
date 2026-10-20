@@ -23,6 +23,8 @@ import (
 
 const (
 	platformFetchMaxBody     = 4 << 20
+	douyinMediaCandidateMax  = 32
+	douyinDOMCandidateMax    = 16
 	platformFetchTimeout     = 20 * time.Second
 	douyinVideoMediaTimeout  = 25 * time.Second
 	platformFetchIdle        = 5 * time.Minute
@@ -129,8 +131,10 @@ func concealPlatformPageWindow(window *mygo.Window, planned mygo.Rectangle) {
 }
 
 const douyinFeedCaptureScript = `(function(){
-  if (window.__tangentryDouyinFeedInstalled) return;
-  window.__tangentryDouyinFeedInstalled = true;
+  const observerVersion=2;
+  if (window.__tangentryDouyinObserverVersion===observerVersion && window.fetch===window.__tangentryDouyinFetchWrapper && XMLHttpRequest.prototype.send===window.__tangentryDouyinXHRSend) return;
+  window.__tangentryDouyinObserverVersion=observerVersion;
+  window.__tangentryDouyinFeedInstalled=true;
   window.__tangentryDouyinFeed = window.__tangentryDouyinFeed || [];
   window.__tangentryDouyinMedia = window.__tangentryDouyinMedia || [];
   const max = 4 * 1024 * 1024;
@@ -154,14 +158,14 @@ const douyinFeedCaptureScript = `(function(){
   };
   const idOfAny = value => { const match=String(value || '').match(/^[1-9][0-9]{15,19}$/); return match ? match[0] : ''; };
   const targetID = () => { try { const path=String(location.pathname||'').match(/^\/video\/([1-9][0-9]{15,19})(?:\/|$)/); return idOfAny(window.__tangentryDouyinMediaTarget || sessionStorage.getItem('__tangentryDouyinMediaTarget') || path && path[1] || ''); } catch (_) { return idOfAny(window.__tangentryDouyinMediaTarget || ''); } };
-  const mediaURLs = value => { const result=[]; let count=0; const add=(value,depth=0) => { if (count>=4||depth>3) return; if (Array.isArray(value)) value.slice(0,8).forEach(item=>add(item,depth+1)); else if (typeof value === 'string') { const absoluteValue=absolute(value); if (absoluteValue.length<=8192&&/^https:\/\//i.test(absoluteValue)) { result.push(absoluteValue); count++; } } }; if (value && typeof value === 'object') { add(value.play_addr && (value.play_addr.url_list || value.play_addr.urlList)); const rates=value.bit_rate || value.bitRate; if (Array.isArray(rates)) rates.slice(0,8).forEach(rate=>add(rate && rate.play_addr && (rate.play_addr.url_list || rate.play_addr.urlList))); } return result; };
+  const mediaURLs = value => { const result=[]; let count=0; const add=(value,depth=0) => { if (count>=4||depth>3) return; if (Array.isArray(value)) value.slice(0,8).forEach(item=>add(item,depth+1)); else if (typeof value === 'string') { const absoluteValue=absolute(value); if (absoluteValue.length) { result.push(absoluteValue.slice(0,8193)); count++; } } }; if (value && typeof value === 'object') { add(value.play_addr && (value.play_addr.url_list || value.play_addr.urlList)); const rates=value.bit_rate || value.bitRate; if (Array.isArray(rates)) rates.slice(0,8).forEach(rate=>add(rate && rate.play_addr && (rate.play_addr.url_list || rate.play_addr.urlList))); } return result; };
   const mediaBody = (body, target) => {
     if (typeof body !== 'string' && (!body || typeof body !== 'object')) return {requestID:'', matchedIDs:[], candidates:[], businessStatus:0, restricted:false, invalidJSON:false};
     try {
       const value = typeof body === 'string' ? JSON.parse(body) : body;
       const candidates = [], seen = new Set(), matchedIDs = new Set(); let visited = 0;
       const walk = (node, depth) => {
-        if (!node || typeof node !== 'object' || depth > 8 || candidates.length >= 500 || visited >= 30000) return;
+        if (!node || typeof node !== 'object' || depth > 8 || candidates.length >= 32 || visited >= 30000) return;
         visited++;
         const id=idOfAny(node.aweme_id || node.awemeId || node.item_id || node.itemId || node.video_id || node.videoId);
         if (id && (id === target || !target) && matchedIDs.size < 32) matchedIDs.add(id);
@@ -194,11 +198,11 @@ const douyinFeedCaptureScript = `(function(){
     const resolvedURL = absolute(url);
     if (!isFeed(resolvedURL) && !isMedia(resolvedURL)) return;
     const type = String(contentType || '');
-    const payload = jsonType(type) ? projectBody(body) : null;
-    if (isFeed(resolvedURL)) { window.__tangentryDouyinFeed.push({url:resolvedURL, status:Number(status)||0, contentType:type, apiStatus:payload && payload.status || 0, parsed:payload ? payload.parsed : false, hasMore:payload ? payload.hasMore : false, tooLarge:Boolean(tooLarge), cards:payload ? payload.cards : []}); if (window.__tangentryDouyinFeed.length > 32) window.__tangentryDouyinFeed.splice(0, window.__tangentryDouyinFeed.length - 32); }
+    if (isFeed(resolvedURL)) { const payload=jsonType(type)?projectBody(body):null; window.__tangentryDouyinFeed.push({url:resolvedURL, status:Number(status)||0, contentType:type, apiStatus:payload && payload.status || 0, parsed:payload ? payload.parsed : false, hasMore:payload ? payload.hasMore : false, tooLarge:Boolean(tooLarge), cards:payload ? payload.cards : []}); if (window.__tangentryDouyinFeed.length > 32) window.__tangentryDouyinFeed.splice(0, window.__tangentryDouyinFeed.length - 32); }
     if (isMedia(resolvedURL)) { const reason=tooLarge?'response_too_large':!jsonType(type)?'non_json':''; pushMedia(resolvedURL, status, type, body, tooLarge, true, reason); }
   };
-  const originalFetch = window.fetch;
+  const originalFetch = window.__tangentryDouyinOriginalFetch || window.fetch;
+  window.__tangentryDouyinOriginalFetch = originalFetch;
   const fetchWrapper = function(){
     const request = arguments[0];
     const url = typeof request === 'string' ? request : request && request.url;
@@ -211,8 +215,10 @@ const douyinFeedCaptureScript = `(function(){
   };
   window.__tangentryDouyinFetchWrapper = fetchWrapper;
   window.fetch = fetchWrapper;
-  const open = XMLHttpRequest.prototype.open;
-  const send = XMLHttpRequest.prototype.send;
+  const open = window.__tangentryDouyinOriginalXHROpen || XMLHttpRequest.prototype.open;
+  const send = window.__tangentryDouyinOriginalXHRSend || XMLHttpRequest.prototype.send;
+  window.__tangentryDouyinOriginalXHROpen = open;
+  window.__tangentryDouyinOriginalXHRSend = send;
   XMLHttpRequest.prototype.open = function(method, url){ this.__tangentryURL = url; return open.apply(this, arguments); };
   const xhrSendWrapper = function(){
     this.addEventListener('load', function(){ try { const responseURL=this.__tangentryURL || this.responseURL; if (!isFeed(responseURL) && !isMedia(responseURL)) return; const contentType = this.getResponseHeader('content-type') || ''; if(isMedia(responseURL)&&this.status===0){pushMedia(responseURL,null,contentType,null,false,false,'xhr_network_error');return;} const length=Number(this.getResponseHeader('content-length') || 0); if (length > max) { if(isMedia(responseURL))pushMedia(responseURL,this.status,contentType,null,true,true,'response_too_large',length); else push(responseURL,this.status,contentType,null,true); return; } if(isMedia(responseURL)&&this.responseType!==''&&this.responseType!=='text'&&this.responseType!=='json'){pushMedia(responseURL,this.status,contentType,null,false,true,'response_unavailable',length||null);return;} const body=this.responseType === 'json' ? this.response : this.responseText; const bytes=byteLength(body); if(bytes>max){if(isMedia(responseURL))pushMedia(responseURL,this.status,contentType,null,true,true,'response_too_large',bytes);else push(responseURL,this.status,contentType,null,true);return;} if(isMedia(responseURL)&&!jsonType(contentType))pushMedia(responseURL,this.status,contentType,body,false,true,'non_json',bytes);else push(responseURL, this.status, contentType, body, false); } catch (_) { const responseURL=this.__tangentryURL||this.responseURL;if(isMedia(responseURL))pushMedia(responseURL,this.status||null,'',null,false,Number(this.status)>0,'response_unavailable'); } });
@@ -259,6 +265,151 @@ func douyinMediaReadScript(id string) string {
 })();`
 }
 
+func douyinPlayRedirectScript(values []string) string {
+	encoded, _ := json.Marshal(values)
+	return `(async function(){const urls=` + string(encoded) + `;const resolved=await Promise.all(urls.map(async raw=>{try{const target=new URL(raw,location.href);if(!/^https:\/\/(?:www\.douyin\.com|aweme\.snssdk\.com)$/i.test(target.origin)||!/^\/aweme\/v1\/play\//i.test(target.pathname)||target.origin!==location.origin)return '';for(const method of ['HEAD','GET']){try{const response=await fetch(target.href,{method:method,redirect:'follow',credentials:'same-origin'});const finalURL=response.url||'';if(response.body)response.body.cancel().catch(()=>{});if(finalURL&&finalURL!==target.href)return finalURL;}catch(_){}}return '';}catch(_){return '';}}));return resolved;})();`
+}
+
+func isDouyinPlayRedirect(raw string) bool {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.User != nil || u.Scheme != "https" || u.Hostname() == "" || !strings.EqualFold(u.Hostname(), "www.douyin.com") && !strings.EqualFold(u.Hostname(), "aweme.snssdk.com") {
+		return false
+	}
+	return strings.HasPrefix(strings.ToLower(u.Path), "/aweme/v1/play/")
+}
+
+func resolveDouyinPlayRedirects(ctx context.Context, page *mygo.Page, values []string) ([]string, map[string]bool, error) {
+	redirects := make([]string, 0, len(values))
+	for _, value := range values {
+		if isDouyinPlayRedirect(value) {
+			redirects = append(redirects, value)
+		}
+	}
+	if len(redirects) == 0 {
+		return values, nil, nil
+	}
+	if page == nil {
+		unresolved := make(map[string]bool, len(redirects))
+		for _, value := range redirects {
+			unresolved[value] = true
+		}
+		return values, unresolved, nil
+	}
+	raw, err := evalPageWithRetry(ctx, page, douyinPlayRedirectScript(redirects))
+	if err != nil {
+		unresolved := make(map[string]bool, len(redirects))
+		for _, value := range redirects {
+			unresolved[value] = true
+		}
+		return values, unresolved, nil
+	}
+	encoded, err := json.Marshal(raw)
+	if err != nil {
+		return values, nil, err
+	}
+	var resolved []string
+	if err := json.Unmarshal(encoded, &resolved); err != nil || len(resolved) != len(redirects) {
+		unresolved := make(map[string]bool, len(redirects))
+		for _, value := range redirects {
+			unresolved[value] = true
+		}
+		return values, unresolved, nil
+	}
+	return applyDouyinPlayRedirects(values, redirects, resolved)
+}
+
+func applyDouyinPlayRedirects(values, redirects, resolved []string) ([]string, map[string]bool, error) {
+	if len(redirects) != len(resolved) {
+		return nil, nil, errors.New("抖音播放跳转结果数量不匹配")
+	}
+	resolvedByInput := make(map[string]string, len(redirects))
+	unresolved := make(map[string]bool, len(redirects))
+	for index, value := range redirects {
+		if resolved[index] == "" {
+			unresolved[value] = true
+		} else {
+			resolvedByInput[value] = resolved[index]
+		}
+	}
+	output := make([]string, 0, len(values))
+	for _, value := range values {
+		if result, ok := resolvedByInput[value]; ok {
+			output = append(output, result)
+		} else {
+			output = append(output, value)
+		}
+	}
+	return output, unresolved, nil
+}
+
+func resolveAndFilterDouyinMedia(ctx context.Context, page *mygo.Page, values []string) ([]string, []platformfetch.DouyinCandidateRejection, error) {
+	resolved, unresolved, err := resolveDouyinPlayRedirects(ctx, page, values)
+	if err != nil {
+		return nil, nil, err
+	}
+	filtered := make([]string, 0, 3)
+	rejected := make([]platformfetch.DouyinCandidateRejection, 0, 6)
+	seen := map[string]bool{}
+	for index, raw := range values {
+		if unresolved[raw] {
+			host := ""
+			if parsed, parseErr := url.Parse(strings.TrimSpace(raw)); parseErr == nil {
+				host = strings.ToLower(strings.TrimSuffix(parsed.Hostname(), "."))
+			}
+			if len(rejected) < 6 {
+				rejected = append(rejected, platformfetch.DouyinCandidateRejection{Host: host, Reason: "redirect_unresolved"})
+			}
+			continue
+		}
+		candidate := raw
+		if index < len(resolved) {
+			candidate = resolved[index]
+		}
+		value, reason := platformfetch.NormalizeDouyinMediaURL(candidate, time.Now())
+		if reason != "" {
+			host := ""
+			if parsed, parseErr := url.Parse(strings.TrimSpace(candidate)); parseErr == nil {
+				host = strings.ToLower(strings.TrimSuffix(parsed.Hostname(), "."))
+			}
+			if len(rejected) < 6 {
+				rejected = append(rejected, platformfetch.DouyinCandidateRejection{Host: host, Reason: reason})
+			}
+			continue
+		}
+		if !seen[value] {
+			seen[value] = true
+			filtered = append(filtered, value)
+		}
+		if len(filtered) == 3 {
+			break
+		}
+	}
+	return filtered, rejected, nil
+}
+
+func rawMediaCandidatesFromCaptures(captures []platformfetch.VideoMediaCapture, id string) []string {
+	values := make([]string, 0, douyinMediaCandidateMax)
+	for _, capture := range captures {
+		if !capture.HasResponse || capture.TooLarge || capture.Restricted || capture.Status == nil || *capture.Status < 200 || *capture.Status >= 300 || capture.ContentType == nil || !isJSONContentType(*capture.ContentType) || capture.ResponseBytes == nil || *capture.ResponseBytes > platformFetchMaxBody {
+			continue
+		}
+		for _, candidate := range capture.Candidates {
+			if candidate.ID == id {
+				remaining := douyinMediaCandidateMax - len(values)
+				if remaining <= 0 {
+					return values
+				}
+				if len(candidate.URLs) > remaining {
+					values = append(values, candidate.URLs[:remaining]...)
+					return values
+				}
+				values = append(values, candidate.URLs...)
+			}
+		}
+	}
+	return values
+}
+
 // Kept as a compatibility fixture name for existing bridge tests. Resolution
 // itself no longer issues a detail fetch from page context.
 func douyinVideoMediaScript(id string) string {
@@ -270,10 +421,10 @@ func douyinDOMMediaScript(id string) string {
 	limit := strconv.Itoa(platformFetchMaxBody)
 	return `(function(){
   const target=` + string(encoded) + `, pageURL=(()=>{try{const u=new URL(location.href);return u.hostname.toLowerCase()+u.pathname;}catch(_){return '';}})();
-  const candidates=[], seen=new Set(), add=(id,values)=>{if(id!==target||!Array.isArray(values)||candidates.length>=128)return;const urls=values.slice(0,12).map(value=>{if(typeof value!=='string'||value.length>8192)return '';try{return new URL(value,location.href).href;}catch(_){return '';}}).filter(value=>/^https:\/\//i.test(value));if(!urls.length)return;const key=id+'|'+urls.join('|');if(!seen.has(key)){seen.add(key);candidates.push({id:id,urls:urls});}};
+  const candidates=[], seen=new Set(), add=(id,values)=>{if(id!==target||!Array.isArray(values)||candidates.length>=16)return;const urls=values.slice(0,4).map(value=>{if(typeof value!=='string'||value.length>8192)return '';try{return new URL(value,location.href).href;}catch(_){return '';}}).filter(value=>/^https?:\/\//i.test(value));if(!urls.length)return;const key=id+'|'+urls.join('|');if(!seen.has(key)){seen.add(key);candidates.push({id:id,urls:urls});}};
   const idOf=value=>{const match=String(value||'').match(/^[1-9][0-9]{15,19}$/);return match?match[0]:'';};
-  const urlsOf=value=>{const result=[];const collect=(items,depth=0)=>{if(result.length>=4||depth>3)return;if(Array.isArray(items))items.slice(0,8).forEach(item=>collect(item,depth+1));else if(typeof items==='string'&&items.length<=8192&&/^https:\/\//i.test(items))result.push(items);};if(value&&typeof value==='object'){collect(value.play_addr&&(value.play_addr.url_list||value.play_addr.urlList));const rates=value.bit_rate||value.bitRate;if(Array.isArray(rates))rates.slice(0,8).forEach(rate=>collect(rate&&rate.play_addr&&(rate.play_addr.url_list||rate.play_addr.urlList)));}return result;};
-  let visited=0;const walk=(node,depth)=>{if(!node||typeof node!=='object'||depth>8||candidates.length>=128||visited>=30000)return;visited++;const own=idOf(node.aweme_id||node.awemeId||node.item_id||node.itemId||node.video_id||node.videoId);if(own)add(own,urlsOf(node.video));let keys=0;for(const key in node){if(++keys>200)break;walk(node[key],depth+1);}};
+  const urlsOf=value=>{const result=[];const collect=(items,depth=0)=>{if(result.length>=4||depth>3)return;if(Array.isArray(items))items.slice(0,8).forEach(item=>collect(item,depth+1));else if(typeof items==='string'&&items.length)result.push(items.slice(0,8193));};if(value&&typeof value==='object'){collect(value.play_addr&&(value.play_addr.url_list||value.play_addr.urlList));const rates=value.bit_rate||value.bitRate;if(Array.isArray(rates))rates.slice(0,8).forEach(rate=>collect(rate&&rate.play_addr&&(rate.play_addr.url_list||rate.play_addr.urlList)));}return result;};
+  let visited=0;const walk=(node,depth)=>{if(!node||typeof node!=='object'||depth>8||candidates.length>=16||visited>=30000)return;visited++;const own=idOf(node.aweme_id||node.awemeId||node.item_id||node.itemId||node.video_id||node.videoId);if(own)add(own,urlsOf(node.video));let keys=0;for(const key in node){if(++keys>200)break;walk(node[key],depth+1);}};
   const videos=Array.from(document.querySelectorAll('video')).slice(0,16), direct=[];
   if(new RegExp('^https://(?:www\\.)?douyin\\.com/video/'+target+'(?:[/?#]|$)','i').test(location.href)){const video=videos[0];if(video){const values=[video.currentSrc,video.getAttribute('src'),...Array.from(video.querySelectorAll('source')).slice(0,8).map(source=>source.getAttribute('src'))].filter(Boolean);if(values.length)direct.push(...values);}}
   add(target,direct);
@@ -439,6 +590,9 @@ func (b *platformPageBridge) ResolveVideoMedia(ctx context.Context, id string) (
 	if _, err := evalPageWithRetry(ctx, session.window.Page(), douyinMediaTargetScript(id)); err != nil && ctx.Err() != nil {
 		return platformfetch.VideoMediaResponse{}, platformfetch.WrapVideoMediaError(err, diagnostics...)
 	}
+	if _, err := evalPageWithRetry(ctx, session.window.Page(), douyinFeedCaptureScript); err != nil && ctx.Err() != nil {
+		return platformfetch.VideoMediaResponse{}, platformfetch.WrapVideoMediaError(err, diagnostics...)
+	}
 	if _, err := evalPageWithRetry(ctx, session.window.Page(), douyinMediaClearScript); err != nil && ctx.Err() != nil {
 		return platformfetch.VideoMediaResponse{}, platformfetch.WrapVideoMediaError(err, diagnostics...)
 	}
@@ -592,6 +746,7 @@ func (b *platformPageBridge) ResolveVideoMedia(ctx context.Context, id string) (
 	}
 	if len(capture.Captures) == 0 && capture.Latest != nil {
 		_, aStats = mediaCandidatesFromCaptures([]platformfetch.VideoMediaCapture{*capture.Latest}, id)
+		aCandidates = nil
 	}
 	if len(aCandidates) == 0 && len(capture.Captures) == 0 && capture.Latest == nil {
 		aStats.Reason = "observer_no_response"
@@ -619,13 +774,30 @@ func (b *platformPageBridge) ResolveVideoMedia(ctx context.Context, id string) (
 		}(), PageURL: safePageURL(finalPageURL), PageReadyState: &capture.ReadyState, IsDouyinContext: boolPtr(capture.IsDouyinContext), BusinessStatus: intPtr(aStats.BusinessStatus)})
 		return platformfetch.VideoMediaResponse{Restricted: true, PageURL: safeCaptureURL(finalPageURL), Diagnostics: diagnostics}, nil
 	}
+	aRaw := rawMediaCandidatesFromCaptures(capture.Captures, id)
+	if len(capture.Captures) == 0 && capture.Latest != nil {
+		aRaw = rawMediaCandidatesFromCaptures([]platformfetch.VideoMediaCapture{*capture.Latest}, id)
+	}
+	aCandidates, aRejections, redirectErr := resolveAndFilterDouyinMedia(ctx, session.window.Page(), aRaw)
+	if redirectErr != nil {
+		diagnostics = append(diagnostics, platformfetch.VideoMediaDiagnostic{Stage: "webview_detail_capture", Outcome: "exception", Reason: "javascript_error", PageURL: safePageURL(finalPageURL), IsDouyinContext: boolPtr(capture.IsDouyinContext)})
+		return platformfetch.VideoMediaResponse{}, platformfetch.WrapVideoMediaError(redirectErr, diagnostics...)
+	}
+	aStats.CandidateCount = len(aRaw)
+	aStats.AcceptedCount = len(aCandidates)
+	aStats.CandidateRejections = aRejections
 	diagnostics = append(diagnostics, mediaCaptureDiagnostics("webview_detail_capture", aStats, finalPageURL, capture.ReadyState, capture.IsDouyinContext)...)
 	chosen := selectDouyinMediaCandidates(aCandidates, nil, nil)
 	var bCandidates []string
+	var bStats douyinMediaStats
+	var dom douyinDOMMediaResult
+	var domURLs, domCandidates []string
+	var domRejections []platformfetch.DouyinCandidateRejection
+	var domErr error
 	if len(chosen) == 0 {
 		// C snapshot is taken while the canonical detail page is still active.
-		rawDOM, domErr := evalPageWithRetry(ctx, session.window.Page(), douyinDOMMediaScript(id))
-		var dom douyinDOMMediaResult
+		rawDOM, snapshotErr := evalPageWithRetry(ctx, session.window.Page(), douyinDOMMediaScript(id))
+		domErr = snapshotErr
 		if domErr == nil {
 			domErr = decodeDouyinDOMMediaResult(rawDOM, &dom)
 		}
@@ -640,17 +812,12 @@ func (b *platformPageBridge) ResolveVideoMedia(ctx context.Context, id string) (
 		if domErr != nil && ctx.Err() != nil {
 			return platformfetch.VideoMediaResponse{}, platformfetch.WrapVideoMediaError(domErr, diagnostics...)
 		}
-		cCandidates := dom.Candidates
 		if domErr == nil && (dom.Restricted || !dom.IsDouyinContext) {
 			diagnostics = append(diagnostics, platformfetch.VideoMediaDiagnostic{Stage: "webview_dom_fallback", Outcome: "restricted", Reason: "business_verification", PageURL: safePageURL(dom.PageURL), PageReadyState: &dom.ReadyState, IsDouyinContext: boolPtr(dom.IsDouyinContext), VideoElementCount: intPtr(dom.VideoCount), VideoSourceCount: intPtr(dom.VideoSourceCount)})
 			return platformfetch.VideoMediaResponse{Restricted: true, PageURL: safeCaptureURL(dom.PageURL), Diagnostics: diagnostics}, nil
 		}
-		if domErr != nil {
-			diagnostics = append(diagnostics, platformfetch.VideoMediaDiagnostic{Stage: "webview_dom_fallback", Outcome: "exception", Reason: "javascript_error", PageURL: safePageURL(finalPageURL), IsDouyinContext: boolPtr(isDouyinPageContext(finalPageURL))})
-		}
-		if domErr == nil && dom.TooLarge {
-			bytes := int64(dom.ResponseBytes)
-			diagnostics = append(diagnostics, platformfetch.VideoMediaDiagnostic{Stage: "webview_dom_fallback", Outcome: "too_large", Reason: "response_too_large", PageURL: safePageURL(dom.PageURL), PageReadyState: &dom.ReadyState, IsDouyinContext: boolPtr(dom.IsDouyinContext), ResponseBytes: &bytes, CandidateCount: intPtr(0), AcceptedCount: intPtr(0)})
+		if domErr == nil && !dom.Restricted && dom.IsDouyinContext {
+			domURLs = candidatesForID(dom.Candidates, id)
 		}
 		if douyinMediaFallbackAllowed(finalPageURL, capture.Restricted) && ctx.Err() == nil {
 			currentState, stateErr := readDouyinPageState(ctx, session.window.Page())
@@ -681,18 +848,24 @@ func (b *platformPageBridge) ResolveVideoMedia(ctx context.Context, id string) (
 					diagnostics = append(diagnostics, platformfetch.VideoMediaDiagnostic{Stage: "webview_feed_fallback", Outcome: "restricted", Reason: "business_verification", PageURL: safePageURL(feed.PageURL), PageReadyState: &feed.Ready, IsDouyinContext: boolPtr(isDouyinPageContext(feed.PageURL))})
 					return platformfetch.VideoMediaResponse{Restricted: true, PageURL: safeCaptureURL(feed.PageURL), Diagnostics: diagnostics}, nil
 				}
-				var stats douyinMediaStats
-				bCandidates, stats = mediaCandidatesFromCaptures(feed.MediaCaptures, id)
+				bRaw := rawMediaCandidatesFromCaptures(feed.MediaCaptures, id)
+				bCandidates, bRejections, redirectErr := resolveAndFilterDouyinMedia(ctx, session.window.Page(), bRaw)
+				if redirectErr != nil {
+					return platformfetch.VideoMediaResponse{}, platformfetch.WrapVideoMediaError(redirectErr, diagnostics...)
+				}
+				_, bStats = mediaCandidatesFromCaptures(feed.MediaCaptures, id)
+				bStats.CandidateCount = len(bRaw)
+				bStats.AcceptedCount = len(bCandidates)
+				bStats.CandidateRejections = bRejections
 				if len(feed.MediaCaptures) == 0 {
-					stats.Reason = "observer_no_response"
+					bStats.Reason = "observer_no_response"
 					if !feed.FetchHookInstalled && !feed.XHRHookInstalled {
-						stats.Reason = "observer_not_installed"
+						bStats.Reason = "observer_not_installed"
 					}
 				}
-				stats.FetchHookInstalled = boolPtr(feed.FetchHookInstalled)
-				stats.XHRHookInstalled = boolPtr(feed.XHRHookInstalled)
-				diagnostics = append(diagnostics, mediaCaptureDiagnostics("webview_feed_fallback", stats, feed.PageURL, feed.Ready, isDouyinPageContext(feed.PageURL))...)
-				if stats.Reason == "business_verification" {
+				bStats.FetchHookInstalled = boolPtr(feed.FetchHookInstalled)
+				bStats.XHRHookInstalled = boolPtr(feed.XHRHookInstalled)
+				if bStats.Reason == "business_verification" {
 					return platformfetch.VideoMediaResponse{Restricted: true, PageURL: safeCaptureURL(feed.PageURL), Diagnostics: diagnostics}, nil
 				}
 			} else if ctx.Err() != nil {
@@ -711,27 +884,35 @@ func (b *platformPageBridge) ResolveVideoMedia(ctx context.Context, id string) (
 					diagnostics = append(diagnostics, platformfetch.VideoMediaDiagnostic{Stage: "webview_feed_fallback", Outcome: "restricted", Reason: "business_verification", PageURL: safePageURL(pageState.URL), PageReadyState: stringPtr(pageState.Ready), IsDouyinContext: boolPtr(pageState.Douyin)})
 					return platformfetch.VideoMediaResponse{Restricted: true, PageURL: safeCaptureURL(pageState.URL), Diagnostics: diagnostics}, nil
 				}
-				stats := douyinMediaStats{Reason: "response_unavailable", FetchHookInstalled: boolPtr(feed.FetchHookInstalled), XHRHookInstalled: boolPtr(feed.XHRHookInstalled)}
-				diagnostics = append(diagnostics, mediaCaptureDiagnostics("webview_feed_fallback", stats, pageState.URL, pageState.Ready, pageState.Douyin)...)
+				bStats = douyinMediaStats{Reason: "response_unavailable", FetchHookInstalled: boolPtr(feed.FetchHookInstalled), XHRHookInstalled: boolPtr(feed.XHRHookInstalled)}
 			}
 		}
+		diagnostics = append(diagnostics, mediaCaptureDiagnostics("webview_feed_fallback", bStats, session.window.Page().URL(), dom.ReadyState, isDouyinPageContext(session.window.Page().URL()))...)
+		chosen = selectDouyinMediaCandidates(nil, bCandidates, nil)
 		if len(chosen) == 0 {
-			domURLs := candidatesForID(cCandidates, id)
-			diagnostics = append(diagnostics, platformfetch.VideoMediaDiagnostic{Stage: "webview_dom_fallback", Outcome: func() string {
-				if len(safeDouyinMedia(domURLs)) > 0 {
-					return "ok"
+			if domErr == nil && !dom.Restricted && dom.IsDouyinContext {
+				domCandidates, domRejections, redirectErr = resolveAndFilterDouyinMedia(ctx, session.window.Page(), domURLs)
+				if redirectErr != nil {
+					return platformfetch.VideoMediaResponse{}, platformfetch.WrapVideoMediaError(redirectErr, diagnostics...)
 				}
-				return "no_url"
-			}(), Reason: func() string {
-				if len(safeDouyinMedia(domURLs)) > 0 {
-					return "media_found"
-				}
-				if len(domURLs) > 0 {
-					return "candidate_filtered"
-				}
-				return "media_not_found"
-			}(), PageURL: safePageURL(dom.PageURL), PageReadyState: &dom.ReadyState, IsDouyinContext: boolPtr(dom.IsDouyinContext), CandidateCount: intPtr(len(domURLs)), AcceptedCount: intPtr(len(safeDouyinMedia(domURLs))), VideoElementCount: intPtr(dom.VideoCount), VideoSourceCount: intPtr(dom.VideoSourceCount)})
-			chosen = selectDouyinMediaCandidates(aCandidates, bCandidates, domURLs)
+			}
+			domOutcome, domReason := "no_url", "media_not_found"
+			if len(domCandidates) > 0 {
+				domOutcome, domReason = "ok", "media_found"
+			} else if len(domURLs) > 0 {
+				domReason = "candidate_filtered"
+			}
+			var domBytes *int64
+			if dom.TooLarge {
+				domOutcome, domReason = "too_large", "response_too_large"
+				value := int64(dom.ResponseBytes)
+				domBytes = &value
+			}
+			if domErr != nil {
+				domOutcome, domReason = "exception", "javascript_error"
+			}
+			diagnostics = append(diagnostics, platformfetch.VideoMediaDiagnostic{Stage: "webview_dom_fallback", Outcome: domOutcome, Reason: domReason, PageURL: safePageURL(dom.PageURL), PageReadyState: &dom.ReadyState, IsDouyinContext: boolPtr(dom.IsDouyinContext), CandidateCount: intPtr(len(domURLs)), AcceptedCount: intPtr(len(domCandidates)), ResponseBytes: domBytes, VideoElementCount: intPtr(dom.VideoCount), VideoSourceCount: intPtr(dom.VideoSourceCount), CandidateRejections: domRejections})
+			chosen = selectDouyinMediaCandidates(nil, nil, domCandidates)
 		}
 	}
 	if ctx.Err() != nil {
@@ -761,9 +942,17 @@ func (b *platformPageBridge) ResolveVideoMedia(ctx context.Context, id string) (
 }
 
 func candidatesForID(values []platformfetch.VideoMediaCandidate, id string) []string {
-	var result []string
+	result := make([]string, 0, douyinDOMCandidateMax)
 	for _, candidate := range values {
 		if candidate.ID == id {
+			remaining := douyinDOMCandidateMax - len(result)
+			if remaining <= 0 {
+				return result
+			}
+			if len(candidate.URLs) > remaining {
+				result = append(result, candidate.URLs[:remaining]...)
+				return result
+			}
 			result = append(result, candidate.URLs...)
 		}
 	}
@@ -772,8 +961,8 @@ func candidatesForID(values []platformfetch.VideoMediaCandidate, id string) []st
 
 func selectDouyinMediaCandidates(detail, feed, dom []string) []string {
 	for _, values := range [][]string{detail, feed, dom} {
-		if len(values) > 0 {
-			return values
+		if normalized := safeDouyinMedia(values); len(normalized) > 0 {
+			return normalized
 		}
 	}
 	return nil
@@ -879,17 +1068,8 @@ func safeDouyinMedia(values []string) []string {
 	result := make([]string, 0, 3)
 	seen := map[string]bool{}
 	for _, raw := range values {
-		u, err := url.Parse(strings.TrimSpace(raw))
-		if err != nil || u.Scheme != "https" || u.User != nil || u.Opaque != "" || len(raw) > 8192 || (u.Port() != "" && u.Port() != "443") {
-			continue
-		}
-		host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
-		if host != "douyinvod.com" && !strings.HasSuffix(host, ".douyinvod.com") {
-			continue
-		}
-		u.RawQuery = u.RawQuery
-		value := u.String()
-		if !douyinMediaURLLive(value, time.Now()) {
+		value, reason := platformfetch.NormalizeDouyinMediaURL(raw, time.Now())
+		if reason != "" {
 			continue
 		}
 		if !seen[value] {
@@ -903,17 +1083,31 @@ func safeDouyinMedia(values []string) []string {
 	return result
 }
 
-func douyinMediaURLLive(raw string, now time.Time) bool {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return false
+func filterDouyinMedia(values []string) ([]string, []platformfetch.DouyinCandidateRejection) {
+	result := make([]string, 0, 3)
+	rejections := make([]platformfetch.DouyinCandidateRejection, 0, 6)
+	seen := map[string]bool{}
+	for _, raw := range values {
+		value, reason := platformfetch.NormalizeDouyinMediaURL(raw, time.Now())
+		if reason != "" {
+			host := ""
+			if parsed, err := url.Parse(strings.TrimSpace(raw)); err == nil {
+				host = strings.ToLower(strings.TrimSuffix(parsed.Hostname(), "."))
+			}
+			if len(rejections) < 6 {
+				rejections = append(rejections, platformfetch.DouyinCandidateRejection{Host: host, Reason: reason})
+			}
+			continue
+		}
+		if !seen[value] {
+			seen[value] = true
+			result = append(result, value)
+		}
+		if len(result) == 3 {
+			break
+		}
 	}
-	deadline := u.Query().Get("deadline")
-	if deadline == "" {
-		return true
-	}
-	value, err := strconv.ParseInt(deadline, 10, 64)
-	return err == nil && value > now.Unix()
+	return result, rejections
 }
 
 func (b *platformPageBridge) CaptureFeed(ctx context.Context, platform string, pages int) (platformfetch.FeedCaptureResponse, error) {
@@ -1263,21 +1457,22 @@ type douyinDOMMediaResult struct {
 }
 
 type douyinMediaStats struct {
-	Status             int
-	ContentType        string
-	ResponseURL        string
-	ResponseBytes      int64
-	ResponseBytesKnown bool
-	HasResponse        bool
-	TargetMatches      int
-	CandidateCount     int
-	AcceptedCount      int
-	TooLarge           bool
-	Snippet            string
-	Reason             string
-	BusinessStatus     int
-	FetchHookInstalled *bool
-	XHRHookInstalled   *bool
+	Status              int
+	ContentType         string
+	ResponseURL         string
+	ResponseBytes       int64
+	ResponseBytesKnown  bool
+	HasResponse         bool
+	TargetMatches       int
+	CandidateCount      int
+	AcceptedCount       int
+	TooLarge            bool
+	Snippet             string
+	Reason              string
+	BusinessStatus      int
+	FetchHookInstalled  *bool
+	XHRHookInstalled    *bool
+	CandidateRejections []platformfetch.DouyinCandidateRejection
 }
 
 type douyinPageState struct {
@@ -1383,7 +1578,16 @@ func validCaptureCandidates(capture platformfetch.VideoMediaCapture, id string) 
 			values = append(values, candidate.URLs...)
 		}
 	}
-	return safeDouyinMedia(values)
+	result := make([]string, 0, 3)
+	for _, raw := range values {
+		if normalized, reason := platformfetch.NormalizeDouyinMediaURL(raw, time.Now()); reason == "" {
+			result = append(result, normalized)
+			if len(result) == 3 {
+				break
+			}
+		}
+	}
+	return result
 }
 
 func mediaCandidatesFromCaptures(captures []platformfetch.VideoMediaCapture, id string) ([]string, douyinMediaStats) {
@@ -1444,6 +1648,15 @@ func mediaCandidatesFromCaptures(captures []platformfetch.VideoMediaCapture, id 
 		for _, candidate := range capture.Candidates {
 			if candidate.ID == id {
 				stats.CandidateCount += len(candidate.URLs)
+				for _, raw := range candidate.URLs {
+					if _, reason := platformfetch.NormalizeDouyinMediaURL(raw, time.Now()); reason != "" && len(stats.CandidateRejections) < 6 {
+						host := ""
+						if parsed, err := url.Parse(strings.TrimSpace(raw)); err == nil {
+							host = strings.ToLower(strings.TrimSuffix(parsed.Hostname(), "."))
+						}
+						stats.CandidateRejections = append(stats.CandidateRejections, platformfetch.DouyinCandidateRejection{Host: host, Reason: reason})
+					}
+				}
 			}
 		}
 		stats.AcceptedCount += len(filtered)
@@ -1534,7 +1747,7 @@ func mediaCaptureDiagnostics(stage string, stats douyinMediaStats, pageURL, read
 	if stats.ResponseURL != "" {
 		responseURL = safePageURL("https://" + stats.ResponseURL)
 	}
-	return []platformfetch.VideoMediaDiagnostic{{Stage: stage, Outcome: outcome, Reason: reason, HTTPStatus: status, ResponseURL: responseURL, BusinessStatus: func() *int {
+	return []platformfetch.VideoMediaDiagnostic{{Stage: stage, Outcome: outcome, Reason: reason, HTTPStatus: status, ResponseURL: responseURL, CandidateRejections: stats.CandidateRejections, BusinessStatus: func() *int {
 		if stats.BusinessStatus != 0 {
 			return intPtr(stats.BusinessStatus)
 		}
@@ -1962,7 +2175,7 @@ func platformPageURLAllowed(raw, platform string) bool {
 	case "linuxdo":
 		return host == "linux.do"
 	case "douyin":
-		return host == "www.douyin.com"
+		return host == "www.douyin.com" || host == "aweme.snssdk.com"
 	case "xiaohongshu":
 		return host == "www.xiaohongshu.com"
 	default:

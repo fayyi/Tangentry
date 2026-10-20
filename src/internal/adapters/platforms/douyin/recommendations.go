@@ -322,8 +322,8 @@ func (c *Client) ResolveVideoMedia(ctx context.Context, id string) (platformfetc
 		if candidate != "" {
 			inputCount++
 		}
-		if PlaybackURL(candidate) && playbackURLLive(candidate, time.Now()) {
-			candidates = append(candidates, candidate)
+		if normalized, reason := platformfetch.NormalizeDouyinMediaURL(candidate, time.Now()); reason == "" {
+			candidates = append(candidates, normalized)
 			if len(candidates) == 3 {
 				break
 			}
@@ -355,7 +355,7 @@ func hasDiagnosticStage(values []platformfetch.VideoMediaDiagnostic, target stri
 
 func recordDouyinDiagnostic(ctx context.Context, diagnostic platformfetch.VideoMediaDiagnostic) {
 	outcome := playback.DiagnosticOutcome(diagnostic.Outcome)
-	stage := playback.DiagnosticStage{Stage: diagnostic.Stage, Outcome: outcome, Reason: stringPtr(diagnostic.Reason), HTTPStatus: diagnostic.HTTPStatus, ContentType: diagnostic.ContentType, ResponseURL: diagnostic.ResponseURL, PageURL: diagnostic.PageURL, BlockedNavigationURL: diagnostic.BlockedNavigationURL, PageReadyState: diagnostic.PageReadyState, IsDouyinContext: diagnostic.IsDouyinContext, BusinessStatus: diagnostic.BusinessStatus, CandidateCount: diagnostic.CandidateCount, AcceptedCount: diagnostic.AcceptedCount, VideoElementCount: diagnostic.VideoElementCount, DetailURLCount: diagnostic.DetailURLCount, VideoSourceCount: diagnostic.VideoSourceCount, TargetMatchCount: diagnostic.TargetMatchCount, ResponseBytes: diagnostic.ResponseBytes, ResponseSnippetRedacted: diagnostic.ResponseSnippetRedacted, FetchHookInstalled: diagnostic.FetchHookInstalled, XHRHookInstalled: diagnostic.XHRHookInstalled}
+	stage := playback.DiagnosticStage{Stage: diagnostic.Stage, Outcome: outcome, Reason: stringPtr(diagnostic.Reason), HTTPStatus: diagnostic.HTTPStatus, ContentType: diagnostic.ContentType, ResponseURL: diagnostic.ResponseURL, PageURL: diagnostic.PageURL, BlockedNavigationURL: diagnostic.BlockedNavigationURL, PageReadyState: diagnostic.PageReadyState, IsDouyinContext: diagnostic.IsDouyinContext, BusinessStatus: diagnostic.BusinessStatus, CandidateCount: diagnostic.CandidateCount, AcceptedCount: diagnostic.AcceptedCount, VideoElementCount: diagnostic.VideoElementCount, DetailURLCount: diagnostic.DetailURLCount, VideoSourceCount: diagnostic.VideoSourceCount, TargetMatchCount: diagnostic.TargetMatchCount, ResponseBytes: diagnostic.ResponseBytes, ResponseSnippetRedacted: diagnostic.ResponseSnippetRedacted, FetchHookInstalled: diagnostic.FetchHookInstalled, XHRHookInstalled: diagnostic.XHRHookInstalled, CandidateRejections: diagnostic.CandidateRejections}
 	playback.RecordDiagnostic(ctx, stage)
 }
 

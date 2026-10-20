@@ -194,6 +194,9 @@ func platformLoginTrustedOrigins(platform string) []string {
 	if platform == "linuxdo" {
 		return []string{"https://linux.do", "https://www.linux.do", "https://challenges.cloudflare.com", "https://turnstile.cloudflare.com", "https://static.cloudflareinsights.com"}
 	}
+	if platform == "douyin" {
+		return []string{"https://douyin.com", "https://www.douyin.com", "https://passport.douyin.com", "https://www.iesdouyin.com", "https://aweme.snssdk.com", "https://challenges.cloudflare.com", "https://turnstile.cloudflare.com", "https://static.cloudflareinsights.com"}
+	}
 	if platform == "bilibili" {
 		return []string{"https://bilibili.com", "https://www.bilibili.com", "https://passport.bilibili.com", "https://captcha.bilibili.com", "https://s1.hdslb.com"}
 	}
@@ -220,7 +223,7 @@ func platformLoginURLAllowed(rawURL, platform string) bool {
 	}
 	switch platform {
 	case "douyin":
-		return host == "douyin.com" || host == "www.douyin.com" || host == "passport.douyin.com" || host == "www.iesdouyin.com"
+		return host == "douyin.com" || host == "www.douyin.com" || host == "passport.douyin.com" || host == "www.iesdouyin.com" || host == "aweme.snssdk.com"
 	case "bilibili":
 		return host == "bilibili.com" || host == "www.bilibili.com" || host == "passport.bilibili.com" || host == "captcha.bilibili.com" || host == "s1.hdslb.com"
 	case "xiaohongshu":

@@ -76,6 +76,12 @@ type VideoMediaDiagnostic struct {
 	ResponseSnippetRedacted *string
 	FetchHookInstalled      *bool
 	XHRHookInstalled        *bool
+	CandidateRejections     []DouyinCandidateRejection
+}
+
+type DouyinCandidateRejection struct {
+	Host   string `json:"host"`
+	Reason string `json:"reason"`
 }
 
 type VideoMediaError struct {
