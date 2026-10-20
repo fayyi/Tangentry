@@ -28,6 +28,18 @@ func TestDouyinBrowserLoginPersistsSessionAndUA(t *testing.T) {
 	if err := s.PrepareDouyinBrowserLogin()(cookies, ua); err != nil {
 		t.Fatal(err)
 	}
+	assertMozillaJar(t, s.entries["douyin"].Jar)
+	rows := map[string][]string{}
+	for _, line := range strings.Split(strings.TrimSpace(strings.SplitN(s.entries["douyin"].Jar, "\n", 2)[1]), "\n") {
+		fields := strings.Split(line, "\t")
+		rows[fields[5]] = fields
+	}
+	if rows["ttwid"][0] != ".douyin.com" || rows["ttwid"][1] != "TRUE" {
+		t.Fatalf("domain cookie has invalid Mozilla scope: %q", rows["ttwid"])
+	}
+	if rows["sessionid"][0] != "passport.douyin.com" || rows["sessionid"][1] != "FALSE" {
+		t.Fatalf("host-only cookie scope was widened or malformed: %q", rows["sessionid"])
+	}
 	if got := s.UserAgent("douyin"); got != ua {
 		t.Fatalf("UA mismatch: %q", got)
 	}
@@ -183,6 +195,44 @@ func TestEncryptedStoreMigratesKeychainPayloadToLocalFormat(t *testing.T) {
 	}
 	if !strings.Contains(string(persisted), `"secret"`) || strings.Contains(string(persisted), "migrated-session") {
 		t.Fatal("keychain payload was not preserved as encrypted local data")
+	}
+}
+
+func TestEncryptedStoreRepairsLegacyJarWithoutPersistingPlaintext(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "credentials")
+	key := bytes.Repeat([]byte{0x44}, 32)
+	legacyJar := "# Netscape HTTP Cookie File\n" +
+		"douyin.com\tTRUE\t/\tTRUE\t0\tsessionid\tredacted-fixture\n"
+	secret, err := encryptPrivate(key, entry{Jar: legacyJar, UserAgent: "Mozilla/5.0 (fixture)"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	raw := []byte(`{"douyin":{"secret":"` + secret + `","updatedAt":1}}`)
+	if err := os.WriteFile(filepath.Join(dir, "cookies.json"), raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := OpenWithKey(dir, "", "", key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "# Netscape HTTP Cookie File\n.douyin.com\tTRUE\t/\tTRUE\t0\tsessionid\tredacted-fixture\n"
+	if s.entries["douyin"].Jar != want {
+		t.Fatalf("encrypted legacy jar not normalized: %q", s.entries["douyin"].Jar)
+	}
+	persisted, err := os.ReadFile(filepath.Join(dir, "cookies.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(persisted), "redacted-fixture") || !strings.Contains(string(persisted), `"secret"`) {
+		t.Fatal("normalized credentials were not kept encrypted")
+	}
+	reopened, err := OpenWithKey(dir, "", "", key)
+	if err != nil || reopened.entries["douyin"].Jar != want {
+		t.Fatalf("repaired encrypted jar did not round-trip: %v", err)
 	}
 }
 

@@ -38,6 +38,9 @@ func normalize(platform, format, raw string) (string, error) {
 		}
 		raw = strings.TrimPrefix(raw, "Cookie:")
 		for _, pair := range strings.Split(raw, ";") {
+			if strings.TrimSpace(pair) == "" {
+				continue
+			}
 			name, value, ok := strings.Cut(strings.TrimSpace(pair), "=")
 			if !ok || !validName(name) || !validValue(value) {
 				return "", ErrInvalid
@@ -61,6 +64,12 @@ func normalize(platform, format, raw string) (string, error) {
 				return "", ErrInvalid
 			}
 			f[0] = strings.ToLower(f[0])
+			domain := strings.TrimPrefix(f[0], ".")
+			if f[1] == "TRUE" {
+				f[0] = "." + domain
+			} else {
+				f[0] = domain
+			}
 			lines = append(lines, strings.Join(f, "\t"))
 		}
 	default:

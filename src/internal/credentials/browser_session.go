@@ -70,7 +70,7 @@ func browserJar(platform string, cookies []*http.Cookie, userAgent string) (stri
 	seen := map[string]bool{}
 	lines := []string{}
 	for _, cookie := range cookies {
-		if cookie == nil || !allowed[cookie.Name] || cookie.Value == "" || cookie.Valid() != nil || !cookie.Secure || cookie.MaxAge < 0 || !cookie.Expires.IsZero() && !cookie.Expires.After(now) {
+		if cookie == nil || !allowed[cookie.Name] || cookie.Value == "" || cookie.Domain == "" || cookie.Valid() != nil || !cookie.Secure || cookie.MaxAge < 0 || !cookie.Expires.IsZero() && !cookie.Expires.After(now) {
 			continue
 		}
 		if cookie.Domain != "" && !browserCookieDomainAllowed(platform, root, cookie.Domain) || cookie.Path != "" && !strings.HasPrefix(cookie.Path, "/") {
@@ -93,9 +93,11 @@ func browserJar(platform string, cookies []*http.Cookie, userAgent string) (stri
 			// the platform root could send a credential to passport or CDN
 			// subdomains that never received it in the WebView.
 			rawDomain := strings.ToLower(strings.TrimSpace(cookie.Domain))
-			domain = strings.TrimPrefix(rawDomain, ".")
 			if strings.HasPrefix(rawDomain, ".") {
+				domain = "." + strings.TrimPrefix(rawDomain, ".")
 				subdomains = "TRUE"
+			} else {
+				domain = rawDomain
 			}
 		}
 		secure := "FALSE"

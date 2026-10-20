@@ -91,7 +91,7 @@ func open(directory, header, file string, key []byte) (*Store, error) {
 	if json.Unmarshal(raw, &s.entries) != nil || s.entries == nil {
 		return nil, ErrStorage
 	}
-	needsEncryption := false
+	needsPersistence := false
 	for platform, e := range s.entries {
 		if e.Secret != "" {
 			// Headless/server mode has no desktop keyring. Keep the opaque
@@ -109,9 +109,9 @@ func open(directory, header, file string, key []byte) (*Store, error) {
 			}
 			e.Secret = ""
 			s.entries[platform] = e
-			needsEncryption = true
+			needsPersistence = true
 		} else if len(s.secretKey) > 0 && (e.Jar != "" || e.UserAgent != "" || e.APIKey != "" || e.ClientID != "" || e.Token != "" || e.Refresh != "") {
-			needsEncryption = true
+			needsPersistence = true
 		}
 		if e.APIKey != "" && (platform != "linuxdo" || !validToken(e.APIKey) || !validToken(e.ClientID)) || e.ClientID != "" && e.APIKey == "" || e.ExpiresAt < 0 {
 			return nil, ErrStorage
@@ -121,8 +121,13 @@ func open(directory, header, file string, key []byte) (*Store, error) {
 		}
 		if e.Jar != "" {
 			jar, err := normalize(platform, "netscape", e.Jar)
-			if err != nil || jar != e.Jar {
+			if err != nil {
 				return nil, ErrStorage
+			}
+			if jar != e.Jar {
+				e.Jar = jar
+				s.entries[platform] = e
+				needsPersistence = true
 			}
 		}
 		if e.UserAgent != "" && (e.Jar == "" || !validUserAgent(e.UserAgent)) {
@@ -144,7 +149,7 @@ func open(directory, header, file string, key []byte) (*Store, error) {
 	if os.Chmod(filepath.Join(directory, "cookies.json"), 0600) != nil {
 		return nil, ErrStorage
 	}
-	if needsEncryption {
+	if needsPersistence {
 		for platform, value := range s.entries {
 			if err := s.persistEntryLocked(platform, value); err != nil {
 				return nil, err
