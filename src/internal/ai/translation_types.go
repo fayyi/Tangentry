@@ -54,23 +54,25 @@ type StreamChatter interface {
 }
 
 type Input struct {
-	Source    string          `json:"source,omitempty"`
-	ContentID string          `json:"contentId"`
-	Track     subtitles.Track `json:"track"`
-	Revision  int64           `json:"revision"`
+	Source         string          `json:"source,omitempty"`
+	ContentID      string          `json:"contentId"`
+	Track          subtitles.Track `json:"track"`
+	TargetLanguage string          `json:"targetLanguage,omitempty"`
+	Revision       int64           `json:"revision"`
 	// Regenerate discards the stored translation of this text first.
 	Regenerate bool `json:"regenerate,omitempty"`
 }
 
 type Result struct {
-	Key       string   `json:"key"`
-	ContentID string   `json:"contentId"`
-	Language  string   `json:"language"`
-	BaseURL   string   `json:"baseUrl"`
-	Model     string   `json:"model"`
-	Total     int      `json:"total"`
-	Texts     []string `json:"texts"`
-	UpdatedAt int64    `json:"updatedAt"`
+	Key            string   `json:"key"`
+	ContentID      string   `json:"contentId"`
+	Language       string   `json:"language"`
+	TargetLanguage string   `json:"targetLanguage"`
+	BaseURL        string   `json:"baseUrl"`
+	Model          string   `json:"model"`
+	Total          int      `json:"total"`
+	Texts          []string `json:"texts"`
+	UpdatedAt      int64    `json:"updatedAt"`
 }
 
 type Inspection struct {

@@ -135,37 +135,49 @@ func parseSubtitles(raw []byte, warnings, id string) (subtitles.Document, error)
 }
 
 func subtitlePriority(track subtitles.Track) int {
-	lang := strings.ReplaceAll(strings.TrimPrefix(strings.ToLower(track.Language), "ai-"), "_", "-")
-	rank := 30
-	switch lang {
-	case "zh", "zh-hans", "zh-cn", "zh-sg":
-		rank = 0
-	default:
-		if strings.HasPrefix(lang, "zh-") {
-			rank = 10
-		} else if lang == "en" || strings.HasPrefix(lang, "en-") {
-			rank = 20
+	rawLanguage := strings.ReplaceAll(strings.ToLower(track.Language), "_", "-")
+	lang := strings.TrimPrefix(rawLanguage, "ai-")
+	if isSimplifiedChineseLanguage(lang) {
+		if track.Automatic {
+			return 1
 		}
+		return 0
 	}
-	if track.Automatic {
-		rank++
+	if strings.HasPrefix(rawLanguage, "ai-") && (lang == "zh" || lang == "cmn" || lang == "zho" || lang == "chi") && track.Automatic {
+		return 1
 	}
-	return rank
+	if strings.HasPrefix(lang, "zh-") || lang == "zh" {
+		return 2
+	}
+	if lang == "en" || strings.HasPrefix(lang, "en-") {
+		if track.Automatic {
+			return 4
+		}
+		return 3
+	}
+	return 5
 }
 
 func languageLabel(language string) string {
-	switch strings.TrimPrefix(language, "ai-") {
-	case "zh", "zh-Hans", "zh-CN":
+	language = strings.ToLower(strings.ReplaceAll(strings.TrimPrefix(language, "ai-"), "_", "-"))
+	switch language {
+	case "zh-hans", "zh-cn", "zh-sg":
 		return "简体中文"
-	case "zh-Hant", "zh-TW", "zh-HK":
+	case "zh", "cmn", "zho", "chi":
+		return "简体中文"
+	case "zh-hant", "zh-tw", "zh-hk", "zh-mo":
 		return "繁体中文"
-	case "en":
+	case "en", "en-us", "en-gb":
 		return "英语"
 	case "ja":
 		return "日语"
 	default:
 		return language
 	}
+}
+
+func isSimplifiedChineseLanguage(language string) bool {
+	return language == "zh-hans" || strings.HasPrefix(language, "zh-hans-") || language == "zh-cn" || strings.HasPrefix(language, "zh-cn-") || language == "zh-sg" || strings.HasPrefix(language, "zh-sg-")
 }
 
 var timecodePattern = regexp.MustCompile(`^(\d{2,6}):([0-5]\d):([0-5]\d)[,.](\d{3})$`)

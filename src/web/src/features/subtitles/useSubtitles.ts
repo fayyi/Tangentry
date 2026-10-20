@@ -4,10 +4,12 @@ import type { SavedSubtitle, SubtitleDocument, SubtitleTrack } from '../../share
 import { cachedSubtitles, cacheSubtitles, clearSubtitleCache } from './platformCache'
 
 export function subtitlePriority(track: { language: string; automatic?: boolean; source?: string }) {
-  const language = track.language.toLowerCase().replace(/^ai-/, '').replace(/-orig$/, '').replaceAll('_', '-')
-  const chinese = /^zh(?:-|$)/.test(language)
-  if (chinese && track.source === 'cc') return 0
-  if (chinese && (track.source === 'ai' || track.automatic)) return 1
+  const rawLanguage = track.language.toLowerCase().replaceAll('_', '-')
+  const language = rawLanguage.replace(/^ai-/, '').replace(/-orig$/, '')
+  const simplifiedChinese = ['zh-hans', 'zh-cn', 'zh-sg'].some(code => language === code || language.startsWith(`${code}-`))
+  if (simplifiedChinese && track.source !== 'ai' && !track.automatic) return 0
+  if (simplifiedChinese && (track.source === 'ai' || track.automatic)) return 1
+  if (/^ai-(?:zh|cmn|zho|chi)$/.test(rawLanguage) && (track.source === 'ai' || track.automatic)) return 1
   return 2
 }
 
@@ -36,13 +38,26 @@ export function useSubtitles(videoId: string, source: 'bilibili' | 'youtube' | '
     setError('')
     try {
       const query = source === 'youtube' ? 'https://www.youtube.com/watch?v=' + videoId : videoId
-      const endpoint = source === 'local' ? `/subtitles/local-media?contentId=${encodeURIComponent(contentId)}` : source === 'podcast' ? `/subtitles/podcast?contentId=${encodeURIComponent(contentId)}` : `/subtitles/${source}?q=${encodeURIComponent(query)}` + (source === 'youtube' && language ? '&language=' + encodeURIComponent(language) : '')
+      const endpoint = source === 'local' ? `/subtitles/local-media?contentId=${encodeURIComponent(contentId)}` : source === 'podcast' ? `/subtitles/podcast?contentId=${encodeURIComponent(contentId)}` : `/subtitles/${source}?q=${encodeURIComponent(query)}` + (language ? '&language=' + encodeURIComponent(language) : '')
       if (!reuse) clearSubtitleCache(videoId)
       const cached = reuse ? cachedSubtitles(endpoint, videoId) : undefined
-      const data = cached ?? await request<SubtitleDocument>(endpoint, { signal: current.signal })
+      // Persistent browser entries intentionally contain metadata only. They
+      // can answer a confirmed empty result, but never replace a body read.
+      const cachedEmpty = cached?.status === 'none' && !cached.languages?.length && !cached.tracks.length && !cached.parts?.some(part => part.languages.length || part.tracks.length)
+      const data = cachedEmpty ? cached : await request<SubtitleDocument>(endpoint, { signal: current.signal })
       if (!current.signal.aborted) {
         if (!cached) cacheSubtitles(endpoint, data)
-        setPlatform(previous => source === 'youtube' && language && previous?.videoId === data.videoId ? { ...data, tracks: [...previous.tracks.filter(track => track.language !== language), ...data.tracks] } : data)
+        setPlatform(previous => language && previous?.videoId === data.videoId ? {
+          ...previous,
+          ...data,
+          languages: data.languages?.length ? data.languages : previous.languages,
+          tracks: data.tracks.length ? [...previous.tracks.filter(track => track.language !== language), ...data.tracks] : previous.tracks,
+          parts: previous.parts?.map((part, index) => index === 0 ? {
+            ...part,
+            languages: data.languages?.length ? data.languages : part.languages,
+            tracks: data.tracks.length ? [...part.tracks.filter(track => track.language !== language), ...data.tracks] : part.tracks,
+          } : part),
+        } : data)
         setOrigin(keepSaved ? 'saved' : 'platform'); setNotice('')
         if (!cached && data.tracks.length > 0) {
           const local = await request<{ tracks: SavedSubtitle[] }>(`/saved-subtitles?contentId=${encodeURIComponent(contentId)}`, { signal: current.signal })

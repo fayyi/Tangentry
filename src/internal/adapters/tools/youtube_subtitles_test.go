@@ -68,20 +68,27 @@ func TestYouTubeManyNativeLanguagesRemainReadable(t *testing.T) {
 	}
 }
 
-func TestYouTubeLanguagePreferenceAndTranslationExclusion(t *testing.T) {
+func TestYouTubeLanguagePreferenceAndTranslatedTracks(t *testing.T) {
 	native := func(lang string) []youtubeCaption {
 		return []youtubeCaption{{Ext: "json3", URL: "https://www.youtube.com/api/timedtext?lang=" + lang}}
 	}
-	data := youtubeCaptionMetadata{ID: "jNQXAC9IVRw", Subtitles: map[string][]youtubeCaption{"en": native("en"), "zh-Hant": native("zh-Hant")}, Automatic: map[string][]youtubeCaption{"zh-Hans": native("zh-Hans"), "en": native("en"), "en-orig": native("en"), "ja": {{Ext: "json3", URL: "https://www.youtube.com/api/timedtext?lang=en&tlang=ja"}}}}
+	data := youtubeCaptionMetadata{ID: "jNQXAC9IVRw", Subtitles: map[string][]youtubeCaption{"en": native("en"), "zh-Hant": native("zh-Hant")}, Automatic: map[string][]youtubeCaption{"zh-Hans": native("zh-Hans"), "en": native("en"), "en-orig": native("en"), "en-translated": {{Ext: "json3", URL: "https://www.youtube.com/api/timedtext?lang=en&tlang=ja"}}}}
 	raw, _ := json.Marshal(data)
 	choices, err := youtubeLanguages(raw, data.ID)
-	if err != nil || len(choices) != 3 || preferredYouTubeLanguage(choices) != "zh-Hans" {
+	if err != nil || len(choices) != 4 || preferredYouTubeLanguage(choices) != "zh-Hans" {
 		t.Fatalf("simplified Chinese priority failed: %+v %v", choices, err)
 	}
+	translatedJapanese := false
 	for _, choice := range choices {
-		if choice.Language == "ja" || choice.Language == "en-orig" || choice.Language == "en" && choice.Automatic {
-			t.Fatal("translation or duplicate exposed")
+		if choice.Language == "en-orig" || choice.Language == "en" && choice.Automatic {
+			t.Fatal("duplicate native track exposed")
 		}
+		if choice.Language == "ja" && choice.Translated && choice.SourceLanguage == "en" {
+			translatedJapanese = true
+		}
+	}
+	if !translatedJapanese {
+		t.Fatal("YouTube translated captions were not exposed")
 	}
 	if preferredYouTubeLanguage([]subtitles.Language{{Language: "ja"}, {Language: "en", Automatic: true}}) != "en" {
 		t.Fatal("English fallback failed")
@@ -99,6 +106,22 @@ func TestYouTubeLanguagePreferenceAndTranslationExclusion(t *testing.T) {
 	}
 	if _, err := youtubeLanguages([]byte(`{"id":"other","subtitles":{}}`), data.ID); !errors.Is(err, subtitles.ErrFormat) {
 		t.Fatal("caption identity mismatch")
+	}
+}
+
+func TestYouTubeTranslatedCaptionRequiresVerifiedTargetAndSource(t *testing.T) {
+	translated := youtubeCaptionMetadata{ID: "jNQXAC9IVRw", Subtitles: map[string][]youtubeCaption{
+		"ja": {{Ext: "json3", URL: "https://www.youtube.com/api/timedtext?lang=en&tlang=ja&v=jNQXAC9IVRw"}},
+	}}
+	raw, _ := json.Marshal(translated)
+	choices, err := youtubeLanguages(raw, translated.ID)
+	if err != nil || len(choices) != 1 || choices[0].Language != "ja" || !choices[0].Translated || choices[0].SourceLanguage != "en" {
+		t.Fatalf("valid platform translation was not exposed: %+v %v", choices, err)
+	}
+	translated.Subtitles["ja"][0].URL = "https://www.youtube.com/api/timedtext?lang=en&tlang=fr&v=jNQXAC9IVRw"
+	raw, _ = json.Marshal(translated)
+	if _, err := youtubeLanguages(raw, translated.ID); !errors.Is(err, subtitles.ErrFormat) {
+		t.Fatal("translated track with inconsistent source language was exposed", err)
 	}
 }
 
@@ -265,6 +288,26 @@ func TestYouTubeInnerTubeCaptionsFallbackAndNoCaptionClassification(t *testing.T
 	kit.youtubePlayer = func(context.Context, string, string) youtube.PlayerResult { return youtube.PlayerResult{Error: "auth"} }
 	if _, err = kit.ReadYouTubeSubtitles(context.Background(), "jNQXAC9IVRw", ""); !errors.Is(err, subtitles.ErrLogin) {
 		t.Fatal("login failure was confused with no captions", err)
+	}
+}
+
+func TestYouTubeInnerTubeReadsPlatformTranslatedCaption(t *testing.T) {
+	const translatedURL = "https://www.youtube.com/api/timedtext?lang=ja&tlang=en&v=jNQXAC9IVRw"
+	track := youtube.CaptionTrack{Language: "en", Label: "en", URL: translatedURL, Translated: true, SourceLanguage: "ja"}
+	kit := New(config.Config{})
+	kit.status.Tools[0].Available = false
+	kit.youtubePlayer = func(context.Context, string, string) youtube.PlayerResult {
+		return youtube.PlayerResult{Tracks: []youtube.CaptionTrack{track}}
+	}
+	kit.youtubeHTTP = &http.Client{Transport: youtubeCaptionRoundTrip(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Query().Get("lang") != "ja" || req.URL.Query().Get("tlang") != "en" || req.URL.Query().Get("fmt") != "json3" {
+			t.Fatalf("translated track identity was not preserved: %s", req.URL.String())
+		}
+		return youtubeCaptionResponse(http.StatusOK, `{"events":[{"tStartMs":20000,"dDurationMs":1000,"segs":[{"utf8":"native translated fixture"}]}]}`, req), nil
+	})}
+	doc, err := kit.ReadYouTubeSubtitles(context.Background(), "jNQXAC9IVRw", "en")
+	if err != nil || len(doc.Tracks) != 1 || doc.Tracks[0].Language != "en" || doc.Tracks[0].Source != "youtube" || !doc.Tracks[0].Translated || doc.Tracks[0].SourceLanguage != "ja" || doc.Tracks[0].Cues[0].Start != 20 {
+		t.Fatalf("YouTube platform translated caption was not read as its target language: %+v %v", doc, err)
 	}
 }
 
@@ -455,6 +498,13 @@ func TestSelectedYouTubeCaptionMustBeNative(t *testing.T) {
 	}
 }
 
+func TestYouTubeTranslatedCaptionURLIsNotNative(t *testing.T) {
+	const raw = "https://www.youtube.com/api/timedtext?lang=en&tlang=zh"
+	if nativeYouTubeCaptionURL(raw) || !validYouTubeCaptionURL(raw) || !youtubeCaptionURLMatchesTranslated(raw, "en", "zh", "jNQXAC9IVRw") {
+		t.Fatal("tlang URL must pass the translated-track validator, but never the native-track validator")
+	}
+}
+
 func TestYouTubeMixedBasePrefersOriginalDownloadKey(t *testing.T) {
 	data := youtubeCaptionMetadata{ID: "jNQXAC9IVRw", Subtitles: map[string][]youtubeCaption{}, Automatic: map[string][]youtubeCaption{
 		"en": {
@@ -569,7 +619,7 @@ fi
 			t.Fatal("private caption directory retained", directory)
 		}
 	}
-	for _, value := range []string{"--skip-download", "--simulate", "--no-simulate", "--sub-format", "json3/srt/vtt", "^en$", "youtube:skip=translated_subs"} {
+	for _, value := range []string{"--skip-download", "--simulate", "--no-simulate", "--sub-format", "json3/srt/vtt", "^en$"} {
 		if !strings.Contains(string(raw), value) {
 			t.Fatal("missing controlled option", value)
 		}
@@ -579,6 +629,46 @@ fi
 	}
 	if _, err := tk.ReadYouTubeSubtitles(context.Background(), "jNQXAC9IVRw", "../../arbitrary"); !errors.Is(err, subtitles.ErrInvalid) {
 		t.Fatal("invalid language reached CLI")
+	}
+}
+
+func TestYouTubeToolReadsSelectedTranslatedCaptionByTargetLanguage(t *testing.T) {
+	if os.PathSeparator != '/' {
+		t.Skip("POSIX process fixture")
+	}
+	root := t.TempDir()
+	exe := filepath.Join(root, "fixture.sh")
+	script := `#!/bin/sh
+if [ "$1" = "--version" ]; then printf 'fixture\n'; exit 0; fi
+directory=
+next_paths=0
+write=0
+for argument in "$@"; do
+  if [ "$argument" = "--write-auto-subs" ]; then write=1; fi
+  if [ "$next_paths" = 1 ]; then directory=$argument; next_paths=0; fi
+  if [ "$argument" = "--paths" ]; then next_paths=1; fi
+done
+if [ "$write" = 1 ]; then
+  printf '%s' '{"events":[{"tStartMs":20000,"dDurationMs":1000,"segs":[{"utf8":"Japanese platform translation"}]}]}' > "$directory/caption.en-translated.json3"
+  printf '%s\n' '{"id":"jNQXAC9IVRw","requested_subtitles":{"en-translated":{"ext":"json3","url":"https://www.youtube.com/api/timedtext?lang=ja&tlang=en&v=jNQXAC9IVRw"}}}'
+else
+  printf '%s\n' '{"id":"jNQXAC9IVRw","subtitles":{},"automatic_captions":{"en-translated":[{"ext":"json3","url":"https://www.youtube.com/api/timedtext?lang=ja&tlang=en&v=jNQXAC9IVRw"}]}}'
+fi
+`
+	if err := os.WriteFile(exe, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	tk := New(config.Config{YTDLPPath: exe})
+	doc, err := tk.ReadYouTubeSubtitles(context.Background(), "jNQXAC9IVRw", "en")
+	if err != nil || doc.Status != "available" || len(doc.Tracks) != 1 {
+		t.Fatalf("translated yt-dlp caption retrieval: %+v %v", doc, err)
+	}
+	track := doc.Tracks[0]
+	if track.Language != "en" || track.Source != "youtube" || !track.Translated || track.SourceLanguage != "ja" || len(track.Cues) != 1 || track.Cues[0].Start != 20 {
+		t.Fatalf("translated target identity or timeline lost: %+v", track)
+	}
+	if len(doc.Languages) != 1 || doc.Languages[0].Language != "en" || !doc.Languages[0].Translated {
+		t.Fatalf("target language metadata lost: %+v", doc.Languages)
 	}
 }
 

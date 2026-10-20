@@ -22,14 +22,21 @@ import (
 )
 
 type youtubeCaption struct {
-	Ext  string `json:"ext"`
-	URL  string `json:"url"`
-	Name string `json:"name"`
+	Ext            string `json:"ext"`
+	URL            string `json:"url"`
+	Name           string `json:"name"`
+	Translated     bool   `json:"translated,omitempty"`
+	SourceLanguage string `json:"sourceLanguage,omitempty"`
 }
 type youtubeCaptionMetadata struct {
 	ID        string                      `json:"id"`
 	Subtitles map[string][]youtubeCaption `json:"subtitles"`
 	Automatic map[string][]youtubeCaption `json:"automatic_captions"`
+}
+
+type youtubeCaptionChoice struct {
+	language    subtitles.Language
+	downloadKey string
 }
 
 type youtubeCaptionStage int
@@ -39,11 +46,13 @@ const (
 	youtubeAnyCaptions
 )
 
+var youtubeLanguagePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+
 // YouTube captions are remote resources. yt-dlp fetches exactly one selected
 // existing track into a private disposable directory; media is never downloaded.
 func (t *Toolkit) ReadYouTubeSubtitles(ctx context.Context, id, language string) (subtitles.Document, error) {
 	parsed, canonical, err := discovery.ParseYouTube("https://www.youtube.com/watch?v=" + id)
-	if err != nil || parsed != id || language != "" && !languagePattern.MatchString(language) {
+	if err != nil || parsed != id || language != "" && !youtubeLanguagePattern.MatchString(language) {
 		return subtitles.Document{}, subtitles.ErrInvalid
 	}
 	ctx, cancel := context.WithTimeout(ctx, 28*time.Second)
@@ -72,11 +81,7 @@ func (t *Toolkit) ReadYouTubeSubtitles(ctx context.Context, id, language string)
 			priorErrors = append(priorErrors, playerError(player.Error))
 		} else {
 			confirmedNoCaptions = len(player.Tracks) == 0
-			for _, automatic := range []bool{false, true} {
-				track, ok := choosePlayerCaption(player.Tracks, language, automatic)
-				if !ok {
-					continue
-				}
+			for _, track := range choosePlayerCaptions(player.Tracks, language) {
 				captionCookie := cookie
 				if t.credentials != nil {
 					captionCookie = t.credentials.Header("youtube", track.URL)
@@ -110,7 +115,7 @@ func (t *Toolkit) ReadYouTubeSubtitles(ctx context.Context, id, language string)
 		return subtitles.Document{}, classified
 	}
 	if language != "" {
-		return subtitles.Document{}, subtitles.ErrInvalid
+		return subtitles.Document{VideoID: id, Part: 1, Status: "none", Tracks: []subtitles.Track{}, Languages: []subtitles.Language{}}, nil
 	}
 	if !t.ytdlpReady() && t.youtubePlayer == nil {
 		return subtitles.Document{}, subtitles.ErrTools
@@ -119,6 +124,10 @@ func (t *Toolkit) ReadYouTubeSubtitles(ctx context.Context, id, language string)
 		return subtitles.Document{VideoID: id, Part: 1, Status: "none", Tracks: []subtitles.Track{}, Languages: []subtitles.Language{}}, nil
 	}
 	return subtitles.Document{}, subtitles.ErrUnavailable
+}
+
+func (t *Toolkit) ReadSubtitlesLanguage(ctx context.Context, id, language string) (subtitles.Document, error) {
+	return t.ReadYouTubeSubtitles(ctx, id, language)
 }
 
 func (t *Toolkit) readYTDLPWithCredentials(ctx context.Context, id, canonical, language string, stage youtubeCaptionStage) (subtitles.Document, bool, error) {
@@ -134,7 +143,7 @@ func (t *Toolkit) readYTDLPYouTubeCaptions(ctx context.Context, id, canonical, l
 	if ctx.Err() != nil {
 		return subtitles.Document{}, false, ctx.Err()
 	}
-	base := []string{"--ignore-config", "--no-playlist", "--no-cache-dir", "--skip-download", "--dump-single-json", "--socket-timeout", "10", "--retries", "0", "--extractor-args", "youtube:skip=translated_subs"}
+	base := []string{"--ignore-config", "--no-playlist", "--no-cache-dir", "--skip-download", "--dump-single-json", "--socket-timeout", "10", "--retries", "0"}
 	run := func(extra []string) ([]byte, error) {
 		args := append(append(append([]string{}, base...), cookieArgs...), extra...)
 		args = append(args, "--", canonical)
@@ -169,24 +178,27 @@ func (t *Toolkit) readYTDLPYouTubeCaptions(ctx context.Context, id, canonical, l
 	if err != nil {
 		return subtitles.Document{}, false, err
 	}
-	choices, err := youtubeLanguages(raw, id)
+	choices, err := youtubeCaptionChoices(raw, id)
 	if err != nil {
 		return subtitles.Document{}, false, err
 	}
 	chosenIndex := -1
 	for i := range choices {
-		if language != "" && choices[i].Language != language || stage == youtubeManualCaptions && choices[i].Automatic {
+		candidate := choices[i].language
+		if language != "" && candidate.Language != language || stage == youtubeManualCaptions && candidate.Automatic {
 			continue
 		}
-		if chosenIndex == -1 || stage == youtubeAnyCaptions && choices[chosenIndex].Automatic && !choices[i].Automatic ||
-			choices[i].Automatic == choices[chosenIndex].Automatic && youtubeLanguageScore(choices[i]) < youtubeLanguageScore(choices[chosenIndex]) {
+		if chosenIndex == -1 || stage == youtubeAnyCaptions && choices[chosenIndex].language.Automatic && !candidate.Automatic ||
+			candidate.Automatic == choices[chosenIndex].language.Automatic && youtubeLanguageScore(candidate) < youtubeLanguageScore(choices[chosenIndex].language) {
 			chosenIndex = i
 		}
 	}
 	if chosenIndex == -1 {
-		return subtitles.Document{VideoID: id, Part: 1, Status: "none", Tracks: []subtitles.Track{}, Languages: choices}, false, nil
+		return subtitles.Document{VideoID: id, Part: 1, Status: "none", Tracks: []subtitles.Track{}, Languages: captionChoiceLanguages(choices)}, false, nil
 	}
-	chosen := choices[chosenIndex]
+	choice := choices[chosenIndex]
+	chosen := choice.language
+	downloadLanguage := choice.downloadKey
 	directory, err := os.MkdirTemp("", "tangentry-youtube-captions-*")
 	if err != nil {
 		return subtitles.Document{}, false, subtitles.ErrUnavailable
@@ -198,25 +210,37 @@ func (t *Toolkit) readYTDLPYouTubeCaptions(ctx context.Context, id, canonical, l
 	if chosen.Automatic {
 		writeFlag = "--write-auto-subs"
 	}
-	raw, err = run([]string{"--no-simulate", writeFlag, "--sub-langs", "^" + regexp.QuoteMeta(chosen.Language) + "$", "--sub-format", "json3/srt/vtt", "--paths", directory, "--output", "caption.%(ext)s"})
+	raw, err = run([]string{"--no-simulate", writeFlag, "--sub-langs", "^" + regexp.QuoteMeta(downloadLanguage) + "$", "--sub-format", "json3/srt/vtt", "--paths", directory, "--output", "caption.%(ext)s"})
 	if err != nil {
 		return subtitles.Document{}, false, err
 	}
 	var received struct {
 		ID        string `json:"id"`
 		Requested map[string]struct {
-			Ext string `json:"ext"`
-			URL string `json:"url"`
+			Ext        string `json:"ext"`
+			URL        string `json:"url"`
+			Translated bool   `json:"translated,omitempty"`
 		} `json:"requested_subtitles"`
 	}
-	if json.Unmarshal(raw, &received) != nil || received.ID != id || len(received.Requested) != 1 || !supportedYouTubeCaptionFormat(received.Requested[chosen.Language].Ext) {
+	if json.Unmarshal(raw, &received) != nil || received.ID != id || len(received.Requested) != 1 || !supportedYouTubeCaptionFormat(received.Requested[downloadLanguage].Ext) {
 		return subtitles.Document{}, false, subtitles.ErrFormat
 	}
-	if !youtubeCaptionURLMatches(received.Requested[chosen.Language].URL, strings.TrimSuffix(chosen.Language, "-orig"), id) {
+	request := received.Requested[downloadLanguage]
+	validURL := youtubeCaptionURLMatches(request.URL, strings.TrimSuffix(downloadLanguage, "-orig"), id)
+	if chosen.Translated {
+		u, parseErr := url.Parse(request.URL)
+		if parseErr == nil {
+			query, queryErr := url.ParseQuery(u.RawQuery)
+			validURL = queryErr == nil && youtubeCaptionURLMatchesTranslated(request.URL, query.Get("lang"), chosen.Language, id)
+		} else {
+			validURL = false
+		}
+	}
+	if !validURL {
 		return subtitles.Document{}, false, subtitles.ErrFormat
 	}
-	extension := received.Requested[chosen.Language].Ext
-	path := filepath.Join(directory, "caption."+chosen.Language+"."+extension)
+	extension := request.Ext
+	path := filepath.Join(directory, "caption."+downloadLanguage+"."+extension)
 	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() || info.Size() > 2<<20 || info.Size() == 0 {
 		return subtitles.Document{}, false, subtitles.ErrFormat
@@ -245,7 +269,15 @@ func (t *Toolkit) readYTDLPYouTubeCaptions(ctx context.Context, id, canonical, l
 	if chosen.Automatic {
 		cues = mergeYouTubeAutoCues(cues)
 	}
-	doc := subtitles.Document{VideoID: id, Part: 1, Status: "available", Languages: choices, Tracks: []subtitles.Track{{Language: chosen.Language, Label: chosen.Label, Automatic: chosen.Automatic, Cues: cues}}}
+	sourceLanguage := chosen.SourceLanguage
+	if chosen.Translated {
+		u, _ := url.Parse(request.URL)
+		query, _ := url.ParseQuery(u.RawQuery)
+		sourceLanguage = query.Get("lang")
+	} else if sourceLanguage == "" {
+		sourceLanguage = chosen.Language
+	}
+	doc := subtitles.Document{VideoID: id, Part: 1, Status: "available", Languages: captionChoiceLanguages(choices), Tracks: []subtitles.Track{{Language: chosen.Language, Label: chosen.Label, Automatic: chosen.Automatic, Source: "youtube", Translated: chosen.Translated || request.Translated, SourceLanguage: sourceLanguage, Cues: cues}}}
 	return doc, true, nil
 }
 
@@ -254,11 +286,11 @@ func (t *Toolkit) readInnerTubeCaption(ctx context.Context, id string, track you
 		return subtitles.Document{}, ctx.Err()
 	}
 	u, err := url.Parse(track.URL)
-	if err != nil || !youtubeCaptionURLMatches(track.URL, track.Language, id) {
+	if err != nil {
 		return subtitles.Document{}, subtitles.ErrFormat
 	}
 	query, err := url.ParseQuery(u.RawQuery)
-	if err != nil || len(query["tlang"]) != 0 || query.Get("lang") != track.Language || query.Get("v") != id {
+	if err != nil || len(query["v"]) != 1 || query.Get("v") != id || track.Translated && !youtubeCaptionURLMatchesTranslated(track.URL, query.Get("lang"), track.Language, id) || !track.Translated && !youtubeCaptionURLMatches(track.URL, track.Language, id) {
 		return subtitles.Document{}, subtitles.ErrFormat
 	}
 	query.Set("fmt", "json3")
@@ -327,9 +359,21 @@ func (t *Toolkit) readInnerTubeCaption(ctx context.Context, id string, track you
 	label := languageLabel(track.Language)
 	languages := make([]subtitles.Language, 0, len(available))
 	for _, candidate := range available {
-		languages = append(languages, subtitles.Language{Language: candidate.Language, Label: candidate.Label, Automatic: candidate.Kind == "asr"})
+		if containsSubtitleLanguage(languages, candidate.Language) {
+			continue
+		}
+		languages = append(languages, subtitles.Language{Language: candidate.Language, Label: candidate.Label, Automatic: candidate.Kind == "asr", Source: "youtube", HasURL: true, Translated: candidate.Translated, SourceLanguage: candidate.SourceLanguage})
 	}
-	return subtitles.Document{VideoID: id, Part: 1, Status: "available", Languages: languages, Tracks: []subtitles.Track{{Language: track.Language, Label: label, Automatic: track.Kind == "asr", Cues: cues}}}, nil
+	return subtitles.Document{VideoID: id, Part: 1, Status: "available", Languages: languages, Tracks: []subtitles.Track{{Language: track.Language, Label: label, Automatic: track.Kind == "asr", Source: "youtube", Translated: track.Translated, SourceLanguage: track.SourceLanguage, Cues: cues}}}, nil
+}
+
+func containsSubtitleLanguage(values []subtitles.Language, language string) bool {
+	for _, value := range values {
+		if value.Language == language {
+			return true
+		}
+	}
+	return false
 }
 
 func youtubeCaptionLanguage(value string) bool {
@@ -414,41 +458,56 @@ func playerError(code string) error {
 	}
 }
 
-func choosePlayerCaption(tracks []youtube.CaptionTrack, language string, automatic bool) (youtube.CaptionTrack, bool) {
-	var selected youtube.CaptionTrack
-	found := false
+func choosePlayerCaptions(tracks []youtube.CaptionTrack, language string) []youtube.CaptionTrack {
+	var selected []youtube.CaptionTrack
 	for _, track := range tracks {
-		if (track.Kind == "asr") != automatic || language != "" && track.Language != language {
+		if language != "" && track.Language != language {
 			continue
 		}
-		candidate := subtitles.Language{Language: track.Language, Automatic: automatic}
-		if !found || youtubeLanguageScore(candidate) < youtubeLanguageScore(subtitles.Language{Language: selected.Language, Automatic: automatic}) ||
-			youtubeLanguageScore(candidate) == youtubeLanguageScore(subtitles.Language{Language: selected.Language, Automatic: automatic}) && track.Language < selected.Language {
-			selected = track
-			found = true
+		selected = append(selected, track)
+	}
+	sort.SliceStable(selected, func(i, j int) bool {
+		if selected[i].Language == selected[j].Language {
+			if selected[i].Translated != selected[j].Translated {
+				return !selected[i].Translated
+			}
+			return selected[i].Kind != "asr" && selected[j].Kind == "asr"
+		}
+		return youtubeLanguageScore(subtitles.Language{Language: selected[i].Language, Automatic: selected[i].Kind == "asr"}) < youtubeLanguageScore(subtitles.Language{Language: selected[j].Language, Automatic: selected[j].Kind == "asr"})
+	})
+	return selected
+}
+
+func choosePlayerCaption(tracks []youtube.CaptionTrack, language string, automatic bool) (youtube.CaptionTrack, bool) {
+	for _, track := range choosePlayerCaptions(tracks, language) {
+		if (track.Kind == "asr") == automatic {
+			return track, true
 		}
 	}
-	return selected, found
+	return youtube.CaptionTrack{}, false
 }
 
 func youtubeLanguageScore(track subtitles.Language) int {
 	lang := strings.ReplaceAll(strings.TrimSuffix(strings.ToLower(track.Language), "-orig"), "_", "-")
-	rank := 3
-	switch lang {
-	case "zh", "zh-hans", "zh-cn", "zh-sg":
-		rank = 0
-	case "zh-hant", "zh-tw", "zh-hk", "zh-mo":
-		rank = 1
-	case "en":
-		rank = 2
-	default:
-		if strings.HasPrefix(lang, "zh-") {
-			rank = 1
-		} else if strings.HasPrefix(lang, "en-") {
-			rank = 2
+	if isSimplifiedChineseLanguage(lang) {
+		if track.Automatic {
+			return 1
 		}
+		return 0
 	}
-	return rank
+	if strings.HasPrefix(lang, "zh-") && !strings.HasPrefix(lang, "zh-hans-") && !strings.HasPrefix(lang, "zh-cn-") && !strings.HasPrefix(lang, "zh-sg-") {
+		return 2
+	}
+	if lang == "en" || strings.HasPrefix(lang, "en-") {
+		if track.Automatic {
+			return 4
+		}
+		return 3
+	}
+	if lang == "zh" {
+		return 2
+	}
+	return 5
 }
 
 func strongestYouTubeCaptionError(failures []error) error {
@@ -554,12 +613,21 @@ func youtubeCaptionFailure(warning string) error {
 }
 
 func nativeYouTubeCaptionURL(raw string) bool {
+	if !validYouTubeCaptionURL(raw) {
+		return false
+	}
+	u, _ := url.Parse(raw)
+	query, _ := url.ParseQuery(u.RawQuery)
+	return len(query["tlang"]) == 0
+}
+
+func validYouTubeCaptionURL(raw string) bool {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "https" || u.User != nil || u.Port() != "" || (u.Hostname() != "www.youtube.com" && u.Hostname() != "youtube.com") || u.Path != "/api/timedtext" {
 		return false
 	}
 	query, err := url.ParseQuery(u.RawQuery)
-	return err == nil && len(query["tlang"]) == 0 && u.Fragment == "" && u.RawFragment == ""
+	return err == nil && len(query["tlang"]) <= 1 && u.Fragment == "" && u.RawFragment == ""
 }
 
 func supportedYouTubeCaptionFormat(extension string) bool {
@@ -567,6 +635,22 @@ func supportedYouTubeCaptionFormat(extension string) bool {
 }
 
 func youtubeLanguages(raw []byte, id string) ([]subtitles.Language, error) {
+	choices, err := youtubeCaptionChoices(raw, id)
+	if err != nil {
+		return nil, err
+	}
+	return captionChoiceLanguages(choices), nil
+}
+
+func captionChoiceLanguages(choices []youtubeCaptionChoice) []subtitles.Language {
+	languages := make([]subtitles.Language, 0, len(choices))
+	for _, choice := range choices {
+		languages = append(languages, choice.language)
+	}
+	return languages
+}
+
+func youtubeCaptionChoices(raw []byte, id string) ([]youtubeCaptionChoice, error) {
 	var data youtubeCaptionMetadata
 	if json.Unmarshal(raw, &data) != nil || data.ID != id || data.Subtitles == nil && data.Automatic == nil {
 		return nil, subtitles.ErrFormat
@@ -574,7 +658,7 @@ func youtubeLanguages(raw []byte, id string) ([]subtitles.Language, error) {
 	if len(data.Subtitles) > 200 || len(data.Automatic) > 200 {
 		return nil, subtitles.ErrFormat
 	}
-	choices := make([]subtitles.Language, 0)
+	choices := make([]youtubeCaptionChoice, 0)
 	seen := map[string]bool{}
 	for index, tracks := range []map[string][]youtubeCaption{data.Subtitles, data.Automatic} {
 		native := map[string]bool{}
@@ -593,40 +677,46 @@ func youtubeLanguages(raw []byte, id string) ([]subtitles.Language, error) {
 				if err == nil && u.Scheme == "https" && u.User == nil && u.Port() == "" && u.Hostname() == "manifest.googlevideo.com" && strings.HasPrefix(u.Path, "/api/manifest/hls_timedtext_playlist/") {
 					continue
 				}
-				if err != nil || u.Scheme != "https" || u.User != nil || u.Port() != "" || (u.Hostname() != "www.youtube.com" && u.Hostname() != "youtube.com") || u.Path != "/api/timedtext" {
+				if err != nil || !validYouTubeCaptionURL(version.URL) {
 					return nil, subtitles.ErrFormat
 				}
 				query, err := url.ParseQuery(u.RawQuery)
 				if err != nil {
 					return nil, subtitles.ErrFormat
 				}
-				if query.Get("tlang") == "" {
+				targetLanguage := query.Get("tlang")
+				if len(query["tlang"]) == 0 {
 					if !youtubeCaptionURLMatches(version.URL, strings.TrimSuffix(lang, "-orig"), id) {
 						return nil, subtitles.ErrFormat
 					}
 					native[lang] = true
 				} else {
-					translated[lang] = true
+					metadataLanguage := strings.TrimSuffix(strings.TrimSuffix(lang, "-orig"), "-translated")
+					if len(query["tlang"]) != 1 || !youtubeCaptionLanguage(targetLanguage) || !youtubeCaptionLanguage(query.Get("lang")) || metadataLanguage != query.Get("lang") && metadataLanguage != targetLanguage || !youtubeCaptionURLMatchesTranslated(version.URL, query.Get("lang"), targetLanguage, id) {
+						return nil, subtitles.ErrFormat
+					}
+					translated[targetLanguage] = true
+					choices = append(choices, youtubeCaptionChoice{language: subtitles.Language{Language: targetLanguage, Label: languageLabel(targetLanguage), Automatic: index == 1, Source: "youtube", HasURL: true, Translated: true, SourceLanguage: query.Get("lang")}, downloadKey: lang})
 				}
 			}
 		}
 		for lang := range tracks {
-			if lang == "live_chat" || seen[lang] {
+			if lang == "live_chat" {
+				continue
+			}
+			if strings.HasSuffix(lang, "-translated") {
 				continue
 			}
 			if !youtubeCaptionLanguage(lang) {
 				return nil, subtitles.ErrFormat
 			}
-			if !native[lang] {
-				if index == 0 && translated[lang] {
-					return nil, subtitles.ErrFormat
-				}
+			if !native[lang] && !translated[lang] {
 				continue
 			}
 			baseLang := strings.TrimSuffix(lang, "-orig")
 			// Mixed base lists can make yt-dlp select a translated variant. Its
 			// original alias is the unambiguous download key when available.
-			preferOriginal := index == 1 && native[baseLang+"-orig"] && translated[baseLang]
+			preferOriginal := index == 1 && native[baseLang+"-orig"] && (translated[baseLang] || translated[baseLang+"-orig"])
 			if preferOriginal && lang == baseLang {
 				continue
 			}
@@ -636,15 +726,58 @@ func youtubeLanguages(raw []byte, id string) ([]subtitles.Language, error) {
 					continue
 				}
 			}
-			choices = append(choices, subtitles.Language{Language: lang, Label: languageLabel(baseLang), Automatic: index == 1})
-			seen[lang] = true
+			if native[lang] && !seen[lang] {
+				choices = append(choices, youtubeCaptionChoice{language: subtitles.Language{Language: lang, Label: languageLabel(baseLang), Automatic: index == 1, Source: "youtube", HasURL: true}, downloadKey: lang})
+				seen[lang] = true
+			}
 		}
 	}
 	if len(choices) > 200 {
 		return nil, subtitles.ErrFormat
 	}
-	sort.Slice(choices, func(i, j int) bool { return choices[i].Language < choices[j].Language })
+	unique := make(map[string]youtubeCaptionChoice, len(choices))
+	for _, choice := range choices {
+		key := strings.TrimSuffix(choice.language.Language, "-orig")
+		previous, exists := unique[key]
+		if !exists || youtubeCaptionChoicePriority(previous.language) > youtubeCaptionChoicePriority(choice.language) {
+			unique[key] = choice
+		}
+	}
+	choices = choices[:0]
+	for _, choice := range unique {
+		choices = append(choices, choice)
+	}
+	sort.Slice(choices, func(i, j int) bool { return choices[i].language.Language < choices[j].language.Language })
 	return choices, nil
+}
+
+func youtubeCaptionChoicePriority(choice subtitles.Language) int {
+	if choice.Translated {
+		if choice.Automatic {
+			return 3
+		}
+		return 2
+	}
+	if choice.Automatic {
+		return 1
+	}
+	return 0
+}
+
+func youtubeCaptionURLMatchesTranslated(raw, sourceLanguage, targetLanguage, videoID string) bool {
+	if !validYouTubeCaptionURL(raw) || !youtubeCaptionLanguage(sourceLanguage) || !youtubeCaptionLanguage(targetLanguage) {
+		return false
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	query, err := url.ParseQuery(u.RawQuery)
+	if err != nil || len(query["lang"]) != 1 || query.Get("lang") != sourceLanguage || len(query["tlang"]) != 1 || query.Get("tlang") != targetLanguage {
+		return false
+	}
+	videoIDs, hasVideoID := query["v"]
+	return !hasVideoID || len(videoIDs) == 1 && videoIDs[0] == videoID
 }
 
 func youtubeCaptionURLMatches(raw, language, videoID string) bool {
@@ -656,7 +789,7 @@ func youtubeCaptionURLMatches(raw, language, videoID string) bool {
 		return false
 	}
 	query, err := url.ParseQuery(u.RawQuery)
-	if err != nil || len(query["lang"]) != 1 || query.Get("lang") != language {
+	if err != nil || len(query["tlang"]) != 0 || len(query["lang"]) != 1 || query.Get("lang") != language {
 		return false
 	}
 	videoIDs, hasVideoID := query["v"]

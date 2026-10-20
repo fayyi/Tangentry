@@ -13,7 +13,7 @@ import (
 	"tangentry/internal/subtitles"
 )
 
-func TestAcquiredVideoCaptionsAreAutomaticallySaved(t *testing.T) {
+func TestAcquiredVideoCaptionsAreNotAutomaticallySaved(t *testing.T) {
 	store, err := sqlite.Open(filepath.Join(t.TempDir(), "captions.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -30,8 +30,8 @@ func TestAcquiredVideoCaptionsAreAutomaticallySaved(t *testing.T) {
 		t.Fatal(w.Code, w.Body)
 	}
 	values, err := saved.List(context.Background(), "bilibili:BV17x411w7KC")
-	if err != nil || len(values) != 1 || values[0].Track.Cues[0].Text != "Automatically saved" {
-		t.Fatal(values, err)
+	if err != nil || len(values) != 0 {
+		t.Fatal("platform reads must not implicitly save every caption track", values, err)
 	}
 }
 
@@ -39,6 +39,10 @@ type captionProvider func(context.Context, string) (subtitles.Document, error)
 
 func (f captionProvider) ReadSubtitles(ctx context.Context, id string) (subtitles.Document, error) {
 	return f(ctx, id)
+}
+
+func (f captionProvider) ReadLanguage(ctx context.Context, id, language string) (subtitles.Document, error) {
+	return subtitles.Document{VideoID: id, Part: 1, Status: "cc", Tracks: []subtitles.Track{{Language: language, Label: language, Source: "cc", Cues: []subtitles.Cue{{Start: 0, End: 1, Text: "fixture"}}}}}, nil
 }
 
 func TestSubtitleHTTPContractAndSafeErrors(t *testing.T) {

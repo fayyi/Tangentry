@@ -9,12 +9,13 @@ import (
 
 // translationValue is the stored form of a translation; the model is a column.
 type translationValue struct {
-	ContentID string   `json:"contentId"`
-	Language  string   `json:"language"`
-	BaseURL   string   `json:"baseUrl"`
-	Total     int      `json:"total"`
-	Texts     []string `json:"texts"`
-	UpdatedAt int64    `json:"updatedAt"`
+	ContentID      string   `json:"contentId"`
+	Language       string   `json:"language"`
+	TargetLanguage string   `json:"targetLanguage,omitempty"`
+	BaseURL        string   `json:"baseUrl"`
+	Total          int      `json:"total"`
+	Texts          []string `json:"texts"`
+	UpdatedAt      int64    `json:"updatedAt"`
 }
 
 // load reads the stored translation of these texts, adopting a matching
@@ -25,6 +26,9 @@ func (s *Service) load(ctx context.Context, in Input) (Result, error) {
 	if !errors.Is(err, ErrNotFound) {
 		if err == nil {
 			result.ContentID, result.Language = in.ContentID, in.Track.Language
+			if result.TargetLanguage == "" {
+				result.TargetLanguage = targetChinese
+			}
 		}
 		return result, err
 	}
@@ -37,7 +41,11 @@ func (s *Service) load(ctx context.Context, in Input) (Result, error) {
 		if json.Unmarshal([]byte(row.Value), &legacy) != nil || legacyIdentity(in, Config{BaseURL: legacy.BaseURL, Model: legacy.Model}) != row.SourceHash {
 			continue
 		}
+		if expected.TargetLanguage != targetChinese {
+			continue
+		}
 		legacy.Key = expected.Key
+		legacy.TargetLanguage = targetChinese
 		if !validResult(legacy) || legacy.Total != expected.Total {
 			continue
 		}
@@ -51,7 +59,7 @@ func (s *Service) load(ctx context.Context, in Input) (Result, error) {
 }
 
 func (s *Service) write(ctx context.Context, kind string, result Result) error {
-	value, err := json.Marshal(translationValue{result.ContentID, result.Language, result.BaseURL, result.Total, result.Texts, result.UpdatedAt})
+	value, err := json.Marshal(translationValue{result.ContentID, result.Language, result.TargetLanguage, result.BaseURL, result.Total, result.Texts, result.UpdatedAt})
 	if err != nil || len(value) > maxStoredValue {
 		return ErrStorage
 	}
@@ -73,7 +81,10 @@ func (s *Service) read(ctx context.Context, kind, key string) (Result, error) {
 	if json.Unmarshal([]byte(row.Value), &value) != nil {
 		return Result{}, ErrStorage
 	}
-	result := Result{Key: key, ContentID: value.ContentID, Language: value.Language, BaseURL: value.BaseURL, Model: row.Model, Total: value.Total, Texts: value.Texts, UpdatedAt: value.UpdatedAt}
+	result := Result{Key: key, ContentID: value.ContentID, Language: value.Language, TargetLanguage: value.TargetLanguage, BaseURL: value.BaseURL, Model: row.Model, Total: value.Total, Texts: value.Texts, UpdatedAt: value.UpdatedAt}
+	if result.TargetLanguage == "" {
+		result.TargetLanguage = targetChinese
+	}
 	if !validResult(result) {
 		return Result{}, ErrStorage
 	}

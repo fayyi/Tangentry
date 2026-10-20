@@ -24,6 +24,7 @@ import (
 const maxSubtitleParts = 100
 const maxSubtitleTracks = 32
 const maxSubtitleBody = 2 << 20
+const maxSubtitleBodies = 16 << 20
 
 var subtitleCredentialText = regexp.MustCompile(`(?i)(cookie|sessdata|bili_jct|dedeuserid(?:__ckmd5)?|buvid3|sid|token|csrf|authorization)\s*[:=]\s*[^\s,;]+`)
 var subtitleURLText = regexp.MustCompile(`(?i)https?://[^\s<>"']+`)
@@ -68,6 +69,19 @@ type subtitleCuePayload struct {
 }
 
 func (c *Client) ReadSubtitles(ctx context.Context, bvid string) (subtitles.Document, error) {
+	return c.readSubtitles(ctx, bvid, "")
+}
+
+func (c *Client) ReadSubtitlesLanguage(ctx context.Context, bvid, language string) (subtitles.Document, error) {
+	if !subtitleLanguageCode.MatchString(language) {
+		return subtitles.Document{}, subtitles.ErrInvalid
+	}
+	return c.readSubtitles(ctx, bvid, language)
+}
+
+var subtitleLanguageCode = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+
+func (c *Client) readSubtitles(ctx context.Context, bvid, selectedLanguage string) (subtitles.Document, error) {
 	if len(bvid) != 12 || !strings.HasPrefix(bvid, "BV") {
 		return subtitles.Document{}, subtitles.ErrInvalid
 	}
@@ -98,6 +112,7 @@ func (c *Client) ReadSubtitles(ctx context.Context, bvid string) (subtitles.Docu
 	doc := subtitles.Document{VideoID: bvid, Part: 1, Status: "error", Tracks: []subtitles.Track{}, Parts: make([]subtitles.Part, 0, len(parts))}
 	coolingDown := false
 	var restrictionCode int
+	remainingBodyBytes := maxSubtitleBodies
 	for i, page := range parts {
 		part := subtitles.Part{CID: page.CID, Page: page.Page, Title: safeSubtitleText(page.Title, 120), Status: "error", Languages: []subtitles.Language{}, Tracks: []subtitles.Track{}}
 		if part.Page < 1 {
@@ -116,7 +131,7 @@ func (c *Client) ReadSubtitles(ctx context.Context, bvid string) (subtitles.Docu
 			continue
 		}
 		title := safeSubtitleText(view.Title+" "+page.Title, 240)
-		result, err := c.readSubtitlePart(ctx, bvid, page.CID, title, i == 0)
+		result, err := c.readSubtitlePart(ctx, bvid, page.CID, title, i == 0, selectedLanguage, &remainingBodyBytes)
 		if err != nil {
 			if ctx.Err() != nil {
 				return subtitles.Document{}, ctx.Err()
@@ -142,7 +157,7 @@ func (c *Client) ReadSubtitles(ctx context.Context, bvid string) (subtitles.Docu
 	return doc, nil
 }
 
-func (c *Client) readSubtitlePart(ctx context.Context, bvid string, cid int64, title string, readBodies bool) (subtitles.Part, error) {
+func (c *Client) readSubtitlePart(ctx context.Context, bvid string, cid int64, title string, readBodies bool, selectedLanguage string, remainingBodyBytes *int) (subtitles.Part, error) {
 	params := url.Values{"bvid": {bvid}, "cid": {strconv.FormatInt(cid, 10)}}
 	first, firstErr := c.playerSubtitles(ctx, "/x/player/v2", params)
 	if isSubtitleRateLimited(firstErr) {
@@ -152,7 +167,7 @@ func (c *Client) readSubtitlePart(ctx context.Context, bvid string, cid int64, t
 	if firstErr == nil && first.Subtitle != nil && len(first.Subtitle.List) > 0 {
 		firstCandidates = first.Subtitle.List
 		if hasSubtitleURL(first.Subtitle.List) {
-			firstPart := c.buildSubtitlePart(ctx, first.Subtitle.List, title, readBodies)
+			firstPart := c.buildSubtitlePart(ctx, first.Subtitle.List, title, readBodies, selectedLanguage, remainingBodyBytes)
 			// A declared URL can still yield an empty/invalid payload. Treat that
 			// as missing subtitle data and give the signed endpoint a chance.
 			if !readBodies || len(firstPart.Tracks) > 0 {
@@ -170,7 +185,7 @@ func (c *Client) readSubtitlePart(ctx context.Context, bvid string, cid int64, t
 			return subtitles.Part{}, firstErr
 		}
 		if len(firstCandidates) > 0 {
-			return c.subtitleFallbackError(ctx, firstCandidates, title, keyErr, readBodies), nil
+			return c.subtitleFallbackError(ctx, firstCandidates, title, keyErr, readBodies, selectedLanguage, remainingBodyBytes), nil
 		}
 		return subtitles.Part{}, keyErr
 	}
@@ -182,24 +197,24 @@ func (c *Client) readSubtitlePart(ctx context.Context, bvid string, cid int64, t
 			return subtitles.Part{}, secondErr
 		}
 		if len(firstCandidates) > 0 {
-			return c.subtitleFallbackError(ctx, firstCandidates, title, secondErr, readBodies), nil
+			return c.subtitleFallbackError(ctx, firstCandidates, title, secondErr, readBodies, selectedLanguage, remainingBodyBytes), nil
 		}
 		return subtitles.Part{}, secondErr
 	}
 	if second.Subtitle == nil {
 		if len(firstCandidates) > 0 {
-			return c.subtitleFallbackError(ctx, firstCandidates, title, errors.New("subtitle API returned no subtitle data"), readBodies), nil
+			return c.subtitleFallbackError(ctx, firstCandidates, title, errors.New("subtitle API returned no subtitle data"), readBodies, selectedLanguage, remainingBodyBytes), nil
 		}
 		return subtitles.Part{}, errors.New("subtitle API returned no subtitle data")
 	}
 	if len(second.Subtitle.List) == 0 && len(firstCandidates) > 0 {
-		return c.buildSubtitlePart(ctx, firstCandidates, title, readBodies), nil
+		return c.buildSubtitlePart(ctx, firstCandidates, title, readBodies, selectedLanguage, remainingBodyBytes), nil
 	}
-	return c.buildSubtitlePart(ctx, second.Subtitle.List, title, readBodies), nil
+	return c.buildSubtitlePart(ctx, second.Subtitle.List, title, readBodies, selectedLanguage, remainingBodyBytes), nil
 }
 
-func (c *Client) subtitleFallbackError(ctx context.Context, candidates []playerSubtitle, title string, err error, readBodies bool) subtitles.Part {
-	part := c.buildSubtitlePart(ctx, candidates, title, readBodies)
+func (c *Client) subtitleFallbackError(ctx context.Context, candidates []playerSubtitle, title string, err error, readBodies bool, selectedLanguage string, remainingBodyBytes *int) subtitles.Part {
+	part := c.buildSubtitlePart(ctx, candidates, title, readBodies, selectedLanguage, remainingBodyBytes)
 	part.Status = "error"
 	part.ErrorCode, part.ErrorMessage = platformSubtitleError(err)
 	return part
@@ -256,7 +271,7 @@ func platformSubtitleError(err error) (int, string) {
 	return 0, safeSubtitleText(err.Error(), 160)
 }
 
-func (c *Client) buildSubtitlePart(ctx context.Context, candidates []playerSubtitle, title string, readBodies bool) subtitles.Part {
+func (c *Client) buildSubtitlePart(ctx context.Context, candidates []playerSubtitle, title string, readBodies bool, selectedLanguage string, remainingBodyBytes *int) subtitles.Part {
 	part := subtitles.Part{Title: title, Status: "none", Languages: []subtitles.Language{}, Tracks: []subtitles.Track{}}
 	failedURL := false
 	if len(candidates) > maxSubtitleTracks {
@@ -277,10 +292,18 @@ func (c *Client) buildSubtitlePart(ctx context.Context, candidates []playerSubti
 		source := subtitleSource(candidate)
 		hasURL := strings.TrimSpace(candidate.URL) != ""
 		part.Languages = append(part.Languages, subtitles.Language{Language: language, Label: label, Automatic: source == "ai", Source: source, HasURL: hasURL})
-		if !hasURL || !readBodies {
+		selected := selectedLanguage == "" || language == selectedLanguage
+		if !hasURL || !readBodies || !selected || remainingBodyBytes != nil && *remainingBodyBytes <= 0 {
 			continue
 		}
-		cues, err := c.fetchSubtitleCues(ctx, candidate.URL)
+		budget := maxSubtitleBody
+		if remainingBodyBytes != nil && *remainingBodyBytes < budget {
+			budget = *remainingBodyBytes
+		}
+		cues, bytesRead, err := c.fetchSubtitleCuesBudget(ctx, candidate.URL, budget)
+		if remainingBodyBytes != nil {
+			*remainingBodyBytes -= bytesRead
+		}
 		if err != nil || len(cues) == 0 {
 			failedURL = true
 			if err != nil {
@@ -363,12 +386,18 @@ func subtitleTrackPriority(track subtitles.Track) int {
 }
 
 func subtitlePriority(language, source string) int {
+	automaticChinese := strings.HasPrefix(strings.ToLower(strings.TrimSpace(language)), "ai-")
 	language = normalizedSubtitleLanguage(language)
-	chinese := isChineseSubtitleLanguage(language)
-	if chinese && source == "cc" {
+	simplifiedChinese := isSimplifiedChineseSubtitleLanguage(language)
+	if automaticChinese && (language == "zh" || language == "cmn" || language == "zho" || language == "chi") {
+		if source == "ai" {
+			return 1
+		}
+	}
+	if simplifiedChinese && source == "cc" {
 		return 0
 	}
-	if chinese && source == "ai" {
+	if simplifiedChinese && source == "ai" {
 		return 1
 	}
 	return 2
@@ -385,6 +414,11 @@ func isChineseSubtitleLanguage(language string) bool {
 	return language == "zh" || strings.HasPrefix(language, "zh-")
 }
 
+func isSimplifiedChineseSubtitleLanguage(language string) bool {
+	language = normalizedSubtitleLanguage(language)
+	return language == "zh-hans" || strings.HasPrefix(language, "zh-hans-") || language == "zh-cn" || strings.HasPrefix(language, "zh-cn-") || language == "zh-sg" || strings.HasPrefix(language, "zh-sg-")
+}
+
 func isTraditionalChineseSubtitleLanguage(language string) bool {
 	language = normalizedSubtitleLanguage(language)
 	return language == "zh-hant" || strings.HasPrefix(language, "zh-hant-") || language == "zh-tw" || strings.HasPrefix(language, "zh-tw-") || language == "zh-hk" || strings.HasPrefix(language, "zh-hk-") || language == "zh-mo" || strings.HasPrefix(language, "zh-mo-")
@@ -394,20 +428,31 @@ func subtitleLanguageLabel(language string) string {
 	if isTraditionalChineseSubtitleLanguage(language) {
 		return "繁体中文"
 	}
-	if isChineseSubtitleLanguage(language) {
+	if isSimplifiedChineseSubtitleLanguage(language) {
 		return "简体中文"
+	}
+	if isChineseSubtitleLanguage(language) {
+		return "中文"
 	}
 	return ""
 }
 
 func (c *Client) fetchSubtitleCues(ctx context.Context, raw string) ([]subtitles.Cue, error) {
+	cues, _, err := c.fetchSubtitleCuesBudget(ctx, raw, maxSubtitleBody)
+	return cues, err
+}
+
+func (c *Client) fetchSubtitleCuesBudget(ctx context.Context, raw string, budget int) ([]subtitles.Cue, int, error) {
 	validated, err := validateSubtitleURL(raw)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	if budget <= 0 {
+		return nil, 0, errors.New("subtitle body budget exhausted")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, validated, nil)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("Referer", "https://www.bilibili.com/")
@@ -418,37 +463,43 @@ func (c *Client) fetchSubtitleCues(ctx context.Context, raw string) ([]subtitles
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	response, err := client.Do(req)
 	if err != nil {
-		return nil, errors.New("subtitle CDN request failed")
+		return nil, 0, errors.New("subtitle CDN request failed")
 	}
 	defer response.Body.Close()
 	contentType := safeSubtitleText(response.Header.Get("Content-Type"), 80)
 	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("字幕 CDN 返回 HTTP %d（%s）。", response.StatusCode, contentType)
+		return nil, 0, fmt.Errorf("字幕 CDN 返回 HTTP %d（%s）。", response.StatusCode, contentType)
 	}
 	if !strings.Contains(strings.ToLower(contentType), "json") {
-		return nil, fmt.Errorf("字幕 CDN 返回了非 JSON 内容（%s）。", contentType)
+		return nil, 0, fmt.Errorf("字幕 CDN 返回了非 JSON 内容（%s）。", contentType)
 	}
-	rawBody, err := io.ReadAll(io.LimitReader(response.Body, maxSubtitleBody+1))
-	if err != nil || len(rawBody) > maxSubtitleBody {
-		return nil, errors.New("字幕 CDN 响应超过大小限制。")
+	limit := min(maxSubtitleBody, budget)
+	if response.ContentLength > int64(limit) {
+		return nil, 0, errors.New("字幕 CDN 响应超过大小限制或总量预算。")
+	}
+	// Do not read the usual +1 sentinel here: when this is the final shared
+	// budget, even that probe would exceed the document-wide byte cap.
+	rawBody, err := io.ReadAll(io.LimitReader(response.Body, int64(limit)))
+	if err != nil || len(rawBody) >= limit && response.ContentLength < 0 {
+		return nil, len(rawBody), errors.New("字幕 CDN 响应超过大小限制或总量预算。")
 	}
 	var payload struct {
 		Body []subtitleCuePayload `json:"body"`
 	}
 	if json.Unmarshal(rawBody, &payload) != nil || len(payload.Body) == 0 || len(payload.Body) > 10000 {
-		return nil, fmt.Errorf("字幕 CDN 内容无效（HTTP %d，%s）。", response.StatusCode, contentType)
+		return nil, len(rawBody), fmt.Errorf("字幕 CDN 内容无效（HTTP %d，%s）。", response.StatusCode, contentType)
 	}
 	cues := make([]subtitles.Cue, 0, len(payload.Body))
 	previous := -1.0
 	for _, cue := range payload.Body {
 		text := safeSubtitleText(cue.Content, 8000)
 		if cue.From < 0 || cue.From < previous || cue.To <= cue.From || cue.To > 7*24*3600 || text == "" {
-			return nil, errors.New("subtitle cue data is invalid")
+			return nil, len(rawBody), errors.New("subtitle cue data is invalid")
 		}
 		cues = append(cues, subtitles.Cue{Start: cue.From, End: cue.To, Text: text})
 		previous = cue.From
 	}
-	return cues, nil
+	return cues, len(rawBody), nil
 }
 
 func validateSubtitleURL(raw string) (string, error) {

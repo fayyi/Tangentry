@@ -263,7 +263,9 @@ export interface SubtitleTrack {
   language: string
   label: string
   automatic: boolean
-  source?: 'cc' | 'ai' | 'yt-dlp'
+  source?: 'cc' | 'ai' | 'yt-dlp' | 'youtube'
+  translated?: boolean
+  sourceLanguage?: string
   mismatch?: boolean
   cues: SubtitleCue[]
 }
@@ -272,8 +274,10 @@ export interface SubtitleLanguage {
   language: string
   label: string
   automatic: boolean
-  source?: 'cc' | 'ai' | 'yt-dlp'
+  source?: 'cc' | 'ai' | 'yt-dlp' | 'youtube'
   hasUrl?: boolean
+  translated?: boolean
+  sourceLanguage?: string
 }
 
 export type SubtitleAvailability = 'cc' | 'ai' | 'ai_mismatch' | 'api_empty' | 'none' | 'error' | 'rate_limited'

@@ -3,7 +3,7 @@ import { ArrowLeft, ExternalLink, LoaderCircle } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import { request } from '../../shared/api/client'
-import type { ContentItem, Feed, SubtitleAvailability, SubtitleTrack, SubtitleReference } from '../../shared/api/types'
+import type { ContentItem, Feed, SubtitleAvailability, SubtitleLanguage, SubtitleTrack, SubtitleReference } from '../../shared/api/types'
 import { formatDate, formatDuration } from '../../shared/ui/ContentCard'
 import { SubtitleReader } from './SubtitleReader'
 import { BilingualTitle } from '../ai/TextTranslation'
@@ -19,11 +19,11 @@ function ResizableSubtitlePlayer({ children }: { children: ReactNode }) {
   return <div className="reader-player-resizable" style={{ '--reader-player-width': `${notebook.playerWidth}%` } as CSSProperties}>{children}<ReaderPlayerSizeHandle value={notebook.playerWidth} onChange={notebook.setPlayerWidth} onReset={notebook.resetPlayerWidth}/></div>
 }
 
-export function SubtitlePage({ query, initialItem, onItem, onReturn, notes, insights, onNoteAt, player, position, onSeek, onTrackChange, onAvailabilityChange, assistance }: {
+export function SubtitlePage({ query, initialItem, onItem, onReturn, notes, insights, onNoteAt, player, position, onSeek, onTrackChange, onPlatformLanguagesChange, onAvailabilityChange, assistance }: {
   query: string; initialItem?: ContentItem; onReturn: () => void; notes?: ReactNode; insights?: ReactNode; onNoteAt?: (position: number, reference?: SubtitleReference) => void
   onItem?: (item: ContentItem) => void
   assistance?: SubtitleAssistance
-  player?: ReactNode; position?: number | null; onSeek?: (position: number) => void; onTrackChange?: (track: SubtitleTrack | null) => void; onAvailabilityChange?: (status: SubtitleAvailability | 'available' | 'login_required' | null) => void
+  player?: ReactNode; position?: number | null; onSeek?: (position: number) => void; onTrackChange?: (track: SubtitleTrack | null) => void; onPlatformLanguagesChange?: (languages: SubtitleLanguage[]) => void; onAvailabilityChange?: (status: SubtitleAvailability | 'available' | 'login_required' | null) => void
 }) {
   const [item, setItem] = useState<ContentItem | null>(initialItem ?? null)
   const [error, setError] = useState('')
@@ -52,7 +52,7 @@ export function SubtitlePage({ query, initialItem, onItem, onReturn, notes, insi
         <div className="watch-details">{item ? <BilingualTitle heading contentId={item.id} text={item.title}/> : <h1 className="reading-video-title">{query}</h1>}
         {item && <p className="reading-meta">{item.author || '未知作者'} · {formatDate(item.publishedAt)}{item.durationSeconds > 0 && ` · ${formatDuration(item.durationSeconds)}`}</p>}
         {item?.description && <ReaderDescription key={item.id} item={item} onSeek={onSeek} className="watch-description"/>}</div><ResizableSubtitlePlayer>{player}</ResizableSubtitlePlayer>
-        {error ? <div className="subtitle-error" role="alert"><p>{error}</p><button className="button button-secondary" onClick={() => setAttempt(value => value + 1)}>重新获取视频信息</button></div> : !item && <p className="subtitle-note" role="status"><LoaderCircle size={16} className="spin" />正在获取视频信息…</p>}<SubtitleReader key={query} item={item ?? { platformId: query, url: `https://www.bilibili.com/video/${query}/` }} onNoteAt={onNoteAt} position={position} onSeek={onSeek} onTrackChange={onTrackChange} onAvailabilityChange={onAvailabilityChange} assistance={assistance} /></div><aside className="reading-notes">{notes}</aside></ReadingNotebook>
+        {error ? <div className="subtitle-error" role="alert"><p>{error}</p><button className="button button-secondary" onClick={() => setAttempt(value => value + 1)}>重新获取视频信息</button></div> : !item && <p className="subtitle-note" role="status"><LoaderCircle size={16} className="spin" />正在获取视频信息…</p>}<SubtitleReader key={query} item={item ?? { platformId: query, url: `https://www.bilibili.com/video/${query}/` }} onNoteAt={onNoteAt} position={position} onSeek={onSeek} onTrackChange={onTrackChange} onPlatformLanguagesChange={onPlatformLanguagesChange} onAvailabilityChange={onAvailabilityChange} assistance={assistance} /></div><aside className="reading-notes">{notes}</aside></ReadingNotebook>
     </>}
   </section>
 }

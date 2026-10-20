@@ -41,7 +41,7 @@ func (s *Service) translateBatch(ctx context.Context, c Config, in Input, segmen
 		}
 		// A part is stored like a one-text translation, so it can be reused by
 		// another article containing the same text.
-		chunk := Result{Key: textsKey([]string{part}), ContentID: in.ContentID, Language: in.Track.Language, BaseURL: c.BaseURL, Model: c.Model, Total: 1, Texts: []string{}}
+		chunk := Result{Key: targetTextsKey(inputTargetLanguage(in), []string{part}), ContentID: in.ContentID, Language: in.Track.Language, TargetLanguage: inputTargetLanguage(in), BaseURL: c.BaseURL, Model: c.Model, Total: 1, Texts: []string{}}
 		text := ""
 		cached, err := s.read(ctx, kindTranslation, chunk.Key)
 		if err == nil && !in.Regenerate && len(cached.Texts) == 1 {

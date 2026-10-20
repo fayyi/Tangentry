@@ -19,6 +19,9 @@ var language = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 var keyPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
 func validate(in Input) bool {
+	if !validTargetLanguage(inputTargetLanguage(in)) {
+		return false
+	}
 	validID := content.SpeechID(in.ContentID)
 	if in.Source != "" {
 		if in.Source != "title" && in.Source != "article" {
@@ -69,7 +72,20 @@ func identity(in Input, c Config) Result {
 	for i, cue := range in.Track.Cues {
 		texts[i] = cue.Text
 	}
-	return Result{Key: textsKey(texts), ContentID: in.ContentID, Language: in.Track.Language, BaseURL: c.BaseURL, Model: c.Model, Total: len(in.Track.Cues), Texts: []string{}}
+	target := inputTargetLanguage(in)
+	key := targetTextsKey(target, texts)
+	return Result{Key: key, ContentID: in.ContentID, Language: in.Track.Language, TargetLanguage: target, BaseURL: c.BaseURL, Model: c.Model, Total: len(in.Track.Cues), Texts: []string{}}
+}
+
+func targetTextsKey(target string, texts []string) string {
+	if target == "" || target == targetChinese {
+		return textsKey(texts)
+	}
+	return hashSource(struct {
+		Version int
+		Target  string
+		Texts   []string
+	}{promptVersion, target, texts})
 }
 
 // legacyIdentity is the file key used before results moved to the database.
@@ -84,13 +100,122 @@ func legacyIdentity(in Input, c Config) string {
 }
 
 func validResult(result Result) bool {
-	if result.Total <= 0 || result.Total > 10000 || result.Texts == nil || result.Model == "" || len(result.Model) > 200 || len(result.Texts) > result.Total || !content.ValidID(result.ContentID) || !language.MatchString(result.Language) || !ValidEndpoint(result.BaseURL) {
+	if result.TargetLanguage == "" {
+		result.TargetLanguage = targetChinese
+	}
+	if result.Total <= 0 || result.Total > 10000 || result.Texts == nil || result.Model == "" || len(result.Model) > 200 || len(result.Texts) > result.Total || !content.ValidID(result.ContentID) || !language.MatchString(result.Language) || !validTargetLanguage(result.TargetLanguage) || !ValidEndpoint(result.BaseURL) {
 		return false
 	}
 	total := 0
 	for _, text := range result.Texts {
 		total += len(text)
 		if text == "" || !utf8.ValidString(text) || len(text) > 24000 || total > 8<<20 {
+			return false
+		}
+	}
+	return true
+}
+
+func inputTargetLanguage(in Input) string {
+	if in.TargetLanguage == "" {
+		return targetChinese
+	}
+	target := strings.ToLower(strings.ReplaceAll(in.TargetLanguage, "_", "-"))
+	switch target {
+	case "zh-hans", "zh-cn", "zh-sg":
+		return "zh-Hans"
+	case "zh-hant", "zh-tw", "zh-hk", "zh-mo":
+		return "zh-Hant"
+	default:
+		return target
+	}
+}
+
+func subtitleAlreadyTarget(in Input) bool {
+	target := inputTargetLanguage(in)
+	if target != "zh-Hans" && target != "zh-Hant" {
+		return false
+	}
+	if in.Source == "article" {
+		return false
+	}
+	language := strings.ToLower(strings.ReplaceAll(in.Track.Language, "_", "-"))
+	language = strings.TrimPrefix(language, "ai-")
+	switch target {
+	case "zh-Hans":
+		if isSimplifiedTargetLanguage(language) {
+			return true
+		}
+		if language == "zh" || language == "cmn" || language == "zho" || language == "chi" || isTraditionalChineseLanguage(language) {
+			return false
+		}
+		if in.Source == "" && language != "und" && language != "unknown" {
+			return false
+		}
+		return chineseSubtitles(in)
+	case "zh-Hant":
+		return isTraditionalChineseLanguage(language)
+	default:
+		return false
+	}
+}
+
+func isSimplifiedTargetLanguage(language string) bool {
+	return language == "zh-hans" || strings.HasPrefix(language, "zh-hans-") || language == "zh-cn" || strings.HasPrefix(language, "zh-cn-") || language == "zh-sg" || strings.HasPrefix(language, "zh-sg-")
+}
+
+func isTraditionalChineseLanguage(language string) bool {
+	return language == "zh-hant" || strings.HasPrefix(language, "zh-hant-") || language == "zh-tw" || strings.HasPrefix(language, "zh-tw-") || language == "zh-hk" || strings.HasPrefix(language, "zh-hk-") || language == "zh-mo" || strings.HasPrefix(language, "zh-mo-")
+}
+
+func TargetLanguageName(code string) string {
+	if code == "" {
+		return "简体中文"
+	}
+	switch strings.ToLower(strings.ReplaceAll(code, "_", "-")) {
+	case "zh-hans", "zh-cn", "zh-sg":
+		return "简体中文"
+	case "zh-hant", "zh-tw", "zh-hk", "zh-mo":
+		return "繁体中文"
+	case "en", "en-us", "en-gb":
+		return "英语"
+	case "ja":
+		return "日语"
+	case "ko":
+		return "韩语"
+	case "fr":
+		return "法语"
+	case "de":
+		return "德语"
+	case "es":
+		return "西班牙语"
+	case "pt":
+		return "葡萄牙语"
+	case "ru":
+		return "俄语"
+	case "it":
+		return "意大利语"
+	case "ar":
+		return "阿拉伯语"
+	case "hi":
+		return "印地语"
+	case "th":
+		return "泰语"
+	case "vi":
+		return "越南语"
+	case "id":
+		return "印度尼西亚语"
+	default:
+		return code
+	}
+}
+
+func validTargetLanguage(value string) bool {
+	if len(value) < 2 || len(value) > 35 || !language.MatchString(value) {
+		return false
+	}
+	for _, part := range strings.Split(strings.ReplaceAll(value, "_", "-"), "-") {
+		if part == "" || len(part) > 8 {
 			return false
 		}
 	}
