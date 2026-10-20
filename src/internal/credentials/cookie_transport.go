@@ -111,6 +111,11 @@ func (s *Store) Snapshot(platform string) (string, func(), error) {
 	if e.Jar == "" {
 		return "", func() {}, nil
 	}
+	jar, err := normalize(platform, "netscape", e.Jar)
+	if err != nil {
+		return "", func() {}, ErrInvalid
+	}
+	e.Jar = jar
 	f, err := os.CreateTemp(s.directory, "request-*.txt")
 	if err != nil {
 		return "", func() {}, ErrStorage
