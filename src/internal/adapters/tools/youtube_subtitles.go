@@ -480,44 +480,38 @@ func mergeYouTubeAutoCues(cues []subtitles.Cue) []subtitles.Cue {
 			continue
 		}
 		currentWords := strings.Fields(cue.Text)
-		if previousOriginalText != "" && cue.Start <= previousEnd+1.5 {
-			previousWords := strings.Fields(previousOriginalText)
-			limit := len(previousWords)
-			if len(currentWords) < limit {
-				limit = len(currentWords)
-			}
-			for overlap := limit; overlap >= 2; overlap-- {
-				// A two-word cue repeated verbatim is common natural speech,
-				// not enough evidence of the rolling-window duplication that
-				// automatic captions produce. Keep it unless a longer phrase
-				// establishes a stronger overlap.
-				if overlap == 2 && len(previousWords) <= 2 {
-					continue
-				}
-				matches := true
-				for index := 0; index < overlap; index++ {
-					left := overlapToken(previousWords[len(previousWords)-overlap+index])
-					right := overlapToken(currentWords[index])
-					if left == "" || left != right {
-						matches = false
-						break
-					}
-				}
-				if matches && overlap < len(currentWords) {
-					cue.Text = strings.TrimSpace(strings.Join(currentWords[overlap:], " "))
-					break
-				}
-			}
-			if cue.Text == strings.TrimSpace(strings.Join(currentWords, " ")) && hasCJKText(previousOriginalText) && hasCJKText(cue.Text) {
+		if previousOriginalText != "" && cue.Start-previousEnd < 0.5 {
+			if hasCJKText(previousOriginalText) && hasCJKText(cue.Text) {
 				previousRunes := []rune(strings.TrimSpace(previousOriginalText))
 				currentRunes := []rune(strings.TrimSpace(cue.Text))
 				limit := len(previousRunes)
 				if len(currentRunes) < limit {
 					limit = len(currentRunes)
 				}
-				for overlap := limit; len(previousRunes) >= 6 && overlap >= 5; overlap-- {
-					if string(previousRunes[len(previousRunes)-overlap:]) == string(currentRunes[:overlap]) && overlap < len(currentRunes) {
+				for overlap := limit; overlap >= 4; overlap-- {
+					if string(previousRunes[len(previousRunes)-overlap:]) == string(currentRunes[:overlap]) {
 						cue.Text = strings.TrimSpace(string(currentRunes[overlap:]))
+						break
+					}
+				}
+			} else {
+				previousWords := strings.Fields(previousOriginalText)
+				limit := len(previousWords)
+				if len(currentWords) < limit {
+					limit = len(currentWords)
+				}
+				for overlap := limit; overlap >= 3; overlap-- {
+					matches := true
+					for index := 0; index < overlap; index++ {
+						left := overlapToken(previousWords[len(previousWords)-overlap+index])
+						right := overlapToken(currentWords[index])
+						if left == "" || left != right {
+							matches = false
+							break
+						}
+					}
+					if matches {
+						cue.Text = strings.TrimSpace(strings.Join(currentWords[overlap:], " "))
 						break
 					}
 				}

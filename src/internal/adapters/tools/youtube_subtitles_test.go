@@ -162,21 +162,54 @@ func TestYouTubePreferenceMatchesBilibiliLanguagePriority(t *testing.T) {
 }
 
 func TestYouTubeAutomaticOverlapMergeKeepsTimeAndNormalRepeats(t *testing.T) {
-	cues := []subtitles.Cue{
-		{Start: 4, End: 5, Text: "we are going home"},
-		{Start: 2, End: 3, Text: "we are going"},
-		{Start: 6, End: 7, Text: "we are really home"},
-		{Start: 8, End: 9, Text: "really home today"},
-		{Start: 10, End: 11, Text: "   "},
-		{Start: 15, End: 16, Text: "we are going home"},
-		{Start: 17, End: 18, Text: "你好世界，欢迎"},
-		{Start: 18, End: 19, Text: "世界，欢迎大家"},
-		{Start: 20, End: 21, Text: "thank you"},
-		{Start: 21, End: 22, Text: "thank you very much"},
-	}
-	got := mergeYouTubeAutoCues(cues)
-	if len(got) != 9 || got[0].Text != "we are going" || got[1].Text != "home" || got[1].Start != 4 || got[2].Text != "we are really home" || got[3].Text != "today" || got[3].Start != 8 || got[4].Text != "we are going home" || got[5].Text != "你好世界，欢迎" || got[6].Text != "大家" || got[6].Start != 18 || got[7].Text != "thank you" || got[8].Text != "thank you very much" {
-		t.Fatalf("unexpected merged cues: %+v", got)
+	for _, test := range []struct {
+		name  string
+		cues  []subtitles.Cue
+		want  []string
+		start []float64
+	}{
+		{
+			name: "natural repeated phrase outside rolling window",
+			cues: []subtitles.Cue{{Start: 0, End: 1, Text: "I want to thank you"}, {Start: 2, End: 3, Text: "thank you for coming"}},
+			want: []string{"I want to thank you", "thank you for coming"}, start: []float64{0, 2},
+		},
+		{
+			name: "short word overlap inside rolling window",
+			cues: []subtitles.Cue{{Start: 0, End: 1, Text: "we are going home"}, {Start: 0.8, End: 1.8, Text: "going home now"}},
+			want: []string{"we are going home", "going home now"}, start: []float64{0, 0.8},
+		},
+		{
+			name: "english rolling captions",
+			cues: []subtitles.Cue{{Start: 0.8, End: 1.8, Text: "the best day of my life"}, {Start: 0, End: 1, Text: "this is the best day"}},
+			want: []string{"this is the best day", "of my life"}, start: []float64{0, 0.8},
+		},
+		{
+			name: "natural chinese repeated phrase outside rolling window",
+			cues: []subtitles.Cue{{Start: 0, End: 1, Text: "今天我们一起去公园玩吧"}, {Start: 2, End: 3, Text: "一起去公园玩吧真开心"}},
+			want: []string{"今天我们一起去公园玩吧", "一起去公园玩吧真开心"}, start: []float64{0, 2},
+		},
+		{
+			name: "chinese rolling captions",
+			cues: []subtitles.Cue{{Start: 0, End: 1, Text: "今天我们一起去公园玩吧"}, {Start: 0.8, End: 1.8, Text: "一起去公园玩吧真开心"}},
+			want: []string{"今天我们一起去公园玩吧", "真开心"}, start: []float64{0, 0.8},
+		},
+		{
+			name: "duplicate cue is skipped",
+			cues: []subtitles.Cue{{Start: 0, End: 1, Text: "this is a repeated phrase"}, {Start: 0.8, End: 1.8, Text: "a repeated phrase"}},
+			want: []string{"this is a repeated phrase"}, start: []float64{0},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := mergeYouTubeAutoCues(test.cues)
+			if len(got) != len(test.want) {
+				t.Fatalf("got %d cues, want %d: %+v", len(got), len(test.want), got)
+			}
+			for index := range got {
+				if got[index].Text != test.want[index] || got[index].Start != test.start[index] {
+					t.Fatalf("cue %d = %+v, want text %q at %.1f", index, got[index], test.want[index], test.start[index])
+				}
+			}
+		})
 	}
 }
 
@@ -194,7 +227,7 @@ func TestYouTubeInnerTubeCaptionsFallbackAndNoCaptionClassification(t *testing.T
 			if req.URL.Query().Get("fmt") != "json3" {
 				t.Fatal("timedtext format was not constrained")
 			}
-			return youtubeCaptionResponse(200, `{"events":[{"tStartMs":0,"dDurationMs":1000,"segs":[{"utf8":"we are going home"}]},{"tStartMs":1000,"dDurationMs":1000,"segs":[{"utf8":"going home now"}]}]}`, req), nil
+			return youtubeCaptionResponse(200, `{"events":[{"tStartMs":0,"dDurationMs":1000,"segs":[{"utf8":"we are going home now"}]},{"tStartMs":1000,"dDurationMs":1000,"segs":[{"utf8":"going home now today"}]}]}`, req), nil
 		}
 		return nil, errors.New("unexpected local URL")
 	})}
@@ -204,7 +237,7 @@ func TestYouTubeInnerTubeCaptionsFallbackAndNoCaptionClassification(t *testing.T
 	// on the host running the suite; it specifically exercises the InnerTube path.
 	kit.status.Tools[0].Available = false
 	doc, err := kit.ReadYouTubeSubtitles(context.Background(), "jNQXAC9IVRw", "")
-	if err != nil || doc.Status != "available" || len(doc.Tracks) != 1 || !doc.Tracks[0].Automatic || doc.Tracks[0].Language != "zh-Hans" || len(doc.Tracks[0].Cues) != 2 || doc.Tracks[0].Cues[1].Text != "now" {
+	if err != nil || doc.Status != "available" || len(doc.Tracks) != 1 || !doc.Tracks[0].Automatic || doc.Tracks[0].Language != "zh-Hans" || len(doc.Tracks[0].Cues) != 2 || doc.Tracks[0].Cues[1].Text != "today" {
 		t.Fatalf("InnerTube auto captions: %+v %v", doc, err)
 	}
 	if len(calls) != 3 || calls[0] != "/sw.js_data" || calls[1] != "/youtubei/v1/player" || calls[2] != "/api/timedtext" {
