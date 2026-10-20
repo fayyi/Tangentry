@@ -18,6 +18,13 @@
 .subtitle-heading h2 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 16px; font-weight: 500; }
 .subtitle-note { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; margin: 16px 0 0; }
 .subtitle-error, .subtitle-empty { font-size: 13px; border: 1px solid var(--control-line); background: var(--surface); padding: 14px; border-radius: var(--radius); margin-top: 16px; }
+.subtitle-parts { display: grid; gap: 6px; margin-top: 16px; }
+.subtitle-part-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 9px 10px; border-inline-start: 2px solid var(--control-line); background: var(--surface); font-size: 12px; }
+.subtitle-part-status > span:first-child { font-weight: 600; }
+.subtitle-part-candidates { flex-basis: 100%; color: var(--muted); overflow-wrap: anywhere; }
+.subtitle-part-warning { border-inline-start-color: #b7791f; }
+.subtitle-part-danger { border-inline-start-color: #b42318; }
+.subtitle-part-status .transcription-controls { flex-basis: 100%; }
 .subtitle-empty p { margin: 0; }
 .subtitle-empty p + p { margin-top: 8px; color: var(--muted); }
 .subtitle-controls { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-top: 20px; }

@@ -19,8 +19,9 @@ import (
 
 // envelope is the common Bilibili API response wrapper.
 type envelope struct {
-	Code int             `json:"code"`
-	Data json.RawMessage `json:"data"`
+	Code    int             `json:"code"`
+	Message string          `json:"message"`
+	Data    json.RawMessage `json:"data"`
 }
 
 func (c *Client) get(ctx context.Context, endpoint string, params url.Values, target any, allowAnonymousNav bool) error {
@@ -30,6 +31,34 @@ func (c *Client) get(ctx context.Context, endpoint string, params url.Values, ta
 // getFrom performs a credential-scoped API request and maps provider protocol
 // failures into stable platform errors. Feature files only see decoded data.
 func (c *Client) getFrom(ctx context.Context, origin, referer, endpoint string, params url.Values, target any, allowAnonymousNav bool) error {
+	body, err := c.fetchEnvelope(ctx, origin, referer, endpoint, params)
+	if err != nil {
+		return err
+	}
+	if body.Code != 0 && !(allowAnonymousNav && body.Code == -101) {
+		switch body.Code {
+		case -352, -412, -799, -509:
+			return c.restricted()
+		case -101:
+			return &discovery.PlatformError{Message: "此内容需要 B站登录态，或现有登录态已过期。"}
+		case -404, 62002:
+			return &discovery.PlatformError{Message: "没有找到这位 UP 主或视频，内容也可能已经删除。"}
+		default:
+			return &discovery.PlatformError{Message: "B站未能提供这份内容，请确认地址后重试。"}
+		}
+	}
+	if len(body.Data) == 0 || string(body.Data) == "null" {
+		return &discovery.PlatformError{Message: "B站返回了不完整的数据，请稍后重试。"}
+	}
+	if err := json.Unmarshal(body.Data, target); err != nil {
+		return &discovery.PlatformError{Message: "B站数据格式发生变化，请稍后重试。"}
+	}
+	return nil
+}
+
+// fetchEnvelope retains the platform code/message for callers that need to
+// explain a per-part failure. It deliberately never exposes request headers.
+func (c *Client) fetchEnvelope(ctx context.Context, origin, referer, endpoint string, params url.Values) (envelope, error) {
 	if c.refresher != nil {
 		_ = c.refresher.Ensure(ctx)
 	}
@@ -37,11 +66,11 @@ func (c *Client) getFrom(ctx context.Context, origin, referer, endpoint string, 
 	blocked := time.Now().Before(c.restrictedUntil)
 	c.mu.Unlock()
 	if blocked {
-		return &discovery.PlatformError{Message: "B站暂时限制了请求。请稍后再试，或直接打开原站浏览。", Restricted: true}
+		return envelope{}, &discovery.PlatformError{Message: "B站暂时限制了请求。请稍后再试，或直接打开原站浏览。", Restricted: true}
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, origin+endpoint+"?"+params.Encode(), nil)
 	if err != nil {
-		return err
+		return envelope{}, err
 	}
 	requestUserAgent := userAgent
 	if c.userAgentProvider != nil {
@@ -64,40 +93,22 @@ func (c *Client) getFrom(ctx context.Context, origin, referer, endpoint string, 
 	response, err := client.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return envelope{}, ctx.Err()
 		}
-		return &discovery.PlatformError{Message: "暂时无法连接 B站，请检查网络后重试。"}
+		return envelope{}, &discovery.PlatformError{Message: "暂时无法连接 B站，请检查网络后重试。"}
 	}
 	defer response.Body.Close()
 	if response.StatusCode == http.StatusPreconditionFailed || response.StatusCode == http.StatusTooManyRequests || response.StatusCode == http.StatusForbidden {
-		return c.restricted()
+		return envelope{}, c.restricted()
 	}
 	if response.StatusCode != http.StatusOK {
-		return &discovery.PlatformError{Message: "B站服务暂时不可用，请稍后重试。"}
+		return envelope{}, &discovery.PlatformError{Message: "B站服务暂时不可用，请稍后重试。"}
 	}
 	var body envelope
 	if err := json.NewDecoder(io.LimitReader(response.Body, 4<<20)).Decode(&body); err != nil {
-		return &discovery.PlatformError{Message: "B站返回了无法识别的数据，请稍后重试。"}
+		return envelope{}, &discovery.PlatformError{Message: "B站返回了无法识别的数据，请稍后重试。"}
 	}
-	if body.Code != 0 && !(allowAnonymousNav && body.Code == -101) {
-		switch body.Code {
-		case -352, -412, -799, -509:
-			return c.restricted()
-		case -101:
-			return &discovery.PlatformError{Message: "此内容需要 B站登录态，或现有登录态已过期。"}
-		case -404, 62002:
-			return &discovery.PlatformError{Message: "没有找到这位 UP 主或视频，内容也可能已经删除。"}
-		default:
-			return &discovery.PlatformError{Message: "B站未能提供这份内容，请确认地址后重试。"}
-		}
-	}
-	if len(body.Data) == 0 || string(body.Data) == "null" {
-		return &discovery.PlatformError{Message: "B站返回了不完整的数据，请稍后重试。"}
-	}
-	if err := json.Unmarshal(body.Data, target); err != nil {
-		return &discovery.PlatformError{Message: "B站数据格式发生变化，请稍后重试。"}
-	}
-	return nil
+	return body, nil
 }
 
 func (c *Client) restricted() error {

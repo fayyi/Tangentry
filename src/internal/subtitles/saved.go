@@ -80,7 +80,10 @@ func (s *SavedService) Save(ctx context.Context, id string, track Track, revisio
 
 // Capture only creates missing active languages; edited tracks always win.
 func (s *SavedService) Capture(ctx context.Context, id string, doc Document) error {
-	if doc.Status != "available" {
+	if doc.Status != "available" && doc.Status != "cc" && doc.Status != "ai" && doc.Status != "ai_mismatch" {
+		return nil
+	}
+	if len(doc.Tracks) == 0 {
 		return nil
 	}
 	for _, track := range doc.Tracks {
