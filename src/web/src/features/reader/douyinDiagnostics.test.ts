@@ -2,6 +2,18 @@ import { describe, expect, it } from 'vitest'
 import { diagnosticOutcomeName, diagnosticStageFacts, diagnosticStageName, parseDouyinDiagnostics } from './douyinDiagnostics'
 
 describe('Douyin playback diagnostics', () => {
+  it('maps passive-capture failure reasons while keeping response snippets structurally redacted', () => {
+    const [stage, unsafe] = parseDouyinDiagnostics([
+      { stage: 'webview_detail_capture', outcome: 'exception', reason: 'observer_not_installed', response_snippet_redacted: '{"status_code":403,"message":"[文本已脱敏]"}' },
+      { stage: 'webview_detail_capture', outcome: 'exception', reason: 'fetch_reject', response_snippet_redacted: '{"message":"token=private"}' },
+    ])
+    expect(stage).toBeDefined()
+    expect(diagnosticStageFacts(stage!)).toContain('页面请求观察器未安装')
+    expect(stage?.response_snippet_redacted).toBe('{"status_code":403,"message":"[文本已脱敏]"}')
+    expect(unsafe?.response_snippet_redacted).toBeNull()
+    expect(JSON.stringify([stage, unsafe])).not.toContain('token=private')
+  })
+
   it('sorts stages and sanitizes URLs and stderr', () => {
     const values = parseDouyinDiagnostics([
       { stage: 'ytdlp', outcome: 'exception', ytdlp_exit_code: 1, ytdlp_stderr_first_error_redacted: 'ERROR: https://fixture.example/path?token=private' },

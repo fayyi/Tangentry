@@ -5,6 +5,7 @@ export type DouyinDiagnosticStage = {
   outcome: DiagnosticOutcome
   http_status: number | null
   content_type: string | null
+  response_url: string | null
   page_url: string | null
   blocked_navigation_url: string | null
   page_ready_state: string | null
@@ -27,6 +28,10 @@ export type DouyinDiagnosticStage = {
   response_bytes: number | null
   detail_url_count: number | null
   video_source_count: number | null
+  target_match_count: number | null
+  response_snippet_redacted: string | null
+  fetch_hook_installed: boolean | null
+  xhr_hook_installed: boolean | null
   protocol: string | null
   extension: string | null
   video_codec: string | null
@@ -37,10 +42,10 @@ export type DouyinDiagnosticStage = {
 }
 
 const outcomes = new Set<DiagnosticOutcome>(['ok', 'restricted', 'timeout', 'too_large', 'no_url', 'http_error', 'exception'])
-const stageOrder = ['frontend_request', 'playback_open', 'webview_session', 'webview_page_load', 'webview_detail_fetch', 'webview_media_extract', 'resolver_fallback', 'ytdlp', 'source_validate', 'session_media_fetch', 'frontend_media']
+const stageOrder = ['frontend_request', 'playback_open', 'webview_session', 'webview_page_load', 'webview_detail_fetch', 'webview_detail_capture', 'webview_feed_fallback', 'webview_dom_fallback', 'webview_media_extract', 'resolver_fallback', 'ytdlp', 'source_validate', 'session_media_fetch', 'frontend_media']
 const stageNames: Record<string, string> = {
   frontend_request: '前端请求', playback_open: '播放解析', webview_session: 'WebView 会话', webview_page_load: 'WebView 页面',
-  webview_detail_fetch: '详情接口', webview_media_extract: '媒体地址提取', resolver_fallback: '解析回退', ytdlp: 'yt-dlp',
+  webview_detail_fetch: '详情接口', webview_detail_capture: '页面详情捕获', webview_feed_fallback: '推荐流回退', webview_dom_fallback: '页面状态回退', webview_media_extract: '媒体地址提取', resolver_fallback: '解析回退', ytdlp: 'yt-dlp',
   source_validate: '播放地址校验', session_media_fetch: '媒体请求', frontend_media: '播放器',
 }
 const outcomeNames: Record<DiagnosticOutcome, string> = {
@@ -51,7 +56,7 @@ const reasonNames: Record<string, string> = {
   resolver_started: '开始解析', resolver_success: '解析成功', resolver_error: '解析器失败', resolver_timeout: '解析器超时',
   fallback_allowed: '允许回退到 yt-dlp', fallback_blocked_restricted: '页面验证，已阻止 yt-dlp 回退', fallback_blocked_timeout: '页面超时，已阻止 yt-dlp 回退', fallback_blocked_cancelled: '请求已取消，已阻止 yt-dlp 回退',
   webview_success: '应用内页面解析成功', webview_no_url: '应用内页面没有媒体地址', session_created: '新建会话', session_reused: '复用会话', session_destroyed: '会话不可用', dom_ready: '页面桥接就绪',
-  navigation_blocked: '导航被安全策略阻止', page_load_error: '页面加载失败', javascript_error: '页面脚本执行失败', network_error: '网络请求失败',
+  navigation_blocked: '导航被安全策略阻止', page_load_error: '页面加载失败', javascript_error: '页面脚本执行失败', network_error: '网络请求失败', fetch_reject: 'fetch 未取得响应', xhr_network_error: 'XHR 网络失败', request_timeout: '页面请求超时', request_aborted: '页面请求中止', response_unavailable: '响应不可读取', observer_no_response: '未捕获到目标响应', observer_not_installed: '页面请求观察器未安装', target_not_matched: '响应未匹配目标视频',
   detail_success: '详情读取成功', http_status: 'HTTP 请求失败', business_verification: '业务验证状态', non_json: '响应不是 JSON', invalid_json: 'JSON 格式异常', response_too_large: '响应超过大小限制',
   media_found: '找到媒体候选', media_not_found: '没有媒体候选', candidate_filtered: '候选不符合白名单或已过期', candidate_expired: '候选已过期', cdn_rejected: 'CDN 不在白名单', source_expired: '签名已过期', source_valid: '播放地址有效',
   tool_unavailable: 'yt-dlp 不可用', cookie_read_error: 'Cookie 配置读取失败', cookie_configured: 'Cookie 已配置', command_error: 'yt-dlp 命令创建失败', command_failed: 'yt-dlp 执行失败', cancelled: '请求已取消', stdout_too_large: 'yt-dlp 输出过大',
@@ -69,6 +74,21 @@ function nullableNumber(value: unknown): number | null {
 }
 function nullableBoolean(value: unknown): boolean | null {
   return typeof value === 'boolean' ? value : null
+}
+function safeResponseSnippet(value: unknown): string | null {
+  if (typeof value !== 'string' || value.length > 200) return null
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>
+    const keys = Object.keys(parsed)
+    if (keys.some(key => key !== 'status_code' && key !== 'message')) return null
+    if (parsed.status_code !== undefined && (typeof parsed.status_code !== 'number' || !Number.isSafeInteger(parsed.status_code) || Math.abs(parsed.status_code) > 100000)) return null
+    if (parsed.message !== undefined && parsed.message !== '[文本已脱敏]') return null
+    if (parsed.status_code === undefined && parsed.message === undefined) return null
+    const normalized = JSON.stringify({ ...(parsed.status_code === undefined ? {} : { status_code: parsed.status_code }), ...(parsed.message === undefined ? {} : { message: parsed.message }) })
+    return normalized.length <= 200 ? normalized : null
+  } catch {
+    return null
+  }
 }
 
 export function safeDiagnosticURL(value: unknown): string | null {
@@ -135,6 +155,7 @@ export function parseDouyinDiagnostics(value: unknown): DouyinDiagnosticStage[] 
       stage: raw.stage, outcome: raw.outcome as DiagnosticOutcome,
       http_status: nullableNumber(raw.http_status),
       content_type: nullableString(raw.content_type, 128)?.split(';', 1)[0].toLowerCase() ?? null,
+      response_url: safeDiagnosticURL(raw.response_url),
       page_url: safeDiagnosticURL(raw.page_url),
       blocked_navigation_url: safeDiagnosticURL(raw.blocked_navigation_url),
       page_ready_state: nullableString(raw.page_ready_state, 16),
@@ -148,7 +169,8 @@ export function parseDouyinDiagnostics(value: unknown): DouyinDiagnosticStage[] 
       attempted: nullableNumber(raw.attempted), refreshed: nullableBoolean(raw.refreshed),
       cookie_configured: nullableBoolean(raw.cookie_configured), frontend_media_code: nullableNumber(raw.frontend_media_code),
       frontend_message: safeDiagnosticText(raw.frontend_message), bytes_read: nullableNumber(raw.bytes_read), response_bytes: nullableNumber(raw.response_bytes),
-      detail_url_count: nullableNumber(raw.detail_url_count), video_source_count: nullableNumber(raw.video_source_count), protocol: nullableString(raw.protocol, 8),
+      detail_url_count: nullableNumber(raw.detail_url_count), video_source_count: nullableNumber(raw.video_source_count), target_match_count: nullableNumber(raw.target_match_count), response_snippet_redacted: safeResponseSnippet(raw.response_snippet_redacted), protocol: nullableString(raw.protocol, 8),
+      fetch_hook_installed: nullableBoolean(raw.fetch_hook_installed), xhr_hook_installed: nullableBoolean(raw.xhr_hook_installed),
       extension: nullableString(raw.extension, 16), video_codec: nullableString(raw.video_codec, 32),
       audio_codec: nullableString(raw.audio_codec, 32), duration_seconds: nullableNumber(raw.duration_seconds),
       cdn_allowed: nullableBoolean(raw.cdn_allowed), signature_deadline_unix: nullableNumber(raw.signature_deadline_unix),
@@ -163,6 +185,7 @@ export function diagnosticStageFacts(stage: DouyinDiagnosticStage): string[] {
   const facts: string[] = []
   if (stage.http_status !== null) facts.push(`HTTP ${stage.http_status}`)
   if (stage.content_type) facts.push(stage.content_type)
+  if (stage.response_url) facts.push(`响应来源 ${stage.response_url}`)
   if (stage.page_url) facts.push(stage.page_url)
   else if (stage.blocked_navigation_url) facts.push(stage.blocked_navigation_url)
   if (stage.blocked_navigation_url) facts.push(`已阻止导航：${stage.blocked_navigation_url}`)
@@ -174,8 +197,12 @@ export function diagnosticStageFacts(stage: DouyinDiagnosticStage): string[] {
   if (stage.accepted_count !== null) facts.push(`白名单通过 ${stage.accepted_count}`)
   if (stage.video_element_count !== null) facts.push(`video 元素 ${stage.video_element_count}`)
   if (stage.detail_url_count !== null) facts.push(`详情地址 ${stage.detail_url_count}`)
+  if (stage.target_match_count !== null) facts.push(`目标匹配 ${stage.target_match_count}`)
   if (stage.video_source_count !== null) facts.push(`video 地址 ${stage.video_source_count}`)
   if (stage.response_bytes !== null) facts.push(`响应 ${stage.response_bytes} 字节`)
+  if (stage.response_snippet_redacted) facts.push(`响应片段 ${stage.response_snippet_redacted}`)
+  if (stage.fetch_hook_installed !== null) facts.push(`fetch 钩子：${stage.fetch_hook_installed ? '是' : '否'}`)
+  if (stage.xhr_hook_installed !== null) facts.push(`XHR 钩子：${stage.xhr_hook_installed ? '是' : '否'}`)
   if (stage.stage === 'ytdlp') {
     facts.push(`版本 ${stage.ytdlp_version ?? '未知'}`)
     facts.push(`退出码 ${stage.ytdlp_exit_code ?? '无'}`)

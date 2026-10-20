@@ -67,13 +67,50 @@ func TestDiagnosticStageSanitizesAndSerializesNullableMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(encoded)
-	for _, value := range []string{"www.douyin.com/aweme/v1/web/aweme/detail/", "application/json", `"http_status":null`, `"ytdlp_version":null`, `"ytdlp_exit_code":null`} {
+	for _, value := range []string{"www.douyin.com/aweme/v1/web/aweme/detail/", "application/json", `"response_url":null`, `"http_status":null`, `"ytdlp_version":null`, `"ytdlp_exit_code":null`} {
 		if !strings.Contains(text, value) {
 			t.Fatalf("missing %q in %s", value, text)
 		}
 	}
 	if strings.Contains(text, "a_bogus") || strings.Contains(text, "fixture") {
 		t.Fatalf("unsafe metadata in %s", text)
+	}
+}
+
+func TestDiagnosticStageAcceptsOnlyRedactedResponseSnippet(t *testing.T) {
+	unsafe := `{"message":"token=private"}`
+	safe := `{"status_code":403,"message":"[文本已脱敏]"}`
+	stage := SanitizeDiagnosticStage(DiagnosticStage{
+		Stage:                   "webview_detail_capture",
+		Outcome:                 OutcomeHTTPError,
+		ResponseSnippetRedacted: &unsafe,
+	})
+	if stage.ResponseSnippetRedacted != nil {
+		t.Fatalf("unsafe response snippet survived: %q", *stage.ResponseSnippetRedacted)
+	}
+	stage.ResponseSnippetRedacted = &safe
+	stage = SanitizeDiagnosticStage(stage)
+	if stage.ResponseSnippetRedacted == nil || *stage.ResponseSnippetRedacted != safe {
+		t.Fatalf("safe response snippet was dropped: %v", stage.ResponseSnippetRedacted)
+	}
+	tooLong := strings.Repeat("x", 201)
+	if got := SanitizeDiagnosticStage(DiagnosticStage{Stage: "webview_detail_capture", Outcome: OutcomeHTTPError, ResponseSnippetRedacted: &tooLong}).ResponseSnippetRedacted; got != nil {
+		t.Fatalf("oversized response snippet survived: %q", *got)
+	}
+}
+
+func TestDiagnosticStageOrderIncludesAThenBThenC(t *testing.T) {
+	stages := orderDiagnosticStages([]DiagnosticStage{
+		{Stage: "webview_media_extract", Outcome: OutcomeNoURL},
+		{Stage: "webview_dom_fallback", Outcome: OutcomeNoURL},
+		{Stage: "webview_feed_fallback", Outcome: OutcomeNoURL},
+		{Stage: "webview_detail_capture", Outcome: OutcomeNoURL},
+	})
+	want := []string{"webview_detail_capture", "webview_feed_fallback", "webview_dom_fallback", "webview_media_extract"}
+	for index, stage := range stages {
+		if stage.Stage != want[index] {
+			t.Fatalf("stage order = %#v, want %#v", stages, want)
+		}
 	}
 }
 

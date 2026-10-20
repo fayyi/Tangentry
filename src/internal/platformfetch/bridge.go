@@ -55,22 +55,27 @@ type VideoMediaResponse struct {
 // VideoMediaDiagnostic contains only bounded metadata captured inside the
 // native page bridge. It never carries response bodies or media URLs.
 type VideoMediaDiagnostic struct {
-	Stage                string
-	Outcome              string
-	Reason               string
-	HTTPStatus           *int
-	ContentType          *string
-	PageURL              *string
-	BlockedNavigationURL *string
-	PageReadyState       *string
-	IsDouyinContext      *bool
-	BusinessStatus       *int
-	CandidateCount       *int
-	AcceptedCount        *int
-	VideoElementCount    *int
-	DetailURLCount       *int
-	VideoSourceCount     *int
-	ResponseBytes        *int64
+	Stage                   string
+	Outcome                 string
+	Reason                  string
+	HTTPStatus              *int
+	ContentType             *string
+	ResponseURL             *string
+	PageURL                 *string
+	BlockedNavigationURL    *string
+	PageReadyState          *string
+	IsDouyinContext         *bool
+	BusinessStatus          *int
+	CandidateCount          *int
+	AcceptedCount           *int
+	VideoElementCount       *int
+	DetailURLCount          *int
+	TargetMatchCount        *int
+	VideoSourceCount        *int
+	ResponseBytes           *int64
+	ResponseSnippetRedacted *string
+	FetchHookInstalled      *bool
+	XHRHookInstalled        *bool
 }
 
 type VideoMediaError struct {
@@ -117,6 +122,8 @@ type FeedCaptureResponse struct {
 	InitiatorTypes     []string
 	FetchHookInstalled bool
 	XHRHookInstalled   bool
+	MediaCaptures      []VideoMediaCapture
+	Restricted         bool
 	DOM                DOMDiagnostics
 }
 
@@ -148,6 +155,30 @@ type DOMCard struct {
 // regular Fetcher for server/headless builds and older shells.
 type FeedCaptureFetcher interface {
 	CaptureFeed(context.Context, string, int) (FeedCaptureResponse, error)
+}
+
+// VideoMediaCapture is a bounded projection of media addresses from a page-owned
+// JSON response. It never contains the response body or request query string.
+type VideoMediaCapture struct {
+	Path             string                `json:"path"`
+	Status           *int                  `json:"status"`
+	ContentType      *string               `json:"contentType"`
+	ResponseBytes    *int64                `json:"responseBytes"`
+	TooLarge         bool                  `json:"tooLarge"`
+	HasResponse      bool                  `json:"hasResponse"`
+	Reason           string                `json:"reason"`
+	BusinessStatus   int                   `json:"businessStatus"`
+	Restricted       bool                  `json:"restricted"`
+	RequestID        string                `json:"requestID"`
+	TargetMatchCount int                   `json:"targetMatchCount"`
+	MatchedIDs       []string              `json:"matchedIDs"`
+	Candidates       []VideoMediaCandidate `json:"candidates"`
+	SnippetRedacted  string                `json:"snippetRedacted"`
+}
+
+type VideoMediaCandidate struct {
+	ID   string   `json:"id"`
+	URLs []string `json:"urls"`
 }
 
 // SearchCaptureResponse is the safe card projection read from a platform's

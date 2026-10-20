@@ -34,6 +34,7 @@ type DiagnosticStage struct {
 	Outcome                       DiagnosticOutcome `json:"outcome"`
 	HTTPStatus                    *int              `json:"http_status"`
 	ContentType                   *string           `json:"content_type"`
+	ResponseURL                   *string           `json:"response_url"`
 	PageURL                       *string           `json:"page_url"`
 	BlockedNavigationURL          *string           `json:"blocked_navigation_url"`
 	PageReadyState                *string           `json:"page_ready_state"`
@@ -56,6 +57,10 @@ type DiagnosticStage struct {
 	ResponseBytes                 *int64            `json:"response_bytes"`
 	DetailURLCount                *int              `json:"detail_url_count"`
 	VideoSourceCount              *int              `json:"video_source_count"`
+	TargetMatchCount              *int              `json:"target_match_count"`
+	ResponseSnippetRedacted       *string           `json:"response_snippet_redacted"`
+	FetchHookInstalled            *bool             `json:"fetch_hook_installed"`
+	XHRHookInstalled              *bool             `json:"xhr_hook_installed"`
 	Protocol                      *string           `json:"protocol"`
 	Extension                     *string           `json:"extension"`
 	VideoCodec                    *string           `json:"video_codec"`
@@ -150,7 +155,7 @@ func (trace *DiagnosticTrace) Snapshot() AttemptDiagnostics {
 }
 
 func orderDiagnosticStages(stages []DiagnosticStage) []DiagnosticStage {
-	order := map[string]int{"frontend_request": 0, "playback_open": 1, "webview_session": 2, "webview_page_load": 3, "webview_detail_fetch": 4, "webview_media_extract": 5, "resolver_fallback": 6, "ytdlp": 7, "source_validate": 8, "session_media_fetch": 9, "frontend_media": 10}
+	order := map[string]int{"frontend_request": 0, "playback_open": 1, "webview_session": 2, "webview_page_load": 3, "webview_detail_fetch": 4, "webview_detail_capture": 5, "webview_feed_fallback": 6, "webview_dom_fallback": 7, "webview_media_extract": 8, "resolver_fallback": 9, "ytdlp": 10, "source_validate": 11, "session_media_fetch": 12, "frontend_media": 13}
 	for i := 1; i < len(stages); i++ {
 		for j := i; j > 0 && order[stages[j].Stage] < order[stages[j-1].Stage]; j-- {
 			stages[j], stages[j-1] = stages[j-1], stages[j]
@@ -276,6 +281,8 @@ func SanitizeDiagnosticStage(stage DiagnosticStage) DiagnosticStage {
 		stage.Outcome = OutcomeException
 	}
 	stage.ContentType = SanitizeContentType(stage.ContentType)
+	stage.ResponseURL = SanitizeURL(stage.ResponseURL)
+	stage.ResponseSnippetRedacted = safeResponseSnippet(stage.ResponseSnippetRedacted)
 	stage.PageURL = SanitizeURL(stage.PageURL)
 	stage.BlockedNavigationURL = SanitizeURL(stage.BlockedNavigationURL)
 	stage.PageReadyState = safeEnum(stage.PageReadyState, "loading", "interactive", "complete", "unknown")
@@ -289,6 +296,40 @@ func SanitizeDiagnosticStage(stage DiagnosticStage) DiagnosticStage {
 	stage.VideoCodec = safeCodec(stage.VideoCodec)
 	stage.AudioCodec = safeCodec(stage.AudioCodec)
 	return stage
+}
+
+func safeResponseSnippet(value *string) *string {
+	if value == nil || len(*value) > 200 {
+		return nil
+	}
+	var projected struct {
+		StatusCode *int    `json:"status_code"`
+		Message    *string `json:"message"`
+	}
+	if err := json.Unmarshal([]byte(*value), &projected); err != nil {
+		return nil
+	}
+	if projected.StatusCode == nil && projected.Message == nil {
+		return nil
+	}
+	if projected.StatusCode != nil && (*projected.StatusCode < -100000 || *projected.StatusCode > 100000) {
+		return nil
+	}
+	if projected.Message != nil && *projected.Message != "[文本已脱敏]" {
+		return nil
+	}
+	if projected.StatusCode == nil {
+		projected = struct {
+			StatusCode *int    `json:"status_code"`
+			Message    *string `json:"message"`
+		}{Message: projected.Message}
+	}
+	encoded, err := json.Marshal(projected)
+	if err != nil || len(encoded) > 200 {
+		return nil
+	}
+	text := string(encoded)
+	return &text
 }
 
 func SanitizeURL(value *string) *string {
@@ -556,7 +597,7 @@ func validOutcome(value DiagnosticOutcome) bool {
 
 func validStage(value string) bool {
 	switch value {
-	case "frontend_request", "playback_open", "webview_session", "webview_page_load", "webview_detail_fetch", "webview_media_extract", "resolver_fallback", "ytdlp", "source_validate", "session_media_fetch", "frontend_media":
+	case "frontend_request", "playback_open", "webview_session", "webview_page_load", "webview_detail_fetch", "webview_detail_capture", "webview_feed_fallback", "webview_dom_fallback", "webview_media_extract", "resolver_fallback", "ytdlp", "source_validate", "session_media_fetch", "frontend_media":
 		return true
 	default:
 		return false
@@ -565,7 +606,7 @@ func validStage(value string) bool {
 
 func validReason(value string) bool {
 	switch value {
-	case "id_validated", "invalid_id", "concurrency_limit", "resolver_started", "resolver_timeout", "resolver_error", "resolver_success", "fallback_allowed", "fallback_blocked_restricted", "fallback_blocked_timeout", "fallback_blocked_cancelled", "webview_success", "webview_no_url", "session_created", "session_reused", "session_destroyed", "dom_ready", "navigation_blocked", "page_load_error", "javascript_error", "network_error", "detail_success", "http_status", "business_verification", "non_json", "invalid_json", "response_too_large", "media_found", "media_not_found", "candidate_filtered", "candidate_expired", "cdn_rejected", "source_expired", "source_valid", "tool_unavailable", "cookie_read_error", "cookie_configured", "command_error", "command_failed", "cancelled", "stdout_too_large", "format_invalid", "json_invalid", "timeout", "signature_refresh", "candidate_http_error", "invalid_media_response", "stream_error", "media_aborted", "media_decode_error", "media_network_error", "media_src_not_supported", "api_error", "request_error", "request_sent", "unknown":
+	case "id_validated", "invalid_id", "concurrency_limit", "resolver_started", "resolver_timeout", "resolver_error", "resolver_success", "fallback_allowed", "fallback_blocked_restricted", "fallback_blocked_timeout", "fallback_blocked_cancelled", "webview_success", "webview_no_url", "session_created", "session_reused", "session_destroyed", "dom_ready", "navigation_blocked", "page_load_error", "javascript_error", "network_error", "fetch_reject", "xhr_network_error", "request_timeout", "request_aborted", "response_unavailable", "observer_no_response", "observer_not_installed", "target_not_matched", "detail_success", "http_status", "business_verification", "non_json", "invalid_json", "response_too_large", "media_found", "media_not_found", "candidate_filtered", "candidate_expired", "cdn_rejected", "source_expired", "source_valid", "tool_unavailable", "cookie_read_error", "cookie_configured", "command_error", "command_failed", "cancelled", "stdout_too_large", "format_invalid", "json_invalid", "timeout", "signature_refresh", "candidate_http_error", "invalid_media_response", "stream_error", "media_aborted", "media_decode_error", "media_network_error", "media_src_not_supported", "api_error", "request_error", "request_sent", "unknown":
 		return true
 	default:
 		return false
@@ -618,7 +659,7 @@ func FinalOutcome(err error, stages []DiagnosticStage) DiagnosticOutcome {
 	// A generic playback_open error is appended after the resolver returns and
 	// must not hide a more specific resolver/source outcome such as no_url or a
 	// yt-dlp HTTP failure. Keep it as the final fallback only.
-	for _, stageName := range []string{"frontend_media", "session_media_fetch", "ytdlp", "source_validate", "webview_media_extract", "webview_detail_fetch", "webview_page_load", "webview_session", "playback_open"} {
+	for _, stageName := range []string{"frontend_media", "session_media_fetch", "ytdlp", "source_validate", "webview_media_extract", "webview_dom_fallback", "webview_feed_fallback", "webview_detail_capture", "webview_detail_fetch", "webview_page_load", "webview_session", "playback_open"} {
 		for index := len(stages) - 1; index >= 0; index-- {
 			if stages[index].Stage == stageName {
 				return stages[index].Outcome
@@ -648,6 +689,46 @@ func DiagnosticSummary(stages []DiagnosticStage) string {
 					parts = append(parts, "应用内页面详情接口返回非 JSON")
 				} else {
 					parts = append(parts, "应用内页面详情接口解析异常")
+				}
+			}
+		case "webview_detail_capture", "webview_feed_fallback", "webview_dom_fallback":
+			if stage.ResponseURL != nil {
+				parts = append(parts, "响应来源 "+*stage.ResponseURL)
+			}
+			if stage.HTTPStatus != nil && *stage.HTTPStatus >= 400 {
+				parts = append(parts, "应用内页面媒体捕获返回 HTTP "+strconv.Itoa(*stage.HTTPStatus))
+			} else if stage.Outcome == OutcomeRestricted {
+				parts = append(parts, "应用内页面要求登录或完成验证")
+			} else if stage.Outcome == OutcomeNoURL {
+				parts = append(parts, "该来源没有目标视频媒体地址")
+			} else if stage.Reason != nil {
+				if stage.HTTPStatus != nil && *stage.HTTPStatus >= 400 {
+					if stage.ContentType != nil {
+						parts = append(parts, "Content-Type "+*stage.ContentType)
+					}
+					if stage.ResponseSnippetRedacted != nil {
+						parts = append(parts, "脱敏响应片段 "+*stage.ResponseSnippetRedacted)
+					}
+				}
+				switch *stage.Reason {
+				case "fetch_reject", "xhr_network_error", "response_unavailable":
+					parts = append(parts, "页面媒体请求未取得可读响应")
+				case "observer_no_response":
+					parts = append(parts, "未捕获到目标视频的页面响应")
+				case "observer_not_installed":
+					parts = append(parts, "页面请求观察器未能安装")
+				case "target_not_matched":
+					parts = append(parts, "页面响应中没有匹配到目标视频")
+				case "javascript_error":
+					parts = append(parts, "应用内页面媒体状态读取异常")
+				case "request_timeout", "timeout":
+					parts = append(parts, "等待页面媒体响应超时")
+				case "request_aborted":
+					parts = append(parts, "页面媒体请求被中止")
+				case "non_json":
+					parts = append(parts, "页面媒体响应不是 JSON")
+				case "invalid_json":
+					parts = append(parts, "页面媒体响应 JSON 格式异常")
 				}
 			}
 		case "webview_page_load":
