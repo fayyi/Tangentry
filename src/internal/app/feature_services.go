@@ -67,7 +67,7 @@ func wireFeatures(dataDir string, configuration config.Config, option Options, r
 	records := runtime.repositories
 	feeds := subscriptionFeeds{platformSubscriptions: p.subscriptions, records: records.subscription}
 	sources := subscriptions.NewService(store, feeds.snapshot, feeds.options()...)
-	captions := subtitles.NewService(toolkit)
+	captions := subtitles.NewService(subtitleProvider{bilibili: p.media.bilibili, youtube: toolkit})
 	started.add(captions.Close)
 	savedCaptions := subtitles.NewSavedService(store)
 	contentService := content.NewService(store)

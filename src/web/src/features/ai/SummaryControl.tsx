@@ -42,6 +42,7 @@ export function SummaryControl({ summary, source: _source, onLocateQuote: _onLoc
     else if (presentation.action === 'generate') void generate(summaryNeedsOutlineRegeneration(result))
   }
   return <div className="ai-summary-control">
+    {emptyMessage && presentation.action !== 'transcribe' && <ToolbarPopover label="字幕状态提醒" title={emptyMessage} tone={availability === 'error' ? 'danger' : 'warning'} announcement={emptyMessage}><p role={availability === 'error' ? 'alert' : 'status'}>{emptyMessage}</p></ToolbarPopover>}
     {presentation.action === 'transcribe' ? <ToolbarPopover label={presentation.label} title={presentation.title} tone={status.tone} showLabel icon={<Sparkles size={14} aria-hidden="true" />} announcement={emptyMessage || status.message}>
       <p role="status">{emptyMessage || status.message || emptyInput.message}</p>
       {emptyAction !== undefined ? emptyAction : <button type="button" className="text-button" onClick={openTranscription}>{status.actionLabel || emptyInput.actionLabel}</button>}

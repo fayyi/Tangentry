@@ -1,7 +1,8 @@
 import type { SubtitleAssistance } from '../../shared/ui/subtitleAssistance'
 import { ArrowDownToLine, Captions, ExternalLink, LoaderCircle, Search, X, HardDrive, Save, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, SlidersHorizontal, Repeat2, StickyNote, Quote } from 'lucide-react'
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
-import type { ContentItem, SubtitleCue, SubtitleTrack, SubtitleReference } from '../../shared/api/types'
+import type { ContentItem, SubtitleAvailability, SubtitleCue, SubtitleTrack, SubtitleReference } from '../../shared/api/types'
+import { selectedSubtitleAvailability, subtitlePartMessage } from './subtitleAvailability'
 import { subtitlePriority, useSubtitles } from './useSubtitles'
 import { isChineseTrack } from '../../shared/text/chineseText'
 import { activeSubtitleCue } from './activeCue'
@@ -14,10 +15,10 @@ import { readExcerptRadius, rememberExcerptRadius, subtitleExcerpt, type Excerpt
 import { useSubtitleExport } from './useSubtitleExport'
 import { highlightMatch, timestamp } from './subtitlePresentation'
 
-export function SubtitleReader({ item, source = 'bilibili', position = null, onSeek, onTrackChange, assistance, onNoteAt }: {
+export function SubtitleReader({ item, source = 'bilibili', position = null, onSeek, onTrackChange, onAvailabilityChange, assistance, onNoteAt }: {
   item: Pick<ContentItem, 'platformId' | 'url'> & Partial<Pick<ContentItem,'kind' | 'title' | 'author'>>; source?: 'bilibili' | 'youtube' | 'podcast' | 'local'; onNoteAt?: (position: number, reference?: SubtitleReference) => void
   assistance?: SubtitleAssistance
-  position?: number | null; onSeek?: (position: number) => void; onTrackChange?: (track: SubtitleTrack | null) => void
+  position?: number | null; onSeek?: (position: number) => void; onTrackChange?: (track: SubtitleTrack | null) => void; onAvailabilityChange?: (status: SubtitleAvailability | 'available' | 'login_required' | null) => void
 }) {
   const subtitles = useSubtitles(item.platformId, source)
   const { playing } = useReaderPlayback()
@@ -60,7 +61,7 @@ export function SubtitleReader({ item, source = 'bilibili', position = null, onS
     exportDocument,
   } = useSubtitleExport({ item, source, track, translated, hasTranslations, translationsComplete })
   const cueIndices = useMemo(() => new Map(track?.cues.map((cue, index) => [cue, index]) ?? []), [track])
-  const choices = subtitles.origin === 'platform' && doc?.languages?.length ? doc.languages : doc?.tracks ?? []
+  const choices = subtitles.origin === 'platform' && source !== 'bilibili' && doc?.languages?.length ? doc.languages : doc?.tracks ?? []
   const atOriginal = (seconds: number) => source === 'podcast' || source === 'local' ? item.url : source === 'youtube' ? `https://www.youtube.com/watch?v=${encodeURIComponent(item.platformId)}&t=${Math.floor(seconds)}s` : `${item.url.split('?')[0]}?p=1&t=${Math.floor(seconds)}`
   const filter = query.trim().toLocaleLowerCase()
   const cues = useMemo(() => track?.cues.filter(cue => !filter || transcriptText(cue.text).toLocaleLowerCase().includes(filter) || transcriptText(translated?.[cueIndices.get(cue) ?? -1] ?? '').toLocaleLowerCase().includes(filter)) ?? [], [track, filter, translated, cueIndices])
@@ -83,6 +84,8 @@ export function SubtitleReader({ item, source = 'bilibili', position = null, onS
   }
 
   useEffect(() => { onTrackChange?.(track ?? null) }, [track, onTrackChange])
+  const availability = selectedSubtitleAvailability(doc, track, subtitles.origin)
+  useEffect(() => { onAvailabilityChange?.(availability) }, [availability, onAvailabilityChange])
   useEffect(() => () => onTrackChange?.(null), [onTrackChange])
   useEffect(() => {
     if (!follow || followPaused || filter || !activeCue || !onSeek) return
@@ -135,6 +138,15 @@ export function SubtitleReader({ item, source = 'bilibili', position = null, onS
     setSelectedIndex(next); loopRequested.current = false; onSeek?.(track.cues[next].start)
   }
   const transcription = <TranscriptionControls video={item.kind==='video'} contentId={source === 'podcast' || source === 'local' ? item.platformId : `${source}:${item.platformId}`} onComplete={() => { void subtitles.reloadSaved() }}/>
+  const revealTranscription = () => {
+    setSettingsOpen(true)
+    const management = document.querySelector<HTMLDetailsElement>('[data-subtitle-management]')
+    if (management) management.open = true
+    window.setTimeout(() => {
+      const control = document.querySelector<HTMLElement>('[data-transcription-control]')
+      control?.scrollIntoView({ block: 'center', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' })
+    }, 0)
+  }
 
   return <section className={`subtitle-reader${track ? ' subtitle-reader-loaded' : ''}`} data-playing={playing ? 'true' : undefined} data-settings-open={settingsOpen} aria-label="字幕与阅读">
     <div className="subtitle-settings-bar">
@@ -182,11 +194,15 @@ export function SubtitleReader({ item, source = 'bilibili', position = null, onS
     {subtitles.notice && <p className="subtitle-note" role="status">{subtitles.notice}</p>}
     {subtitles.error && <p className="subtitle-error" role="alert">{subtitles.error}{doc && ' 下方保留上一次获取的结果。'}</p>}
     {excerptError && <div className="subtitle-excerpt-error" role="alert"><span>{excerptError}</span><button className="text-button" onClick={() => { setMode('read'); setLoop(false); setExcerptRadius(0); rememberExcerptRadius(0); setExcerptError('') }}>改用本句</button></div>}
-    {doc?.status === 'none' && <p className="subtitle-note" role="status">{source === 'local' ? `没有已保存的本机字幕。当前${item.platformId.startsWith('xiaohongshu:')?'小红书':'抖音'}适配不读取平台原字幕，可主动转录。` : source === 'podcast' ? '还没有逐字字幕，可以按需转录。' : source === 'youtube' ? '这个视频暂无可用的原始字幕，可以按需转录。' : '第一分 P 暂无可用字幕，可以按需转录。'}</p>}
+    {doc?.parts && <div className="subtitle-parts" aria-label="各分 P 字幕状态">{doc.parts.map(part => { const presentation = subtitlePartMessage(part); const current = part.page === doc.part; const retry = presentation.action === '重试' || presentation.action === '稍后重试'; const candidates = part.languages.map(candidate => `${candidate.label} · ${candidate.source === 'cc' ? 'CC' : 'AI'}${candidate.hasUrl ? '' : '（字幕地址为空）'}`).join('、'); return <div key={`${part.page}-${part.cid}`} className={`subtitle-part-status subtitle-part-${presentation.tone}`}><span>第 {part.page} 分 P{part.title ? ` · ${part.title}` : ''}</span><span>{presentation.message}</span>{candidates && <span className="subtitle-part-candidates">字幕候选：{candidates}</span>}{current && retry && <button type="button" className="text-button" onClick={() => void subtitles.read()}>{presentation.action}</button>}{retry && !current && <span className="subtitle-part-retry-note">如需重试，请重新获取全部分 P 字幕。</span>}{current && presentation.action === '去账号设置' && <a className="text-button" href="/tools#accounts">去账号设置</a>}{current && (presentation.action === '改用转录' || presentation.action === '转录') && <button type="button" className="text-button" onClick={revealTranscription}>{presentation.action === '转录' ? '转录' : '改用转录'}</button>}{presentation.action === '去账号设置' && !current && <a className="text-button" href="/tools#accounts">去账号设置</a>}</div> })}</div>}
+    {track?.mismatch && <div className="subtitle-empty subtitle-mismatch-note" role="status"><p>这条 AI 字幕疑似与视频标题不匹配，但字幕仍可查看和用于摘要。</p><button type="button" className="text-button" onClick={revealTranscription}>改用转录</button></div>}
+    {!doc?.parts?.length && doc?.status === 'none' && <p className="subtitle-note" role="status">{source === 'local' ? `没有已保存的本机字幕。当前${item.platformId.startsWith('xiaohongshu:')?'小红书':'抖音'}适配不读取平台原字幕，可主动转录。` : source === 'podcast' ? '还没有逐字字幕，可以按需转录。' : source === 'youtube' ? '这个视频暂无可用的原始字幕，可以按需转录。' : '第一分 P 暂无可用字幕，可以按需转录。'}</p>}
     {doc?.status === 'login_required' && <div className="subtitle-empty" role="status"><p>平台提示读取字幕需要登录。</p><p>在工具设置保存你的 {source === 'youtube' ? 'YouTube' : 'B站'} Cookie，再重新获取字幕。</p></div>}
+    {!doc?.parts?.length && doc?.status === 'api_empty' && <div className="subtitle-empty" role="status"><p>字幕轨道存在，但字幕地址为空。</p><p>请去<a href="/tools#accounts">工具设置</a>配置或登录 B站后重试。</p></div>}
+    {!doc?.parts?.length && doc?.status === 'error' && <div className="subtitle-error" role="alert"><p>B站字幕接口读取失败{doc.errorCode ? `（${doc.errorCode}）` : ''}{doc.errorMessage ? `：${doc.errorMessage}` : ''}</p><button type="button" className="text-button" onClick={() => void subtitles.read()}>重试</button></div>}
     {!track && transcription}
     {track && <>
-      <div className="subtitle-summary"><span role="status">{filter ? `匹配 ${cues.length} / ${track.cues.length} 段` : `${track.cues.length} 段字幕`}{subtitles.origin === 'saved' && ' · 本机副本'}{track.automatic && ' · 自动字幕'}</span>{filter ? <span>· 搜索时暂停跟随</span> : follow && followPaused ? <button className="subtitle-resume" onClick={() => setFollowPaused(false)}>继续跟随播放</button> : null}</div>
+      <div className="subtitle-summary"><span role="status">{filter ? `匹配 ${cues.length} / ${track.cues.length} 段` : `${track.cues.length} 段字幕`}{subtitles.origin === 'saved' && ' · 本机副本'}{track.source === 'cc' ? ' · CC' : track.source === 'ai' ? ' · AI' : ''}{track.mismatch && ' · 疑似错位'}{track.automatic && ' · 自动字幕'}</span>{filter ? <span>· 搜索时暂停跟随</span> : follow && followPaused ? <button className="subtitle-resume" onClick={() => setFollowPaused(false)}>继续跟随播放</button> : null}</div>
       {mode === 'learn' && studyCue && <div className="subtitle-study" aria-label="逐句学习">
         <div className="subtitle-study-heading"><span>逐句精听 · {timestamp(studyCue.start)}</span><button aria-pressed={hideText} onClick={() => setHideText(value => !value)}>{hideText ? '显示原文' : '隐藏原文'}</button></div>
         <p>{hideText ? '先听一遍，再显示原文。' : transcriptText(studyCue.text)}</p>

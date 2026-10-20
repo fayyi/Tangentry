@@ -262,6 +262,8 @@ export interface SubtitleTrack {
   language: string
   label: string
   automatic: boolean
+  source?: 'cc' | 'ai'
+  mismatch?: boolean
   cues: SubtitleCue[]
 }
 
@@ -269,13 +271,32 @@ export interface SubtitleLanguage {
   language: string
   label: string
   automatic: boolean
+  source?: 'cc' | 'ai'
+  hasUrl?: boolean
+}
+
+export type SubtitleAvailability = 'cc' | 'ai' | 'ai_mismatch' | 'api_empty' | 'none' | 'error' | 'rate_limited'
+
+export interface SubtitlePart {
+  cid: number
+  page: number
+  title?: string
+  status: SubtitleAvailability
+  aiMismatch?: boolean
+  errorCode?: number
+  errorMessage?: string
+  languages: SubtitleLanguage[]
+  tracks: SubtitleTrack[]
 }
 
 export interface SubtitleDocument {
   languages?: SubtitleLanguage[]
+  parts?: SubtitlePart[]
   videoId: string
   part: number
-  status: 'available' | 'none' | 'login_required'
+  status: 'available' | 'none' | 'login_required' | 'api_empty' | 'error' | 'cc' | 'ai' | 'ai_mismatch' | 'rate_limited'
+  errorCode?: number
+  errorMessage?: string
   tracks: SubtitleTrack[]
 }
 

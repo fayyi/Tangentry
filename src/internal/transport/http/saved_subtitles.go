@@ -38,6 +38,8 @@ func (h *mediaHandler) savedSubtitleSave(w http.ResponseWriter, r *http.Request)
 			Language  *string `json:"language"`
 			Label     *string `json:"label"`
 			Automatic *bool   `json:"automatic"`
+			Source    *string `json:"source"`
+			Mismatch  *bool   `json:"mismatch"`
 			Cues      []struct {
 				Start *float64 `json:"start"`
 				End   *float64 `json:"end"`
@@ -52,6 +54,12 @@ func (h *mediaHandler) savedSubtitleSave(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	track := subtitles.Track{Language: *input.Track.Language, Label: *input.Track.Label, Automatic: *input.Track.Automatic, Cues: make([]subtitles.Cue, 0, len(input.Track.Cues))}
+	if input.Track.Source != nil {
+		track.Source = *input.Track.Source
+	}
+	if input.Track.Mismatch != nil {
+		track.Mismatch = *input.Track.Mismatch
+	}
 	for _, cue := range input.Track.Cues {
 		if cue.Start == nil || cue.End == nil || cue.Text == nil {
 			fail(w, subtitles.ErrSavedInvalid)

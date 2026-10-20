@@ -31,6 +31,8 @@ type Track struct {
 	Language  string `json:"language"`
 	Label     string `json:"label"`
 	Automatic bool   `json:"automatic"`
+	Source    string `json:"source,omitempty"`
+	Mismatch  bool   `json:"mismatch,omitempty"`
 	Cues      []Cue  `json:"cues"`
 }
 
@@ -38,14 +40,31 @@ type Language struct {
 	Language  string `json:"language"`
 	Label     string `json:"label"`
 	Automatic bool   `json:"automatic"`
+	Source    string `json:"source,omitempty"`
+	HasURL    bool   `json:"hasUrl"`
+}
+
+type Part struct {
+	CID          int64      `json:"cid"`
+	Page         int        `json:"page"`
+	Title        string     `json:"title,omitempty"`
+	Status       string     `json:"status"`
+	AIMismatch   bool       `json:"aiMismatch,omitempty"`
+	ErrorCode    int        `json:"errorCode,omitempty"`
+	ErrorMessage string     `json:"errorMessage,omitempty"`
+	Languages    []Language `json:"languages"`
+	Tracks       []Track    `json:"tracks"`
 }
 
 type Document struct {
-	Languages []Language `json:"languages,omitempty"`
-	VideoID   string     `json:"videoId"`
-	Part      int        `json:"part"`
-	Status    string     `json:"status"` // available, none, login_required
-	Tracks    []Track    `json:"tracks"`
+	Languages    []Language `json:"languages,omitempty"`
+	Parts        []Part     `json:"parts,omitempty"`
+	VideoID      string     `json:"videoId"`
+	Part         int        `json:"part"`
+	Status       string     `json:"status"` // available, none, login_required, api_empty, error, cc, ai, ai_mismatch
+	ErrorCode    int        `json:"errorCode,omitempty"`
+	ErrorMessage string     `json:"errorMessage,omitempty"`
+	Tracks       []Track    `json:"tracks"`
 }
 
 // Providers return only plain captions; tool payloads, credentials and media URLs stay outside the contract.

@@ -3,10 +3,12 @@ import { request } from '../../shared/api/client'
 import type { SavedSubtitle, SubtitleDocument, SubtitleTrack } from '../../shared/api/types'
 import { cachedSubtitles, cacheSubtitles, clearSubtitleCache } from './platformCache'
 
-export function subtitlePriority(track: { language: string; automatic?: boolean }) {
+export function subtitlePriority(track: { language: string; automatic?: boolean; source?: string }) {
   const language = track.language.toLowerCase().replace(/^ai-/, '').replace(/-orig$/, '').replaceAll('_', '-')
-  const rank = /^(zh|zh-hans|zh-cn|zh-sg)$/.test(language) ? 0 : /^en(?:-|$)/.test(language) ? 10 : /^zh(?:-|$)/.test(language) ? 20 : 30
-  return rank + Number(Boolean(track.automatic))
+  const chinese = /^(zh|zh-hans|zh-cn|zh-sg)(?:-|$)/.test(language)
+  if (chinese && track.source === 'cc') return 0
+  if (chinese && (track.source === 'ai' || track.automatic)) return 1
+  return 2
 }
 
 export function useSubtitles(videoId: string, source: 'bilibili' | 'youtube' | 'podcast' | 'local' = 'bilibili') {
@@ -26,7 +28,7 @@ export function useSubtitles(videoId: string, source: 'bilibili' | 'youtube' | '
   const mutation = useRef<AbortController | null>(null)
   const contentId = source === 'podcast' || source === 'local' ? videoId : `${source}:${videoId}`
 
-  const read = useCallback(async (language?: string, reuse = false) => {
+  const read = useCallback(async (language?: string, reuse = false, keepSaved = false) => {
     controller.current?.abort()
     const current = new AbortController()
     controller.current = current
@@ -41,8 +43,8 @@ export function useSubtitles(videoId: string, source: 'bilibili' | 'youtube' | '
       if (!current.signal.aborted) {
         if (!cached) cacheSubtitles(endpoint, data)
         setPlatform(previous => source === 'youtube' && language && previous?.videoId === data.videoId ? { ...data, tracks: [...previous.tracks.filter(track => track.language !== language), ...data.tracks] } : data)
-        setOrigin('platform'); setNotice('')
-        if (!cached && data.status === 'available') {
+        setOrigin(keepSaved ? 'saved' : 'platform'); setNotice('')
+        if (!cached && data.tracks.length > 0) {
           const local = await request<{ tracks: SavedSubtitle[] }>(`/saved-subtitles?contentId=${encodeURIComponent(contentId)}`, { signal: current.signal })
           if (!current.signal.aborted) { setSaved(local.tracks); setLocalKnown(true) }
         }
@@ -81,8 +83,7 @@ export function useSubtitles(videoId: string, source: 'bilibili' | 'youtube' | '
     let active = true
     void readSaved().then(values => {
       if (!active || values === undefined) return
-      if (values?.length) setOrigin('saved')
-      else void read(undefined, true)
+      void read(undefined, true, Boolean(values?.length))
     })
     return () => { active = false; controller.current?.abort(); localReader.current?.abort(); mutation.current?.abort() }
   }, [read, readSaved])
@@ -128,6 +129,8 @@ export function useSubtitles(videoId: string, source: 'bilibili' | 'youtube' | '
     } finally { if (!current.signal.aborted) setPending(false); mutation.current = null }
   }
 
-  const document: SubtitleDocument | null = origin === 'platform' ? platform : saved.length ? { videoId, part: 1, status: 'available', tracks: saved.map(value => value.track) } : null
+  const document: SubtitleDocument | null = origin === 'platform' ? platform : saved.length ? {
+    ...(platform ?? {}), videoId, part: 1, status: platform?.status ?? 'available', tracks: saved.map(value => value.track),
+  } : null
   return { document, saved, origin, loading: loading || localLoading, localLoading, localKnown, pending, error, localError, writeError, notice, read, cancel, save, remove, useSaved, reloadSaved }
 }

@@ -42,7 +42,7 @@ func (s *SavedService) List(ctx context.Context, id string) ([]SavedTrack, error
 	return s.repository.ListSavedSubtitles(ctx, id)
 }
 func (s *SavedService) Save(ctx context.Context, id string, track Track, revision int64) (SavedTrack, error) {
-	if !content.SpeechID(id) || !savedLanguage.MatchString(track.Language) || revision < 0 || revision >= MaxSavedRevision || !utf8.ValidString(track.Label) || strings.TrimSpace(track.Label) == "" || len(track.Label) > 200 || len(track.Cues) == 0 || len(track.Cues) > 10000 {
+	if !content.SpeechID(id) || !savedLanguage.MatchString(track.Language) || revision < 0 || revision >= MaxSavedRevision || (track.Source != "" && track.Source != "cc" && track.Source != "ai") || (track.Mismatch && track.Source != "ai") || !utf8.ValidString(track.Label) || strings.TrimSpace(track.Label) == "" || len(track.Label) > 200 || len(track.Cues) == 0 || len(track.Cues) > 10000 {
 		return SavedTrack{}, ErrSavedInvalid
 	}
 	total, previous := 0, -1.0
@@ -80,7 +80,10 @@ func (s *SavedService) Save(ctx context.Context, id string, track Track, revisio
 
 // Capture only creates missing active languages; edited tracks always win.
 func (s *SavedService) Capture(ctx context.Context, id string, doc Document) error {
-	if doc.Status != "available" {
+	if doc.Status != "available" && doc.Status != "cc" && doc.Status != "ai" && doc.Status != "ai_mismatch" {
+		return nil
+	}
+	if len(doc.Tracks) == 0 {
 		return nil
 	}
 	for _, track := range doc.Tracks {
