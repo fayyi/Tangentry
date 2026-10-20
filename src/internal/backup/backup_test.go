@@ -9,6 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +19,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"tangentry/internal/credentials"
 )
 
 func TestEncryptDecryptAndTamperDetection(t *testing.T) {
@@ -268,9 +273,28 @@ func (restoreRepo) SaveTargetRuns(context.Context, string, []TargetRun) error { 
 type fanoutRepo struct {
 	mu        sync.Mutex
 	targets   map[string]Target
+	failSave  error
 	task      Task
 	snapshots map[string]Snapshot
 	runs      map[string][]TargetRun
+}
+
+type targetCredentialHostTransport struct {
+	firstHost  string
+	secondHost string
+	first      http.RoundTripper
+	second     http.RoundTripper
+}
+
+func (t targetCredentialHostTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	switch request.URL.Hostname() {
+	case t.firstHost:
+		return t.first.RoundTrip(request)
+	case t.secondHost:
+		return t.second.RoundTrip(request)
+	default:
+		return nil, fmt.Errorf("unexpected fixture host %q", request.URL.Hostname())
+	}
 }
 
 func (r *fanoutRepo) ListTargets(context.Context) ([]Target, error) {
@@ -294,6 +318,9 @@ func (r *fanoutRepo) GetTarget(_ context.Context, id string) (Target, error) {
 func (r *fanoutRepo) SaveTarget(_ context.Context, target Target) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.failSave != nil {
+		return r.failSave
+	}
 	target.Password, target.UpdateCredential = "", false
 	r.targets[target.ID] = target
 	return nil
@@ -383,6 +410,24 @@ type fixtureTargetCredentials struct {
 	values     map[string]string
 	failDelete bool
 }
+
+type fixtureFolderStore struct {
+	browsePath string
+	closed     bool
+}
+
+func (s *fixtureFolderStore) Browse(_ context.Context, path string) ([]RemoteFolder, error) {
+	s.browsePath = path
+	childPath := "Tangentry"
+	if path != "" {
+		childPath = path + "/Tangentry"
+	}
+	return []RemoteFolder{{Name: "Tangentry", Path: childPath}}, nil
+}
+func (*fixtureFolderStore) CreateFolder(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+func (s *fixtureFolderStore) Close() error { s.closed = true; return nil }
 
 func (c *fixtureTargetCredentials) SaveBackupTargetPassword(id, password string) error {
 	c.values[id] = password
@@ -590,6 +635,263 @@ func TestWebDAVTargetCredentialIsNotReturnedOrStoredInRepository(t *testing.T) {
 	if err := service.DeleteTarget(context.Background(), target.ID); err != nil || len(credentials.values) != 0 {
 		t.Fatalf("credential was not cleared: %v", err)
 	}
+}
+
+func TestSaveWebDAVTargetIsLocalFastAndLogsRedactedStages(t *testing.T) {
+	repo := &fanoutRepo{targets: map[string]Target{}, snapshots: map[string]Snapshot{}, runs: map[string][]TargetRun{}}
+	credentialStore, err := credentials.OpenWithKey(filepath.Join(t.TempDir(), "credentials"), "", "", bytes.Repeat([]byte{0x42}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(repo, fanoutSource{}, func(Target) (ObjectStore, error) { return nil, errors.New("not used") }, t.TempDir(), "test")
+	service.SetTargetCredentials(credentialStore)
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+	service.SetTargetTester(func(context.Context, Target) error { t.Fatal("SaveTarget called remote test connection"); return nil })
+	service.SetTargetFolderStores(func(Target) (TargetFolderStore, error) {
+		t.Fatal("SaveTarget called remote folder operation")
+		return nil, errors.New("unreachable")
+	})
+	target := Target{ID: "target-fixture", Name: "Fixture", Type: "webdav", Endpoint: "https://dav.example.test/base", Username: "private-fixture-user", Password: "private-fixture-password", UpdateCredential: true, Enabled: true}
+	started := time.Now()
+	if err := service.SaveTarget(context.Background(), target); err != nil {
+		t.Fatal(err)
+	}
+	elapsed := time.Since(started)
+	if elapsed >= time.Second {
+		t.Fatalf("local target save took %s", elapsed)
+	}
+	t.Logf("local target save elapsed=%s timings=%s", elapsed, logs.String())
+	for _, phase := range []string{"validation", "credential_write", "repository_lookup", "repository_write", "service_total", "encryption", "persistence"} {
+		if !strings.Contains(logs.String(), "phase="+phase) {
+			t.Errorf("missing timing phase %q in %s", phase, logs.String())
+		}
+	}
+	for _, sensitive := range []string{"private-fixture-user", "private-fixture-password", "dav.example.test"} {
+		if strings.Contains(logs.String(), sensitive) {
+			t.Errorf("timing log contains sensitive field %q", sensitive)
+		}
+	}
+}
+
+func TestBrowseTargetLoadsSavedCredentialsAndRejectsInvalidPathBeforeFactory(t *testing.T) {
+	repo := &fanoutRepo{targets: map[string]Target{"saved": {ID: "saved", Name: "Saved", Type: "webdav", Endpoint: "https://dav.example.test/root", Username: "fixture-user", AllowInsecureTLS: true}}, snapshots: map[string]Snapshot{}, runs: map[string][]TargetRun{}}
+	credentials := &fixtureTargetCredentials{values: map[string]string{"saved": "fixture-password"}}
+	service := NewService(repo, fanoutSource{}, func(Target) (ObjectStore, error) { return nil, errors.New("unused") }, t.TempDir(), "test")
+	service.SetTargetCredentials(credentials)
+	var received Target
+	store := &fixtureFolderStore{}
+	service.SetTargetFolderStores(func(target Target) (TargetFolderStore, error) { received = target; return store, nil })
+	folders, err := service.BrowseTarget(context.Background(), Target{ID: "saved", Type: "webdav"}, "")
+	if err != nil || len(folders) != 1 {
+		t.Fatalf("saved target browse failed: folders=%v err=%v", folders, err)
+	}
+	if received.Endpoint != repo.targets["saved"].Endpoint || received.Username != repo.targets["saved"].Username || received.Password != "fixture-password" || !received.AllowInsecureTLS {
+		t.Fatalf("saved target configuration was not loaded safely: %+v", received)
+	}
+	if !store.closed {
+		t.Fatal("folder store was not closed")
+	}
+	called := false
+	service.SetTargetFolderStores(func(Target) (TargetFolderStore, error) { called = true; return &fixtureFolderStore{}, nil })
+	if _, err := service.BrowseTarget(context.Background(), Target{ID: "saved", Type: "webdav", Password: "fixture-password"}, "../outside"); !errors.Is(err, ErrInvalidFolderPath) {
+		t.Fatalf("invalid browse path error = %v", err)
+	}
+	if called {
+		t.Fatal("invalid browse path reached folder store factory")
+	}
+}
+
+func TestSavedTargetCredentialRequiresMatchingEndpointAndUsername(t *testing.T) {
+	var firstAuthorization atomic.Value
+	firstAuthorization.Store("")
+	var firstRequests atomic.Int32
+	var secondAuthorization atomic.Value
+	secondAuthorization.Store("")
+	var secondRequests atomic.Int32
+	firstServer := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		firstRequests.Add(1)
+		firstAuthorization.Store(r.Header.Get("Authorization"))
+		w.WriteHeader(http.StatusOK)
+	}))
+	secondServer := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		secondRequests.Add(1)
+		secondAuthorization.Store(r.Header.Get("Authorization"))
+		w.WriteHeader(http.StatusOK)
+	}))
+	firstClient, secondClient := firstServer.Client(), secondServer.Client()
+	client := &http.Client{Transport: targetCredentialHostTransport{
+		firstHost:  "dav.example.test",
+		secondHost: "other.example.test",
+		first:      firstClient.Transport,
+		second:     secondClient.Transport,
+	}}
+	repo := &fanoutRepo{targets: map[string]Target{"saved": {ID: "saved", Name: "Saved", Type: "webdav", Endpoint: "http://dav.example.test/dav/base", Username: "fixture-user", AllowInsecureTLS: true}}, snapshots: map[string]Snapshot{}, runs: map[string][]TargetRun{}}
+	credentials := &fixtureTargetCredentials{values: map[string]string{"saved": "fixture-secret"}}
+	service := NewService(repo, fanoutSource{}, func(Target) (ObjectStore, error) { return nil, errors.New("unused") }, t.TempDir(), "test")
+	service.SetTargetCredentials(credentials)
+	var tested Target
+	service.SetTargetTester(func(_ context.Context, target Target) error {
+		tested = target
+		request, err := http.NewRequest(http.MethodGet, target.Endpoint, nil)
+		if err != nil {
+			return err
+		}
+		request.SetBasicAuth(target.Username, target.Password)
+		response, err := client.Do(request)
+		if err != nil {
+			return err
+		}
+		return response.Body.Close()
+	})
+	matchingEndpoint := "HTTP://DAV.EXAMPLE.TEST:80/dav/base/"
+	requestedNormalized, requestedNormalizeErr := normalizeWebDAVEndpoint(matchingEndpoint)
+	savedNormalized, savedNormalizeErr := normalizeWebDAVEndpoint(repo.targets["saved"].Endpoint)
+	if requestedNormalizeErr != nil || savedNormalizeErr != nil || requestedNormalized != savedNormalized {
+		t.Fatalf("endpoint normalization mismatch: request=%q saved=%q request_error=%v saved_error=%v", requestedNormalized, savedNormalized, requestedNormalizeErr, savedNormalizeErr)
+	}
+	if err := service.TestTarget(context.Background(), Target{ID: "saved", Type: "webdav", Endpoint: matchingEndpoint, Username: "fixture-user", AllowInsecureTLS: false}); err != nil {
+		t.Fatalf("normalized saved target connection test failed: %v", err)
+	}
+	if tested.Password != "fixture-secret" || tested.Endpoint != repo.targets["saved"].Endpoint || tested.Username != repo.targets["saved"].Username || tested.AllowInsecureTLS {
+		t.Fatalf("resolved target mismatch: endpoint=%q username=%q tls=%t password_set=%t", tested.Endpoint, tested.Username, tested.AllowInsecureTLS, tested.Password != "")
+	}
+	if got := firstAuthorization.Load().(string); got == "" || firstRequests.Load() != 1 {
+		t.Fatalf("matching saved credentials did not reach the first local host: requests=%d authorization_set=%t", firstRequests.Load(), got != "")
+	}
+	if err := service.TestTarget(context.Background(), Target{ID: "saved", Type: "webdav", Endpoint: "http://dav.example.test/dav/other", Username: "fixture-user"}); !errors.Is(err, ErrTargetConnectionChanged) {
+		t.Fatalf("changed endpoint path error = %v", err)
+	}
+	if err := service.TestTarget(context.Background(), Target{ID: "saved", Type: "webdav", Endpoint: "http://other.example.test/dav", Username: "fixture-user"}); !errors.Is(err, ErrTargetConnectionChanged) {
+		t.Fatalf("changed endpoint error = %v", err)
+	}
+	if got := secondAuthorization.Load().(string); got != "" || secondRequests.Load() != 0 {
+		t.Fatalf("stored credentials reached second host: requests=%d authorization_set=%t", secondRequests.Load(), got != "")
+	}
+	if err := service.TestTarget(context.Background(), Target{ID: "saved", Type: "webdav", Endpoint: "http://dav.example.test/dav/base", Username: "other-user"}); !errors.Is(err, ErrTargetConnectionChanged) {
+		t.Fatalf("changed username error = %v", err)
+	}
+
+	factoryCalls := 0
+	var folderTarget Target
+	service.SetTargetFolderStores(func(target Target) (TargetFolderStore, error) {
+		factoryCalls++
+		folderTarget = target
+		request, err := http.NewRequest(http.MethodGet, target.Endpoint, nil)
+		if err != nil {
+			return nil, err
+		}
+		request.SetBasicAuth(target.Username, target.Password)
+		response, err := client.Do(request)
+		if err != nil {
+			return nil, err
+		}
+		_ = response.Body.Close()
+		return &fixtureFolderStore{}, nil
+	})
+	matchingTarget := Target{ID: "saved", Type: "webdav", Endpoint: matchingEndpoint, Username: "fixture-user", AllowInsecureTLS: false}
+	if _, err := service.BrowseTarget(context.Background(), matchingTarget, ""); err != nil {
+		t.Fatalf("matching saved target browse failed: %v", err)
+	}
+	if folderTarget.Endpoint != repo.targets["saved"].Endpoint || folderTarget.Username != repo.targets["saved"].Username || folderTarget.Password != "fixture-secret" || folderTarget.AllowInsecureTLS {
+		t.Fatalf("browse target mismatch: endpoint=%q username=%q tls=%t password_set=%t", folderTarget.Endpoint, folderTarget.Username, folderTarget.AllowInsecureTLS, folderTarget.Password != "")
+	}
+	if _, err := service.CreateTargetFolder(context.Background(), matchingTarget, "", "new-folder"); err != nil {
+		t.Fatalf("matching saved target mkdir failed: %v", err)
+	}
+	if folderTarget.Endpoint != repo.targets["saved"].Endpoint || folderTarget.Username != repo.targets["saved"].Username || folderTarget.Password != "fixture-secret" || folderTarget.AllowInsecureTLS {
+		t.Fatalf("mkdir target mismatch: endpoint=%q username=%q tls=%t password_set=%t", folderTarget.Endpoint, folderTarget.Username, folderTarget.AllowInsecureTLS, folderTarget.Password != "")
+	}
+	if firstRequests.Load() != 3 {
+		t.Fatalf("matching saved target operations did not reach the first local host: requests=%d", firstRequests.Load())
+	}
+	factoryCalls = 0
+	firstRequests.Store(0)
+	firstAuthorization.Store("")
+	secondRequests.Store(0)
+	secondAuthorization.Store("")
+	for _, request := range []Target{
+		{ID: "saved", Type: "webdav", Endpoint: "http://dav.example.test/dav/other", Username: "fixture-user"},
+		{ID: "saved", Type: "webdav", Endpoint: "http://other.example.test/dav", Username: "fixture-user"},
+		{ID: "saved", Type: "webdav", Endpoint: "http://dav.example.test/dav/base", Username: "other-user"},
+	} {
+		if _, err := service.BrowseTarget(context.Background(), request, ""); !errors.Is(err, ErrTargetConnectionChanged) {
+			t.Errorf("browse accepted changed target identity: %v", err)
+		}
+		if _, err := service.CreateTargetFolder(context.Background(), request, "", "new-folder"); !errors.Is(err, ErrTargetConnectionChanged) {
+			t.Errorf("mkdir accepted changed target identity: %v", err)
+		}
+	}
+	if factoryCalls != 0 {
+		t.Fatalf("changed saved target identity reached remote folder store %d times", factoryCalls)
+	}
+	if firstRequests.Load() != 0 || firstAuthorization.Load().(string) != "" {
+		t.Fatalf("changed saved target identity reached the first host: requests=%d authorization_set=%t", firstRequests.Load(), firstAuthorization.Load().(string) != "")
+	}
+	if got := secondAuthorization.Load().(string); got != "" || secondRequests.Load() != 0 {
+		t.Fatalf("stored credentials reached second host during browse/mkdir: requests=%d authorization_set=%t", secondRequests.Load(), got != "")
+	}
+}
+
+func TestSaveTargetLogsCredentialFailureAndCompensationPhases(t *testing.T) {
+	t.Run("credential unavailable", func(t *testing.T) {
+		repo := &fanoutRepo{targets: map[string]Target{}, snapshots: map[string]Snapshot{}, runs: map[string][]TargetRun{}}
+		service := NewService(repo, fanoutSource{}, nil, t.TempDir(), "test")
+		var logs bytes.Buffer
+		previousLogger := slog.Default()
+		slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+		t.Cleanup(func() { slog.SetDefault(previousLogger) })
+		target := Target{ID: "missing-credentials", Name: "Fixture", Type: "webdav", Endpoint: "https://dav.example.test/root", Username: "fixture-user", Password: "fixture-secret", UpdateCredential: true}
+		if err := service.SaveTarget(context.Background(), target); err == nil {
+			t.Fatal("save without credential store succeeded")
+		}
+		for _, phase := range []string{"credential_read", "credential_write", "service_total"} {
+			if !strings.Contains(logs.String(), "phase="+phase) {
+				t.Errorf("missing phase %q in %s", phase, logs.String())
+			}
+		}
+	})
+
+	t.Run("repository failure compensates credential", func(t *testing.T) {
+		repo := &fanoutRepo{targets: map[string]Target{}, failSave: errors.New("fixture database failure"), snapshots: map[string]Snapshot{}, runs: map[string][]TargetRun{}}
+		credentials := &fixtureTargetCredentials{values: map[string]string{"target-fixture": "old-secret"}}
+		service := NewService(repo, fanoutSource{}, nil, t.TempDir(), "test")
+		service.SetTargetCredentials(credentials)
+		var logs bytes.Buffer
+		previousLogger := slog.Default()
+		slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+		t.Cleanup(func() { slog.SetDefault(previousLogger) })
+		target := Target{ID: "target-fixture", Name: "Fixture", Type: "webdav", Endpoint: "https://dav.example.test/root", Username: "fixture-user", Password: "new-secret", UpdateCredential: true}
+		if err := service.SaveTarget(context.Background(), target); err == nil {
+			t.Fatal("save with repository failure succeeded")
+		}
+		if credentials.values[target.ID] != "old-secret" {
+			t.Fatal("credential compensation did not restore previous value")
+		}
+		if !strings.Contains(logs.String(), "phase=credential_compensation") {
+			t.Fatalf("missing compensation timing log: %s", logs.String())
+		}
+	})
+
+	t.Run("changed saved connection needs password", func(t *testing.T) {
+		repo := &fanoutRepo{targets: map[string]Target{"target-fixture": {ID: "target-fixture", Name: "Fixture", Type: "webdav", Endpoint: "https://dav.example.test/old", Username: "fixture-user"}}, snapshots: map[string]Snapshot{}, runs: map[string][]TargetRun{}}
+		credentials := &fixtureTargetCredentials{values: map[string]string{"target-fixture": "fixture-secret"}}
+		service := NewService(repo, fanoutSource{}, nil, t.TempDir(), "test")
+		service.SetTargetCredentials(credentials)
+		for _, target := range []Target{
+			{ID: "target-fixture", Name: "Fixture", Type: "webdav", Endpoint: "https://dav.example.test/new", Username: "fixture-user"},
+			{ID: "target-fixture", Name: "Fixture", Type: "webdav", Endpoint: "https://dav.example.test/old", Username: "other-user"},
+		} {
+			if err := service.SaveTarget(context.Background(), target); !errors.Is(err, ErrTargetConnectionChanged) {
+				t.Errorf("saving changed endpoint or username without a password error = %v", err)
+			}
+			if credentials.values[target.ID] != "fixture-secret" {
+				t.Error("rejected target edit changed its stored credential")
+			}
+		}
+	})
 }
 
 func TestTargetCredentialCleanupFailureDoesNotFailDatabaseMutationAndStartupCleansOrphans(t *testing.T) {

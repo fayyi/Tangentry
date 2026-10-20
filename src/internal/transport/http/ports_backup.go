@@ -20,4 +20,6 @@ type BackupService interface {
 	Restore(context.Context, string, string, string, string) (backup.RestoreResult, error)
 	ConfirmRestore(context.Context, string) (backup.RestoreResult, error)
 	CancelRestore(context.Context, string) error
+	BrowseTarget(context.Context, backup.Target, string) ([]backup.RemoteFolder, error)
+	CreateTargetFolder(context.Context, backup.Target, string, string) (bool, error)
 }

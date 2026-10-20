@@ -10,12 +10,15 @@ import (
 	"tangentry/internal/backup"
 )
 
-type backupHTTPFixture struct{ tested backup.Target }
+type backupHTTPFixture struct {
+	testErr error
+	saveErr error
+}
 
 func (backupHTTPFixture) Targets(context.Context) ([]backup.Target, error)     { return nil, nil }
 func (backupHTTPFixture) Tasks(context.Context) ([]backup.Task, error)         { return nil, nil }
 func (backupHTTPFixture) Snapshots(context.Context) ([]backup.Snapshot, error) { return nil, nil }
-func (backupHTTPFixture) SaveTarget(context.Context, backup.Target) error      { return nil }
+func (f backupHTTPFixture) SaveTarget(context.Context, backup.Target) error    { return f.saveErr }
 func (backupHTTPFixture) DeleteTarget(context.Context, string) error           { return nil }
 func (backupHTTPFixture) SaveTask(context.Context, backup.Task) error          { return nil }
 func (backupHTTPFixture) DeleteTask(context.Context, string) error             { return nil }
@@ -25,9 +28,8 @@ func (backupHTTPFixture) Create(context.Context, string, string) (backup.Snapsho
 func (backupHTTPFixture) RetryFailed(context.Context, string) (backup.Snapshot, error) {
 	return backup.Snapshot{ID: "snapshot-1", Status: "succeeded"}, nil
 }
-func (f backupHTTPFixture) TestTarget(_ context.Context, target backup.Target) error {
-	f.tested = target
-	return nil
+func (f backupHTTPFixture) TestTarget(context.Context, backup.Target) error {
+	return f.testErr
 }
 func (backupHTTPFixture) Validate(context.Context, string, string, string) (backup.Validation, error) {
 	return backup.Validation{SnapshotID: "snapshot-1"}, nil
@@ -39,6 +41,12 @@ func (backupHTTPFixture) ConfirmRestore(context.Context, string) (backup.Restore
 	return backup.RestoreResult{PlanID: "plan-1", Status: "switched"}, nil
 }
 func (backupHTTPFixture) CancelRestore(context.Context, string) error { return nil }
+func (backupHTTPFixture) BrowseTarget(context.Context, backup.Target, string) ([]backup.RemoteFolder, error) {
+	return []backup.RemoteFolder{{Name: "Tangentry", Path: "Tangentry"}}, nil
+}
+func (backupHTTPFixture) CreateTargetFolder(context.Context, backup.Target, string, string) (bool, error) {
+	return false, nil
+}
 
 func TestBackupRestoreRoutesRequireSameOriginAndDoNotEchoPassword(t *testing.T) {
 	h := NewWithDependencies(Dependencies{Backup: backupHTTPFixture{}}, nil)
@@ -97,5 +105,49 @@ func TestBackupTargetTestDoesNotEchoOrPersistSubmittedPassword(t *testing.T) {
 	h.ServeHTTP(w, r)
 	if w.Code != http.StatusOK || strings.Contains(w.Body.String(), password) {
 		t.Fatalf("test endpoint failed or echoed password: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestBackupTargetTestReportsWhenSavedCredentialsNoLongerMatch(t *testing.T) {
+	h := NewWithDependencies(Dependencies{Backup: backupHTTPFixture{testErr: backup.ErrTargetConnectionChanged}}, nil)
+	r := httptest.NewRequest(http.MethodPost, "/api/backup/targets/test", strings.NewReader(`{"id":"saved-target","type":"webdav","endpoint":"https://new.example.test/dav","username":"fixture-user"}`))
+	r.Host = "127.0.0.1"
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "地址或用户名已修改，请重新输入密码") {
+		t.Fatalf("changed saved credential identity was not clearly reported: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestBackupTargetSaveReportsWhenSavedCredentialsNoLongerMatch(t *testing.T) {
+	h := NewWithDependencies(Dependencies{Backup: backupHTTPFixture{saveErr: backup.ErrTargetConnectionChanged}}, nil)
+	r := httptest.NewRequest(http.MethodPost, "/api/backup/targets", strings.NewReader(`{"id":"saved-target","type":"webdav","endpoint":"https://new.example.test/dav","username":"fixture-user"}`))
+	r.Host = "127.0.0.1"
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "地址或用户名已修改，请重新输入密码") {
+		t.Fatalf("changed saved credential identity was not clearly reported: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestBackupFolderRoutesReturnRedactedFolderDataAndStatus(t *testing.T) {
+	h := NewWithDependencies(Dependencies{Backup: backupHTTPFixture{}}, nil)
+	request := func(path, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		r.Host = "127.0.0.1"
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+	browse := request("/api/backup/targets/browse", `{"type":"webdav","endpoint":"https://dav.example.test/root","username":"fixture-user","password":"fixture-password","folderPath":""}`)
+	if browse.Code != http.StatusOK || !strings.Contains(browse.Body.String(), `"path":"Tangentry"`) || strings.Contains(browse.Body.String(), "fixture-password") {
+		t.Fatalf("browse response: %d %s", browse.Code, browse.Body.String())
+	}
+	mkdir := request("/api/backup/targets/mkdir", `{"type":"webdav","endpoint":"https://dav.example.test/root","username":"fixture-user","password":"fixture-password","folderPath":"","folderName":"Tangentry"}`)
+	if mkdir.Code != http.StatusOK || !strings.Contains(mkdir.Body.String(), `"status":"created"`) || strings.Contains(mkdir.Body.String(), "fixture-password") {
+		t.Fatalf("mkdir response: %d %s", mkdir.Code, mkdir.Body.String())
 	}
 }

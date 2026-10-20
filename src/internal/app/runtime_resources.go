@@ -94,5 +94,10 @@ func openRuntimeResources(dataDir string, configuration config.Config, option Op
 		defer store.Close()
 		return store.TestConnection(ctx)
 	})
+	backupService.SetTargetFolderStores(func(target backup.Target) (backup.TargetFolderStore, error) {
+		// Folder selection is rooted at the WebDAV endpoint. The chosen relative
+		// path is saved as the target's RemotePath after the user selects it.
+		return webdavstorage.New(webdavstorage.Config{Endpoint: target.Endpoint, Username: target.Username, Password: target.Password, AllowInsecureTLS: target.AllowInsecureTLS, Timeout: 15 * time.Second, TempDir: backupWorkDir})
+	})
 	return &runtimeResources{store: store, preferences: preferencesStore, cookies: cookies, toolkit: toolkit, platforms: p, documents: documents, downloads: processing, backup: backupService, repositories: records}, nil
 }

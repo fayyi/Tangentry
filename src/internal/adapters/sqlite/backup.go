@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -198,14 +199,47 @@ func (s *Store) BackupTarget(ctx context.Context, id string) (backup.Target, err
 	var t backup.Target
 	var enabled int
 	var allowInsecure int
-	err := s.db.QueryRowContext(ctx, `SELECT id,name,type,path,enabled,endpoint,username,remote_path,allow_insecure_tls FROM backup_target WHERE id=?`, id).Scan(&t.ID, &t.Name, &t.Type, &t.Path, &enabled, &t.Endpoint, &t.Username, &t.RemotePath, &allowInsecure)
+	waitStarted := time.Now()
+	conn, err := s.db.Conn(ctx)
+	slog.Info("backup target sqlite timing", "phase", "connection_wait", "duration_ms", time.Since(waitStarted).Milliseconds(), "target_type", "unknown", "error_class", sqliteErrorClass(err))
+	if err != nil {
+		return t, err
+	}
+	defer conn.Close()
+	queryStarted := time.Now()
+	err = conn.QueryRowContext(ctx, `SELECT id,name,type,path,enabled,endpoint,username,remote_path,allow_insecure_tls FROM backup_target WHERE id=?`, id).Scan(&t.ID, &t.Name, &t.Type, &t.Path, &enabled, &t.Endpoint, &t.Username, &t.RemotePath, &allowInsecure)
+	slog.Info("backup target sqlite timing", "phase", "target_lookup", "duration_ms", time.Since(queryStarted).Milliseconds(), "target_type", sqliteTargetType(t.Type), "error_class", sqliteErrorClass(err))
 	t.Enabled = enabled != 0
 	t.AllowInsecureTLS = allowInsecure != 0
 	return t, err
 }
 func (s *Store) SaveBackupTarget(ctx context.Context, t backup.Target) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO backup_target(id,name,type,path,enabled,endpoint,username,remote_path,allow_insecure_tls) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,type=excluded.type,path=excluded.path,enabled=excluded.enabled,endpoint=excluded.endpoint,username=excluded.username,remote_path=excluded.remote_path,allow_insecure_tls=excluded.allow_insecure_tls`, t.ID, t.Name, t.Type, t.Path, boolInt(t.Enabled), t.Endpoint, t.Username, t.RemotePath, boolInt(t.AllowInsecureTLS))
+	waitStarted := time.Now()
+	conn, err := s.db.Conn(ctx)
+	targetType := sqliteTargetType(t.Type)
+	slog.Info("backup target sqlite timing", "phase", "connection_wait", "duration_ms", time.Since(waitStarted).Milliseconds(), "target_type", targetType, "error_class", sqliteErrorClass(err))
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	writeStarted := time.Now()
+	_, err = conn.ExecContext(ctx, `INSERT INTO backup_target(id,name,type,path,enabled,endpoint,username,remote_path,allow_insecure_tls) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,type=excluded.type,path=excluded.path,enabled=excluded.enabled,endpoint=excluded.endpoint,username=excluded.username,remote_path=excluded.remote_path,allow_insecure_tls=excluded.allow_insecure_tls`, t.ID, t.Name, t.Type, t.Path, boolInt(t.Enabled), t.Endpoint, t.Username, t.RemotePath, boolInt(t.AllowInsecureTLS))
+	slog.Info("backup target sqlite timing", "phase", "target_write", "duration_ms", time.Since(writeStarted).Milliseconds(), "target_type", targetType, "error_class", sqliteErrorClass(err))
 	return err
+}
+
+func sqliteTargetType(value string) string {
+	if value == "local" || value == "webdav" {
+		return value
+	}
+	return "unknown"
+}
+
+func sqliteErrorClass(err error) string {
+	if err == nil {
+		return "none"
+	}
+	return "database"
 }
 func (s *Store) DeleteBackupTarget(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM backup_target WHERE id=?`, id)
