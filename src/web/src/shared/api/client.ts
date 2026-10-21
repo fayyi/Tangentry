@@ -1,5 +1,5 @@
 export class APIError extends Error {
-  constructor(message: string, readonly code: string, readonly status: number, readonly details: unknown[] = []) {
+  constructor(message: string, readonly code: string, readonly status: number, readonly details: unknown[] = [], readonly payload?: unknown) {
     super(message)
   }
 }
@@ -23,7 +23,7 @@ export async function requestResponse(path: string, options: RequestInit = {}, f
   }
   if (!response.ok) {
     const error = await response.json().catch(() => ({})) as { message?: string; code?: string; details?: unknown }
-    throw new APIError(error.message ?? fallback.message, error.code ?? fallback.code, response.status, Array.isArray(error.details) ? error.details : [])
+    throw new APIError(error.message ?? fallback.message, error.code ?? fallback.code, response.status, Array.isArray(error.details) ? error.details : [], error)
   }
   return response
 }

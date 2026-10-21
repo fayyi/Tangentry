@@ -633,6 +633,22 @@ func TestJSONInputRequiresActualBoundsAndKnownFields(t *testing.T) {
 	if json.Unmarshal(bytes, &in) != nil || !validate(in) {
 		t.Fatal("complete original input rejected")
 	}
+	in.Source = "title"
+	in.TargetLanguage = "en"
+	in.Regenerate = true
+	in.Track.Language = "text-title"
+	in.Track.Cues = in.Track.Cues[:1]
+	data, err := json.Marshal(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var title Input
+	if err := json.Unmarshal(data, &title); err != nil {
+		t.Fatal("title translation input rejected", err)
+	}
+	if title.Source != "title" || title.TargetLanguage != "en" || !title.Regenerate || title.Track.Language != "text-title" || !validate(title) {
+		t.Fatalf("title translation fields were not preserved: %+v", title)
+	}
 }
 
 func TestTextTranslationSharesCacheAndKeepsSourceIsolated(t *testing.T) {

@@ -129,7 +129,7 @@ func TestYouTubeNativeCaptionsSurviveHLSAndManyTranslatedVariants(t *testing.T) 
 	data := youtubeCaptionMetadata{ID: "jNQXAC9IVRw", Subtitles: map[string][]youtubeCaption{"en": {{Ext: "json3", URL: "https://www.youtube.com/api/timedtext?lang=en"}}}, Automatic: map[string][]youtubeCaption{
 		"en": {{Ext: "vtt", URL: "https://manifest.googlevideo.com/api/manifest/hls_timedtext_playlist/fixture/index.m3u8"}},
 	}}
-	for i := 0; i < 150; i++ {
+	for i := 0; i < 250; i++ {
 		data.Automatic["en"] = append(data.Automatic["en"], youtubeCaption{Ext: "json3", URL: "https://www.youtube.com/api/timedtext?lang=other&tlang=en"})
 	}
 	raw, _ := json.Marshal(data)

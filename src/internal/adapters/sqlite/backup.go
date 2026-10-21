@@ -36,7 +36,7 @@ func (s *Store) Snapshot(ctx context.Context, staging string, includeDownloads b
 	// the filesystem; credential/config, models, tools and caches stay excluded.
 	allowed := []string{"documents"}
 	for _, name := range allowed {
-		extra, e := collectTree(root, name, staging, backup.FileData)
+		extra, e := collectTreeAs(root, name, name, staging, backup.FileData)
 		if e != nil {
 			return nil, e
 		}
@@ -47,7 +47,7 @@ func (s *Store) Snapshot(ctx context.Context, staging string, includeDownloads b
 		if downloads == "" {
 			downloads = filepath.Join(root, "downloads")
 		}
-		extra, e := collectTree(filepath.Dir(downloads), filepath.Base(downloads), staging, backup.FileData)
+		extra, e := collectTreeAs(filepath.Dir(downloads), filepath.Base(downloads), "downloads", staging, backup.FileData)
 		if e != nil {
 			return nil, e
 		}
@@ -58,7 +58,11 @@ func (s *Store) Snapshot(ctx context.Context, staging string, includeDownloads b
 }
 
 func collectTree(root, name, staging string, kind backup.FileType) ([]backup.File, error) {
-	if excludedBackupComponent(name) {
+	return collectTreeAs(root, name, name, staging, kind)
+}
+
+func collectTreeAs(root, sourceName, destinationName, staging string, kind backup.FileType) ([]backup.File, error) {
+	if excludedBackupComponent(sourceName) {
 		return nil, nil
 	}
 	sourceRoot, err := os.OpenRoot(root)
@@ -66,7 +70,7 @@ func collectTree(root, name, staging string, kind backup.FileType) ([]backup.Fil
 		return nil, err
 	}
 	defer sourceRoot.Close()
-	info, err := sourceRoot.Lstat(filepath.ToSlash(name))
+	info, err := sourceRoot.Lstat(filepath.ToSlash(sourceName))
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
@@ -79,7 +83,7 @@ func collectTree(root, name, staging string, kind backup.FileType) ([]backup.Fil
 	}
 	defer stageRoot.Close()
 	var out []backup.File
-	err = fs.WalkDir(sourceRoot.FS(), filepath.ToSlash(name), func(p string, entry fs.DirEntry, e error) error {
+	err = fs.WalkDir(sourceRoot.FS(), filepath.ToSlash(sourceName), func(p string, entry fs.DirEntry, e error) error {
 		if e != nil {
 			return e
 		}
@@ -100,6 +104,11 @@ func collectTree(root, name, staging string, kind backup.FileType) ([]backup.Fil
 		if err != nil || !before.Mode().IsRegular() {
 			return nil
 		}
+		rel, err := filepath.Rel(filepath.FromSlash(sourceName), filepath.FromSlash(p))
+		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return backup.ErrInvalidPackage
+		}
+		destinationPath := filepath.ToSlash(filepath.Join(destinationName, rel))
 		in, err := sourceRoot.Open(filepath.ToSlash(p))
 		if err != nil {
 			return err
@@ -109,11 +118,11 @@ func collectTree(root, name, staging string, kind backup.FileType) ([]backup.Fil
 			in.Close()
 			return backup.ErrInvalidPackage
 		}
-		if err := stageRoot.MkdirAll(filepath.ToSlash(filepath.Dir(p)), 0700); err != nil {
+		if err := stageRoot.MkdirAll(filepath.ToSlash(filepath.Dir(destinationPath)), 0700); err != nil {
 			in.Close()
 			return err
 		}
-		outFile, err := stageRoot.OpenFile(filepath.ToSlash(p), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		outFile, err := stageRoot.OpenFile(destinationPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 		if err != nil {
 			in.Close()
 			return err
@@ -134,7 +143,7 @@ func collectTree(root, name, staging string, kind backup.FileType) ([]backup.Fil
 		if size > backup.MaxFileSize {
 			return backup.ErrInvalidPackage
 		}
-		out = append(out, backup.File{Path: filepath.ToSlash(p), Type: kind, Size: size, SHA256: fmt.Sprintf("%x", hash.Sum(nil))})
+		out = append(out, backup.File{Path: destinationPath, Type: kind, Size: size, SHA256: fmt.Sprintf("%x", hash.Sum(nil))})
 		return nil
 	})
 	return out, err
@@ -260,14 +269,22 @@ func (s *Store) BackupTasks(ctx context.Context) ([]backup.Task, error) {
 		}
 		t.IncludeDownloads = inc != 0
 		t.Enabled = en != 0
-		ids, err := s.backupTaskTargets(ctx, t.ID)
+		out = append(out, t)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].TargetIDs, err = s.backupTaskTargets(ctx, out[i].ID)
 		if err != nil {
 			return nil, err
 		}
-		t.TargetIDs = ids
-		out = append(out, t)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 func (s *Store) BackupTask(ctx context.Context, id string) (backup.Task, error) {
 	var t backup.Task
@@ -317,8 +334,18 @@ func (s *Store) SaveBackupTask(ctx context.Context, t backup.Task) error {
 	return tx.Commit()
 }
 func (s *Store) DeleteBackupTask(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM backup_task WHERE id=?`, id)
-	return err
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM backup_task_target WHERE task_id=?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM backup_task WHERE id=?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 func (s *Store) SaveBackupSnapshot(ctx context.Context, v backup.Snapshot) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO backup_run(id,task_id,created_at,size,status,retry_available,retry_unavailable_reason) VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET task_id=excluded.task_id,created_at=excluded.created_at,size=excluded.size,status=excluded.status,retry_available=excluded.retry_available,retry_unavailable_reason=excluded.retry_unavailable_reason`, v.ID, v.TaskID, v.CreatedAt.Unix(), v.Size, v.Status, boolInt(v.RetryAvailable), v.RetryUnavailableReason)
@@ -340,13 +367,22 @@ func (s *Store) BackupSnapshots(ctx context.Context) ([]backup.Snapshot, error) 
 		}
 		v.RetryAvailable = retryAvailable != 0
 		v.CreatedAt = time.Unix(ts, 0).UTC()
-		v.Targets, err = s.backupTargetRuns(ctx, v.ID)
+		out = append(out, v)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].Targets, err = s.backupTargetRuns(ctx, out[i].ID)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, v)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (s *Store) GetBackupSnapshot(ctx context.Context, id string) (backup.Snapshot, error) {
@@ -378,6 +414,10 @@ func (s *Store) backupTargetRuns(ctx context.Context, runID string) ([]backup.Ta
 		out = append(out, v)
 	}
 	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
 		return nil, err
 	}
 	if len(out) == 0 {

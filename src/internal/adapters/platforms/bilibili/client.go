@@ -21,6 +21,28 @@ import (
 const pageSize = 24
 const userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
 
+type creatorArchiveResponse struct {
+	List *struct {
+		Videos []struct {
+			BVID        string `json:"bvid"`
+			Title       string `json:"title"`
+			Author      string `json:"author"`
+			MID         int64  `json:"mid"`
+			Picture     string `json:"pic"`
+			Description string `json:"description"`
+			Duration    string `json:"length"`
+			Created     int64  `json:"created"`
+		} `json:"vlist"`
+	} `json:"list"`
+	Page *struct {
+		Count  int `json:"count"`
+		Number int `json:"pn"`
+		Size   int `json:"ps"`
+	} `json:"page"`
+	IsRisk   bool `json:"is_risk"`
+	GaiaType int  `json:"gaia_res_type"`
+}
+
 type Client struct {
 	http              *http.Client
 	baseURL           string
@@ -70,42 +92,33 @@ func (c *Client) SetCredentialRefresher(refresher *CredentialRefresher) { c.refr
 func (c *Client) CreatorVideos(ctx context.Context, uid string, page int) (discovery.Feed, error) {
 	key, err := c.mixinKey(ctx)
 	if err != nil {
-		return discovery.Feed{}, err
+		return c.creatorVideosLegacy(ctx, uid, page, err)
 	}
 	params := url.Values{"mid": {uid}, "pn": {strconv.Itoa(page)}, "ps": {strconv.Itoa(pageSize)}, "order": {"pubdate"}, "platform": {"web"}, "web_location": {"1550101"}}
 	sign(params, key, time.Now().Unix())
-	var data struct {
-		List *struct {
-			Videos []struct {
-				BVID        string `json:"bvid"`
-				Title       string `json:"title"`
-				Author      string `json:"author"`
-				MID         int64  `json:"mid"`
-				Picture     string `json:"pic"`
-				Description string `json:"description"`
-				Duration    string `json:"length"`
-				Created     int64  `json:"created"`
-			} `json:"vlist"`
-		} `json:"list"`
-		Page *struct {
-			Count  int `json:"count"`
-			Number int `json:"pn"`
-			Size   int `json:"ps"`
-		} `json:"page"`
-		IsRisk   bool `json:"is_risk"`
-		GaiaType int  `json:"gaia_res_type"`
-	}
+	var data creatorArchiveResponse
 	if err := c.get(ctx, "/x/space/wbi/arc/search", params, &data, false); err != nil {
-		return discovery.Feed{}, err
+		return c.creatorVideosLegacy(ctx, uid, page, err)
 	}
+	feed, err := mapCreatorArchive(uid, page, data)
+	if err != nil {
+		return c.creatorVideosLegacy(ctx, uid, page, err)
+	}
+	return feed, nil
+}
+
+func mapCreatorArchive(uid string, page int, data creatorArchiveResponse) (discovery.Feed, error) {
 	if data.IsRisk || data.GaiaType != 0 {
-		return discovery.Feed{}, c.restricted()
+		return discovery.Feed{}, &discovery.PlatformError{Message: "B站暂时限制了请求。请等待后重试，或直接打开原站浏览。", Restricted: true}
 	}
 	if data.List == nil || data.List.Videos == nil || data.Page == nil || data.Page.Count < 0 || (data.Page.Number > 0 && data.Page.Number != page) {
 		return discovery.Feed{}, &discovery.PlatformError{Message: "B站返回了不完整的投稿列表，请稍后重试。"}
 	}
 	feed := discovery.Feed{Items: make([]content.Item, 0, len(data.List.Videos)), Page: page, Total: data.Page.Count, SourceTitle: "UP 主 " + uid, Query: uid}
 	for _, video := range data.List.Videos {
+		if video.MID > 0 && strconv.FormatInt(video.MID, 10) != uid {
+			return discovery.Feed{}, &discovery.PlatformError{Message: "B站返回了身份不匹配的投稿列表。"}
+		}
 		authorID := uid
 		if video.MID > 0 {
 			authorID = strconv.FormatInt(video.MID, 10)
@@ -125,6 +138,49 @@ func (c *Client) CreatorVideos(ctx context.Context, uid string, page int) (disco
 	}
 	feed.HasMore = page*size < feed.Total && len(feed.Items) > 0
 	return feed, nil
+}
+
+// creatorVideosLegacy retries public reads through the older unsigned space
+// endpoint when WBI is unavailable or its response shape changes. It never
+// retries a request already classified as restricted.
+func (c *Client) creatorVideosLegacy(ctx context.Context, uid string, page int, original error) (discovery.Feed, error) {
+	if ctx.Err() != nil {
+		return discovery.Feed{}, ctx.Err()
+	}
+	var restricted *discovery.PlatformError
+	if errors.As(original, &restricted) && restricted.Restricted {
+		c.coolDownIfRestricted(original)
+		return discovery.Feed{}, original
+	}
+	params := url.Values{"mid": {uid}, "pn": {strconv.Itoa(page)}, "ps": {strconv.Itoa(pageSize)}, "order": {"pubdate"}}
+	var data creatorArchiveResponse
+	if err := c.get(ctx, "/x/space/arc/search", params, &data, false); err != nil {
+		var legacyRestricted *discovery.PlatformError
+		if errors.As(err, &legacyRestricted) && legacyRestricted.Restricted {
+			return discovery.Feed{}, err
+		}
+		return discovery.Feed{}, original
+	}
+	feed, err := mapCreatorArchive(uid, page, data)
+	if err != nil {
+		c.coolDownIfRestricted(err)
+		var legacyRestricted *discovery.PlatformError
+		if errors.As(err, &legacyRestricted) && legacyRestricted.Restricted {
+			return discovery.Feed{}, err
+		}
+		return discovery.Feed{}, original
+	}
+	return feed, nil
+}
+
+func (c *Client) coolDownIfRestricted(err error) {
+	var restricted *discovery.PlatformError
+	if !errors.As(err, &restricted) || !restricted.Restricted {
+		return
+	}
+	c.mu.Lock()
+	c.restrictedUntil = time.Now().Add(time.Minute)
+	c.mu.Unlock()
 }
 
 func (c *Client) Video(ctx context.Context, bvid string) (content.Item, error) {

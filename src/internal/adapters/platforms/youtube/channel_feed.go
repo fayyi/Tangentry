@@ -117,7 +117,11 @@ func shouldFallback(err error) bool {
 	}
 	var fetchErr *feeds.FetchError
 	if errors.As(err, &fetchErr) {
-		return fetchErr.StatusCode != http.StatusUnauthorized && fetchErr.StatusCode != http.StatusForbidden
+		// A public channel feed can be blocked by an edge or regional policy.
+		// That is different from a private channel, so let yt-dlp try its own
+		// public extractor before reporting a failure. 429 stays on the
+		// platform's cooldown path and must not trigger another request.
+		return fetchErr.StatusCode != http.StatusTooManyRequests
 	}
 	return true
 }

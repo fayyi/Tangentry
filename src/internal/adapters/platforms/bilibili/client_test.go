@@ -84,6 +84,83 @@ func TestCreatorMappingAndAnonymousNav(t *testing.T) {
 	}
 }
 
+func TestCreatorVideosFallsBackToPublicLegacyEndpointWithoutCookies(t *testing.T) {
+	requests := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.URL.Path)
+		if r.Header.Get("Cookie") != "" {
+			t.Fatal("anonymous subscription request forwarded cookies")
+		}
+		switch r.URL.Path {
+		case "/x/web-interface/nav":
+			w.Write([]byte(`{"code":0,"data":{"wbi_img":{"img_url":"https://i0.hdslb.com/bfs/wbi/7cd084941338484aae1ad9425b84077c.png","sub_url":"https://i0.hdslb.com/bfs/wbi/4932caff0ff746eab6f01bf08b70ac45.png"}}}`))
+		case "/x/space/wbi/arc/search":
+			w.Write([]byte(`{"code":-400,"message":"bad request"}`))
+		case "/x/space/arc/search":
+			if r.URL.Query().Get("mid") != "12345" || r.URL.Query().Get("pn") != "1" {
+				t.Errorf("unexpected legacy query: %s", r.URL.RawQuery)
+			}
+			w.Write([]byte(`{"code":0,"data":{"list":{"vlist":[{"bvid":"BV17x411w7KC","title":"公开投稿","author":"公开作者","mid":12345,"pic":"//i0.hdslb.com/test.jpg","length":"01:02","created":1702204169}]},"page":{"count":1,"pn":1,"ps":30}}}`))
+		default:
+			t.Fatalf("unexpected endpoint %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	client := NewClient(server.Client(), "")
+	client.baseURL = server.URL
+	feed, err := client.CreatorVideos(context.Background(), "12345", 1)
+	if err != nil || len(feed.Items) != 1 || feed.Items[0].Title != "公开投稿" || feed.Items[0].ThumbnailURL != "https://i0.hdslb.com/test.jpg" || feed.Query != "12345" {
+		t.Fatalf("legacy anonymous feed not mapped: %+v err=%v", feed, err)
+	}
+	if strings.Join(requests, ",") != "/x/web-interface/nav,/x/space/wbi/arc/search,/x/space/arc/search" {
+		t.Fatalf("unexpected fallback sequence: %#v", requests)
+	}
+}
+
+func TestCreatorVideosDoesNotFallbackAfterPlatformRestriction(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.URL.Path == "/x/web-interface/nav" {
+			w.Write([]byte(`{"code":-101,"data":{"wbi_img":{"img_url":"https://i0.hdslb.com/bfs/wbi/7cd084941338484aae1ad9425b84077c.png","sub_url":"https://i0.hdslb.com/bfs/wbi/4932caff0ff746eab6f01bf08b70ac45.png"}}}`))
+			return
+		}
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+	client := NewClient(server.Client(), "")
+	client.baseURL = server.URL
+	_, err := client.CreatorVideos(context.Background(), "12345", 1)
+	var platform *discovery.PlatformError
+	if !errors.As(err, &platform) || !platform.Restricted || requests != 2 {
+		t.Fatalf("restricted request was retried or misclassified: err=%v requests=%d", err, requests)
+	}
+}
+
+func TestCreatorVideosRiskResponseEntersCooldownWithoutLegacyRetry(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.URL.Path != "/x/space/wbi/arc/search" {
+			t.Fatalf("risk response triggered fallback endpoint: %s", r.URL.Path)
+		}
+		w.Write([]byte(`{"code":0,"data":{"list":{"vlist":[]},"page":{"count":0},"is_risk":true}}`))
+	}))
+	defer server.Close()
+	client := NewClient(server.Client(), "")
+	client.baseURL, client.key, client.keyExpires = server.URL, "test-key", time.Now().Add(time.Hour)
+	for range 2 {
+		_, err := client.CreatorVideos(context.Background(), "12345", 1)
+		var platform *discovery.PlatformError
+		if !errors.As(err, &platform) || !platform.Restricted {
+			t.Fatalf("risk response was not classified as a restriction: %v", err)
+		}
+	}
+	if requests != 1 {
+		t.Fatalf("risk response bypassed cooldown: requests=%d", requests)
+	}
+}
+
 func TestRestrictedResponseIsAnErrorAndCoolsDown(t *testing.T) {
 	for _, code := range []string{"http412", "-352", "-799"} {
 		t.Run(code, func(t *testing.T) {

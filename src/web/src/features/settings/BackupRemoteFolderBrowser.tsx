@@ -1,11 +1,11 @@
 import { ArrowLeft, Check, ChevronRight, Folder, FolderPlus, LoaderCircle, RefreshCw, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { request } from '../../shared/api/client'
+import { APIError, request } from '../../shared/api/client'
 import type { BackupTarget } from '../../shared/api/types'
-import { backupFolderBreadcrumbs, backupFolderBrowserTransition, backupFolderParent, createBackupFolderBrowserState, selectedBackupFolderPath, type BackupRemoteFolder } from './backupFolderBrowser'
+import { backupFolderBreadcrumbs, backupFolderBrowseRequest, backupFolderBrowserTransition, backupFolderParent, createBackupFolderBrowserState, selectedBackupFolderPath, type BackupRemoteFolder } from './backupFolderBrowser'
 
 interface Props {
-  target: Pick<BackupTarget, 'id' | 'endpoint' | 'username' | 'password' | 'allowInsecureTLS'>
+  target: Pick<BackupTarget, 'id' | 'type' | 'endpoint' | 'username' | 'remotePath' | 'password' | 'allowInsecureTLS'>
   onSelect(path: string): void
   onClose(): void
 }
@@ -13,21 +13,45 @@ interface Props {
 export function BackupRemoteFolderBrowser({ target, onSelect, onClose }: Props) {
   const [state, setState] = useState(createBackupFolderBrowserState)
   const loadID = useRef(0)
+  const browseController = useRef<AbortController | null>(null)
 
   async function load(path: string) {
+    browseController.current?.abort()
     const requestID = ++loadID.current
+    const controller = new AbortController()
+    browseController.current = controller
+    const timeout = window.setTimeout(() => controller.abort(), 25000)
     setState(current => backupFolderBrowserTransition(current, { type: 'load-started', path }))
     try {
-      const folders = await request<BackupRemoteFolder[]>('/backup/targets/browse', { method: 'POST', body: JSON.stringify({ ...target, folderPath: path }) })
+      const folders = await request<BackupRemoteFolder[]>('/backup/targets/browse', { method: 'POST', body: JSON.stringify(backupFolderBrowseRequest(target, path)), signal: controller.signal })
       if (requestID !== loadID.current) return
       setState(current => backupFolderBrowserTransition(current, { type: 'load-succeeded', folders: Array.isArray(folders) ? folders : [] }))
-    } catch {
+    } catch (cause) {
       if (requestID !== loadID.current) return
-      setState(current => backupFolderBrowserTransition(current, { type: 'load-failed', message: '读取远端目录失败，请检查权限和连接后重试。' }))
+      if (controller.signal.aborted) {
+        setState(current => backupFolderBrowserTransition(current, { type: 'load-failed', message: '读取远端目录超时，请检查连接后重试。' }))
+        return
+      }
+      const message = cause instanceof APIError
+        ? cause.message
+        : cause instanceof Error
+          ? cause.message
+          : '读取远端目录失败，请检查权限和连接后重试。'
+      setState(current => backupFolderBrowserTransition(current, { type: 'load-failed', message }))
+    } finally {
+      window.clearTimeout(timeout)
+      if (requestID === loadID.current) browseController.current = null
     }
   }
 
-  useEffect(() => { void load('') }, [])
+  useEffect(() => {
+    void load('')
+    return () => {
+      ++loadID.current
+      browseController.current?.abort()
+      browseController.current = null
+    }
+  }, [])
 
   async function createFolder() {
     const name = state.folderName.trim()

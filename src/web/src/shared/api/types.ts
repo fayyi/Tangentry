@@ -250,6 +250,7 @@ export interface BackupRemoteFolder { name: string; path: string }
 export interface BackupTask { id: string; name: string; targetIds: string[]; includeDownloads: boolean; retention: number; enabled: boolean }
 export interface BackupTargetRun { targetId: string; name: string; status: string; error?: string }
 export interface BackupSnapshot { id: string; taskId?: string; createdAt: string; size: number; status: string; targets?: BackupTargetRun[]; retryAvailable?: boolean; retryUnavailableReason?: string }
+export interface BackupRunErrorResponse { code: string; message: string; snapshot?: BackupSnapshot }
 export interface BackupValidation { snapshotId: string; size: number; manifest: { formatVersion: number; schemaVersion: number; snapshotID: string; includeDownloads: boolean; files: Array<{ path: string; type: string; size: number; sha256: string }> } }
 export interface BackupRestoreResult { planId: string; snapshotId: string; stagedId: string; preRestoreSnapshotId: string; status: string; restartRequired: boolean }
 

@@ -27,6 +27,9 @@ func main() {
 func run() (runErr error) {
 	// Keep idle backend heap retention bounded; model inference runs in a child process.
 	debug.SetMemoryLimit(128 << 20)
+	if os.Getenv("MYGO_GENERATE") != "" {
+		return runBindingGeneration()
+	}
 	if !mygo.App.RequestSingleInstanceLock() {
 		return nil
 	}
@@ -85,6 +88,25 @@ func run() (runErr error) {
 		return fmt.Errorf("desktop event loop: %w", err)
 	}
 	return nil
+}
+
+func runBindingGeneration() error {
+	dataDir, err := os.MkdirTemp("", "tangentry-bindings-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dataDir)
+	mygo.App.SetPath(mygo.PathUserData, dataDir)
+	mygo.BindAs("DesktopCapture", desktopCapture{})
+	application, err := app.New(dataDir, web.Assets())
+	if err != nil {
+		return err
+	}
+	defer application.Close()
+	platformLogin := newPlatformLoginBridge(application.PlatformCredentialsPort())
+	mygo.BindAs("PlatformLogin", platformLoginService{bridge: platformLogin})
+	mygo.BindAs("Updater", newUpdaterService(dataDir))
+	return mygo.App.Run()
 }
 
 func desktopCredentialKey(dataDir string) ([]byte, error) {

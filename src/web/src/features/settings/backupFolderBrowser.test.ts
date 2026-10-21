@@ -1,5 +1,14 @@
 import { expect, test } from 'vitest'
-import { backupFolderBreadcrumbs, backupFolderBrowserTransition, backupFolderParent, createBackupFolderBrowserState, selectedBackupFolderPath } from './backupFolderBrowser'
+import { backupFolderBreadcrumbs, backupFolderBrowseRequest, backupFolderBrowserTransition, backupFolderParent, createBackupFolderBrowserState, selectedBackupFolderPath } from './backupFolderBrowser'
+
+test('includes the target type required by the browse API', () => {
+  expect(backupFolderBrowseRequest({ endpoint: 'https://dav.example.test', username: 'fixture-user' }, '')).toEqual({
+    endpoint: 'https://dav.example.test',
+    username: 'fixture-user',
+    type: 'webdav',
+    folderPath: '',
+  })
+})
 
 test('folder browser handles an empty directory and loading failure', () => {
   let state = createBackupFolderBrowserState()

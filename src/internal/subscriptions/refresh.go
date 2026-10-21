@@ -293,9 +293,15 @@ func (s *Service) updateFeed(ctx context.Context, detail Detail) (Detail, error)
 		if errors.As(err, &httpFailure) {
 			switch status := httpFailure.HTTPStatusCode(); {
 			case status == 401 || status == 403:
-				record.State.Status = StatusAuthRequired
-				record.State.SuggestedAction = suggestedAction(StatusAuthRequired)
-				record.State.Message = "订阅源拒绝访问，请检查访问密钥或鉴权配置。"
+				if strings.HasPrefix(id, "youtube:") {
+					record.State.Status = StatusRateLimited
+					record.State.SuggestedAction = suggestedAction(StatusRateLimited)
+					record.State.Message = "YouTube 公开频道接口暂时拒绝请求，可能正在限流；已保留上次内容并延后检查。"
+				} else {
+					record.State.Status = StatusAuthRequired
+					record.State.SuggestedAction = suggestedAction(StatusAuthRequired)
+					record.State.Message = "订阅源拒绝访问，请检查访问密钥或鉴权配置。"
+				}
 			case status == 404:
 				record.State.Status = StatusNotFound
 				record.State.SuggestedAction = suggestedAction(StatusNotFound)

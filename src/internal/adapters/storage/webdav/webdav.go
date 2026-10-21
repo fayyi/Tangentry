@@ -504,33 +504,8 @@ func (s *Store) Delete(ctx context.Context, name string) error {
 }
 
 func (s *Store) TestConnection(ctx context.Context) error {
-	u := *s.base
-	if s.prefix != "" {
-		u.Path = strings.TrimSuffix(u.Path, "/") + "/" + s.prefix
-	}
-	body := strings.NewReader(`<?xml version="1.0" encoding="utf-8"?><d:propfind xmlns:d="DAV:"><d:allprop/></d:propfind>`)
-	resp, err := s.request(ctx, "PROPFIND", &u, body, int64(body.Len()), http.Header{"Depth": []string{"0"}, "Content-Type": []string{"application/xml"}})
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if err := checkStatus(resp, http.StatusMultiStatus); err != nil {
-		return err
-	}
-	// A connection test does not need to retain the PROPFIND document, but it
-	// still must not allow a peer to stream an unbounded response. Apply the
-	// same hard cap used by List, including when Content-Length is omitted.
-	if resp.ContentLength > maxPropfind {
-		return backup.ErrInvalidPackage
-	}
-	read, err := io.Copy(io.Discard, io.LimitReader(resp.Body, maxPropfind+1))
-	if err != nil {
-		return err
-	}
-	if read > maxPropfind {
-		return backup.ErrInvalidPackage
-	}
-	return nil
+	_, err := s.Browse(ctx, "")
+	return err
 }
 
 func (s *Store) Close() error {

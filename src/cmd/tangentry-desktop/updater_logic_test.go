@@ -70,6 +70,7 @@ func TestUpdaterSkipAndVersionComparison(t *testing.T) {
 		{"1.2.0-beta.10", "1.2.0-beta.2", true},
 		{"1.2.0+build.2", "1.2.0+build.1", false},
 		{"1.2.1", "1.2.0", true},
+		{"0.0.3.1", "0.0.3", true},
 	} {
 		if got := updaterVersionNewer(test.candidate, test.current); got != test.want {
 			t.Fatalf("updaterVersionNewer(%q, %q) = %v, want %v", test.candidate, test.current, got, test.want)

@@ -20,6 +20,7 @@ export default {
   version: process.env.TANGENTRY_VERSION || '0.0.3',
   main: './cmd/tangentry-desktop',
   out: '../build',
+  frontendDist: './web/dist',
   resources: ['../docs/licenses'],
   ...(updatePublicKey
     ? { updates: { publicKey: updatePublicKey, github: 'mu-zi-lee/Tangentry' } }

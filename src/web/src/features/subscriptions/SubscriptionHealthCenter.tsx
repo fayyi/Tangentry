@@ -24,7 +24,7 @@ function CredentialHealth() {
   }, [])
   const now = Math.floor(Date.now() / 1000)
   return <section className="subscription-health-credentials" aria-labelledby="subscription-credentials-title">
-    <div className="subscription-health-section-heading"><div><h3 id="subscription-credentials-title"><KeyRound size={16} aria-hidden="true"/>平台登录状态</h3><p>登录凭据独立于订阅刷新；失效时只影响需要登录的平台。</p></div><a className="text-button" href="/tools#accounts"><Settings2 size={14} aria-hidden="true"/>去设置</a></div>
+    <div className="subscription-health-section-heading"><div><h3 id="subscription-credentials-title"><KeyRound size={16} aria-hidden="true"/>平台登录状态</h3><p>B站和 YouTube 公开频道可免登录订阅；登录只用于需要账号的额外能力。</p></div><a className="text-button" href="/tools#accounts"><Settings2 size={14} aria-hidden="true"/>去设置</a></div>
     {!states && <p className="field-hint">正在读取登录状态…</p>}
     {states && <div className="subscription-credential-grid">{states.map(state => {
       const expired = Boolean(state.expiresAt && state.expiresAt <= now)

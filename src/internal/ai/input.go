@@ -11,10 +11,12 @@ import (
 // silently treating an omitted/null start as a real zero-second position.
 func (in *Input) UnmarshalJSON(data []byte) error {
 	var raw struct {
-		Source    string  `json:"source"`
-		ContentID *string `json:"contentId"`
-		Revision  *int64  `json:"revision"`
-		Track     *struct {
+		Source         string  `json:"source"`
+		ContentID      *string `json:"contentId"`
+		TargetLanguage string  `json:"targetLanguage"`
+		Revision       *int64  `json:"revision"`
+		Regenerate     bool    `json:"regenerate"`
+		Track          *struct {
 			Language  *string `json:"language"`
 			Label     string  `json:"label"`
 			Automatic bool    `json:"automatic"`
@@ -27,7 +29,16 @@ func (in *Input) UnmarshalJSON(data []byte) error {
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
-	if decoder.Decode(&raw) != nil || decoder.Decode(new(any)) != io.EOF || raw.ContentID == nil || raw.Revision == nil || raw.Track == nil || raw.Track.Language == nil || raw.Track.Cues == nil {
+	if err := decoder.Decode(&raw); err != nil {
+		return err
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		if err == nil {
+			return ErrInvalid
+		}
+		return err
+	}
+	if raw.ContentID == nil || raw.Revision == nil || raw.Track == nil || raw.Track.Language == nil || raw.Track.Cues == nil {
 		return ErrInvalid
 	}
 	track := subtitles.Track{Language: *raw.Track.Language, Label: raw.Track.Label, Automatic: raw.Track.Automatic, Cues: make([]subtitles.Cue, len(*raw.Track.Cues))}
@@ -37,6 +48,13 @@ func (in *Input) UnmarshalJSON(data []byte) error {
 		}
 		track.Cues[i] = subtitles.Cue{Start: *cue.Start, End: *cue.End, Text: *cue.Text}
 	}
-	*in = Input{ContentID: *raw.ContentID, Revision: *raw.Revision, Track: track, Source: raw.Source}
+	*in = Input{
+		ContentID:      *raw.ContentID,
+		Revision:       *raw.Revision,
+		Track:          track,
+		Source:         raw.Source,
+		TargetLanguage: raw.TargetLanguage,
+		Regenerate:     raw.Regenerate,
+	}
 	return nil
 }

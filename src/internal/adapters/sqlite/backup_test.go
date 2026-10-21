@@ -64,6 +64,26 @@ func TestSnapshotCollectsDocumentsAndHonorsDownloadSwitch(t *testing.T) {
 	}
 }
 
+func TestSnapshotNormalizesUserSelectedDownloadDirectory(t *testing.T) {
+	store := inboxTestStore(t)
+	downloads := filepath.Join(t.TempDir(), "Downloads")
+	if err := os.MkdirAll(downloads, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(downloads, "media.bin"), []byte("media-fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	store.SetBackupDownloadDirectory(downloads)
+
+	files, err := store.Snapshot(context.Background(), filepath.Join(t.TempDir(), "stage"), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasBackupFile(files, "downloads/media.bin") || hasBackupFile(files, "Downloads/media.bin") {
+		t.Fatalf("user-selected download directory was not normalized: %#v", files)
+	}
+}
+
 func TestBackupWebDAVConfigurationAndTargetRunStatusesPersist(t *testing.T) {
 	store := inboxTestStore(t)
 	ctx := context.Background()
@@ -119,6 +139,72 @@ func TestBackupWebDAVConfigurationAndTargetRunStatusesPersist(t *testing.T) {
 	loadedSnapshot, err = store.GetSnapshot(ctx, snapshot.ID)
 	if err != nil || loadedSnapshot.RetryAvailable || loadedSnapshot.RetryUnavailableReason == "" {
 		t.Fatalf("retry unavailability did not persist: %+v %v", loadedSnapshot, err)
+	}
+}
+
+func TestBackupListsReleaseSQLiteConnectionBeforeLoadingRelatedRows(t *testing.T) {
+	store := inboxTestStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := store.SaveTarget(ctx, backup.Target{ID: "list-target", Name: "List target", Type: "local", Path: t.TempDir(), Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveTask(ctx, backup.Task{ID: "list-task", Name: "List task", TargetIDs: []string{"list-target"}, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := backup.Snapshot{ID: "list-snapshot", TaskID: "list-task", CreatedAt: time.Now().UTC(), Status: "succeeded"}
+	if err := store.SaveSnapshot(ctx, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveTargetRuns(ctx, snapshot.ID, []backup.TargetRun{{TargetID: "list-target", Name: "List target", Status: "succeeded"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	tasks, err := store.BackupTasks(ctx)
+	if err != nil || len(tasks) != 1 || len(tasks[0].TargetIDs) != 1 {
+		t.Fatalf("backup task list did not load target bindings: tasks=%+v err=%v", tasks, err)
+	}
+	snapshots, err := store.BackupSnapshots(ctx)
+	if err != nil || len(snapshots) != 1 || len(snapshots[0].Targets) != 1 {
+		t.Fatalf("backup snapshot list did not load target runs: snapshots=%+v err=%v", snapshots, err)
+	}
+
+	if err := store.SaveTarget(ctx, backup.Target{ID: "list-target", Name: "Updated target", Type: "local", Path: t.TempDir(), Enabled: true}); err != nil {
+		t.Fatalf("target save blocked after loading task/snapshot associations: %v", err)
+	}
+}
+
+func TestDeletingBackupTaskKeepsSnapshotHistory(t *testing.T) {
+	store := inboxTestStore(t)
+	ctx := context.Background()
+	if err := store.SaveTarget(ctx, backup.Target{ID: "history-target", Name: "History target", Type: "local", Path: t.TempDir(), Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	task := backup.Task{ID: "history-task", Name: "History task", TargetIDs: []string{"history-target"}, Enabled: true}
+	if err := store.SaveTask(ctx, task); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := backup.Snapshot{ID: "history-snapshot", TaskID: task.ID, CreatedAt: time.Now().UTC(), Size: 42, Status: "succeeded"}
+	if err := store.SaveSnapshot(ctx, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	run := backup.TargetRun{TargetID: "history-target", Name: "History target", Status: "succeeded"}
+	if err := store.SaveTargetRuns(ctx, snapshot.ID, []backup.TargetRun{run}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DeleteTask(ctx, task.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.GetTask(ctx, task.ID); err == nil {
+		t.Fatal("deleted backup task still exists")
+	}
+	loaded, err := store.GetSnapshot(ctx, snapshot.ID)
+	if err != nil || loaded.TaskID != task.ID || loaded.Status != "succeeded" || len(loaded.Targets) != 1 || loaded.Targets[0].TargetID != run.TargetID {
+		t.Fatalf("snapshot history was not preserved: %+v %v", loaded, err)
+	}
+	var targetBindings int
+	if err := store.db.QueryRowContext(ctx, `SELECT count(*) FROM backup_task_target WHERE task_id=?`, task.ID).Scan(&targetBindings); err != nil || targetBindings != 0 {
+		t.Fatalf("task target bindings were not removed: count=%d err=%v", targetBindings, err)
 	}
 }
 

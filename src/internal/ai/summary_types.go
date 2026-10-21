@@ -123,7 +123,16 @@ func (in *SummaryInput) UnmarshalJSON(data []byte) error {
 	}
 	decoder := json.NewDecoder(strings.NewReader(string(data)))
 	decoder.DisallowUnknownFields()
-	if decoder.Decode(&raw) != nil || decoder.Decode(new(any)) != io.EOF || raw.ContentID == nil || raw.Source == nil || raw.Revision == nil || raw.Text == nil && raw.Segments == nil {
+	if err := decoder.Decode(&raw); err != nil {
+		return err
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		if err == nil {
+			return ErrInvalid
+		}
+		return err
+	}
+	if raw.ContentID == nil || raw.Source == nil || raw.Revision == nil || raw.Text == nil && raw.Segments == nil {
 		return ErrInvalid
 	}
 	*in = SummaryInput{ContentID: *raw.ContentID, Source: *raw.Source, Revision: *raw.Revision, Regenerate: raw.Regenerate}

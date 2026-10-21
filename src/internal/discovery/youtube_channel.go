@@ -46,6 +46,30 @@ func validHandle(raw string) bool {
 	}
 	return true
 }
+
+// Legacy channel URLs use a custom name after /c/ or /user/. Keep the
+// accepted alphabet deliberately small and path-safe because these values are
+// later handed to yt-dlp as a URL locator.
+func validLegacyChannelName(raw string) bool {
+	if !utf8.ValidString(raw) || raw == "." || raw == ".." {
+		return false
+	}
+	runes := []rune(raw)
+	if len(runes) < 1 || len(runes) > 100 {
+		return false
+	}
+	for i, r := range runes {
+		if unicode.IsLetter(r) || unicode.IsNumber(r) {
+			continue
+		}
+		if (r == '_' || r == '-' || r == '.') && i > 0 && i < len(runes)-1 {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 func ParseYouTubeChannel(raw string) (YouTubeChannelReference, error) {
 	raw = strings.TrimSpace(raw)
 	if len(raw) > 2048 || !utf8.ValidString(raw) {
@@ -74,13 +98,16 @@ func ParseYouTubeChannel(raw string) (YouTubeChannelReference, error) {
 		return YouTubeChannelReference{ID: ids[0], URL: YouTubeChannelURL(ids[0])}, nil
 	}
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
-	var id, handle string
+	var id, handle, legacyKind, legacyName string
 	if len(parts) >= 2 && parts[0] == "channel" && YouTubeChannelID(parts[1]) {
 		id = parts[1]
 		parts = parts[2:]
 	} else if len(parts) >= 1 && validHandle(parts[0]) {
 		handle = parts[0]
 		parts = parts[1:]
+	} else if len(parts) >= 2 && (parts[0] == "c" || parts[0] == "user") && validLegacyChannelName(parts[1]) {
+		legacyKind, legacyName = parts[0], parts[1]
+		parts = parts[2:]
 	} else {
 		return YouTubeChannelReference{}, ErrInvalidQuery
 	}
@@ -89,6 +116,9 @@ func ParseYouTubeChannel(raw string) (YouTubeChannelReference, error) {
 	}
 	if id != "" {
 		return YouTubeChannelReference{ID: id, URL: YouTubeChannelURL(id)}, nil
+	}
+	if legacyKind != "" {
+		return YouTubeChannelReference{URL: "https://www.youtube.com/" + legacyKind + "/" + url.PathEscape(legacyName)}, nil
 	}
 	return YouTubeChannelReference{URL: "https://www.youtube.com/" + url.PathEscape(handle)}, nil
 }

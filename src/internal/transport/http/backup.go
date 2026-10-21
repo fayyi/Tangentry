@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -12,6 +13,12 @@ import (
 )
 
 type backupHandler struct{ service BackupService }
+
+type backupRunErrorResponse struct {
+	Code     string           `json:"code"`
+	Message  string           `json:"message"`
+	Snapshot *backup.Snapshot `json:"snapshot,omitempty"`
+}
 
 type backupTargetRequest struct {
 	ID               string `json:"id"`
@@ -66,15 +73,20 @@ func (h *backupHandler) saveTarget(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *backupHandler) browseTarget(w http.ResponseWriter, r *http.Request) {
+	started := time.Now()
 	var request backupTargetRequest
 	if !decodeJSON(w, r, &request) {
 		return
 	}
-	folders, err := h.service.BrowseTarget(r.Context(), request.target(), request.FolderPath)
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	folders, err := h.service.BrowseTarget(ctx, request.target(), request.FolderPath)
 	if err != nil {
+		slog.Warn("backup folder browse failed", "duration_ms", time.Since(started).Milliseconds(), "folder_path", request.FolderPath, "error_type", fmt.Sprintf("%T", err), "error", err)
 		h.folderError(w, err)
 		return
 	}
+	slog.Info("backup folder browse succeeded", "duration_ms", time.Since(started).Milliseconds(), "folder_path", request.FolderPath, "folder_count", len(folders))
 	write(w, http.StatusOK, folders)
 }
 
@@ -136,17 +148,34 @@ func (h *backupHandler) deleteTask(w http.ResponseWriter, r *http.Request) {
 	write(w, http.StatusNoContent, nil)
 }
 func (h *backupHandler) run(w http.ResponseWriter, r *http.Request) {
+	started := time.Now()
 	var v struct {
 		Password string `json:"password"`
 	}
 	if !decodeJSON(w, r, &v) {
+		logBackupHTTP("run_backup", "unknown", time.Since(started), errors.New("invalid request"))
 		return
 	}
 	snap, err := h.service.Create(r.Context(), r.PathValue("id"), v.Password)
 	if err != nil {
-		h.error(w, err)
+		errorClass := "operation"
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			errorClass = "cancelled"
+		}
+		slog.Warn("backup run http failed", "duration_ms", time.Since(started).Milliseconds(), "error_class", errorClass, "error_type", fmt.Sprintf("%T", err), "has_snapshot", snap.ID != "", "snapshot_status", snap.Status)
+		var summary interface{ ErrorSummary() string }
+		message := "备份操作未完成，请检查目标设置后重试。"
+		if errors.As(err, &summary) {
+			message = summary.ErrorSummary()
+		}
+		if snap.ID != "" {
+			write(w, http.StatusBadGateway, backupRunErrorResponse{Code: "backup_run_failed", Message: message, Snapshot: &snap})
+			return
+		}
+		write(w, http.StatusBadRequest, backupRunErrorResponse{Code: "backup_run_failed", Message: message})
 		return
 	}
+	slog.Info("backup run http succeeded", "duration_ms", time.Since(started).Milliseconds(), "snapshot_status", snap.Status, "snapshot_size", snap.Size, "target_count", len(snap.Targets))
 	write(w, http.StatusCreated, snap)
 }
 func (h *backupHandler) retryFailed(w http.ResponseWriter, r *http.Request) {
@@ -216,7 +245,12 @@ func (h *backupHandler) error(w http.ResponseWriter, err error) {
 	if errors.Is(err, context.Canceled) {
 		code = http.StatusRequestTimeout
 	}
-	write(w, code, apiError{"backup_error", safeBackupError(err)})
+	message := safeBackupError(err)
+	var summary interface{ ErrorSummary() string }
+	if errors.As(err, &summary) {
+		message = summary.ErrorSummary()
+	}
+	write(w, code, apiError{"backup_error", message})
 }
 func safeBackupError(err error) string {
 	if errors.Is(err, backup.ErrTargetConnectionChanged) {
@@ -242,7 +276,13 @@ func (h *backupHandler) folderError(w http.ResponseWriter, err error) {
 	status := http.StatusBadRequest
 	code := "backup_folder_error"
 	message := "远端目录操作失败，请检查设置后重试。"
+	var summary interface{ ErrorSummary() string }
+	if errors.As(err, &summary) {
+		message = summary.ErrorSummary()
+	}
 	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		status, code, message = http.StatusGatewayTimeout, "backup_folder_timeout", "读取 WebDAV 目录超时，请检查服务器连接后重试。"
 	case errors.Is(err, backup.ErrTargetConnectionChanged):
 		status, code, message = http.StatusBadRequest, "backup_folder_credentials_changed", "地址或用户名已修改，请重新输入密码。"
 	case errors.Is(err, backup.ErrFolderUnauthorized):

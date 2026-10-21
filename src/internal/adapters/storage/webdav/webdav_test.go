@@ -173,8 +173,46 @@ func TestStoreUnauthorizedAndCrossHostRedirect(t *testing.T) {
 	unauthorized := newIPv4DAVServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusUnauthorized) }))
 	unauthorizedStore := newTestStore(t, unauthorized, Config{Endpoint: unauthorized.URL, Username: "fixture-user", Password: "fixture-password"})
 	defer unauthorizedStore.Close()
-	if err := unauthorizedStore.TestConnection(context.Background()); err == nil || !strings.Contains(err.Error(), "401") {
+	if err := unauthorizedStore.TestConnection(context.Background()); !errors.Is(err, backup.ErrFolderUnauthorized) {
 		t.Fatalf("401 not returned: %v", err)
+	}
+}
+
+func TestConnectionTestVerifiesRootFolderListing(t *testing.T) {
+	var seenDepth string
+	server := newIPv4DAVServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "PROPFIND" {
+			t.Fatalf("method = %s", r.Method)
+		}
+		seenDepth = r.Header.Get("Depth")
+		w.Header().Set("Content-Type", "application/xml")
+		w.WriteHeader(http.StatusMultiStatus)
+		_, _ = io.WriteString(w, folderResponseXML(
+			folderResponse("/dav/", "<d:collection/>"),
+			folderResponse("/dav/Tangentry/", "<d:collection/>"),
+		))
+	}))
+	store := newTestStore(t, server, Config{Endpoint: server.URL + "/dav", Username: "fixture-user", Password: "fixture-password"})
+	defer store.Close()
+	if err := store.TestConnection(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if seenDepth != "1" {
+		t.Fatalf("Depth = %q, want 1 to validate root directory listing", seenDepth)
+	}
+}
+
+func TestBrowseExplainsWhenHTTPWasSentToHTTPSService(t *testing.T) {
+	server := newIPv4DAVServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, "Client sent an HTTP request to an HTTPS server.")
+	}))
+	store := newTestStore(t, server, Config{Endpoint: server.URL})
+	defer store.Close()
+	_, err := store.Browse(context.Background(), "")
+	var summary interface{ ErrorSummary() string }
+	if !errors.As(err, &summary) || !strings.Contains(summary.ErrorSummary(), "HTTPS") {
+		t.Fatalf("error = %v, want actionable HTTPS guidance", err)
 	}
 }
 
@@ -297,7 +335,7 @@ func TestStoreConnectionTestRejectsOversizedUnknownLengthResponse(t *testing.T) 
 	}))
 	store := newTestStore(t, server, Config{Endpoint: server.URL})
 	defer store.Close()
-	if err := store.TestConnection(context.Background()); !errors.Is(err, backup.ErrInvalidPackage) {
+	if err := store.TestConnection(context.Background()); !errors.Is(err, backup.ErrFolderResponseTooLarge) {
 		t.Fatalf("oversized connection response was accepted: %v", err)
 	}
 }

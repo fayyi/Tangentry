@@ -227,6 +227,31 @@ func TestYouTubeRefreshUsesRSSFallbackAndStableIDs(t *testing.T) {
 	}
 }
 
+func TestYouTubePublicFeedForbiddenIsRateLimitedNotAuthRequired(t *testing.T) {
+	store, err := sqlite.Open(filepath.Join(t.TempDir(), "public-forbidden.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	now := time.Unix(1800000000, 0)
+	failure := &feeds.FetchError{StatusCode: http.StatusForbidden, ContentType: "text/html", Message: "forbidden"}
+	service := subscriptions.NewService(store, nil, subscriptions.WithClock(func() time.Time { return now }), subscriptions.WithConditionalFeeds(func(context.Context, string, subscriptions.Validators) (subscriptions.ConditionalResult, error) {
+		return subscriptions.ConditionalResult{}, failure
+	}))
+	defer service.Close()
+	source, _, err := service.Create(context.Background(), subscriptions.Input{Type: "youtube", Query: channelID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = service.Update(context.Background(), source.ID); err == nil {
+		t.Fatal("expected rejected public request")
+	}
+	failed, err := service.Get(context.Background(), source.ID)
+	if err != nil || failed.Source.Refresh.Status != subscriptions.StatusRateLimited || !strings.Contains(failed.Source.Refresh.Message, "公开频道接口") || strings.Contains(failed.Source.Refresh.Message, "重新验证平台登录") {
+		t.Fatalf("public 403 misclassified as login requirement: %+v err=%v", failed.Source.Refresh, err)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

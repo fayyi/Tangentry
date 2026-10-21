@@ -6,16 +6,35 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 
 	"tangentry/internal/backup"
 )
 
 const maxFolders = 500
+
+var errInvalidPROPFINDResponse = invalidPROPFINDResponseError{}
+var errHTTPSRequired = httpsRequiredError{}
+
+type invalidPROPFINDResponseError struct{}
+
+func (invalidPROPFINDResponseError) Error() string { return "invalid WebDAV PROPFIND response" }
+func (invalidPROPFINDResponseError) ErrorSummary() string {
+	return "WebDAV 返回的目录列表格式无法识别，请检查服务器地址和 WebDAV 兼容性。"
+}
+
+type httpsRequiredError struct{}
+
+func (httpsRequiredError) Error() string { return "WebDAV server requires HTTPS" }
+func (httpsRequiredError) ErrorSummary() string {
+	return "该 WebDAV 服务要求使用 HTTPS，请将地址改为 https:// 开头后重试。"
+}
 
 type folderMultistatus struct {
 	Responses []struct {
@@ -33,7 +52,12 @@ type folderPropstat struct {
 	} `xml:"prop"`
 }
 
-func (s *Store) Browse(ctx context.Context, folderPath string) ([]backup.RemoteFolder, error) {
+func (s *Store) Browse(ctx context.Context, folderPath string) (folders []backup.RemoteFolder, browseErr error) {
+	started := time.Now()
+	responseCount := 0
+	defer func() {
+		slog.Info("webdav folder browse", "duration_ms", time.Since(started).Milliseconds(), "response_count", responseCount, "folder_count", len(folders), "error_class", folderErrorClass(browseErr))
+	}()
 	if err := validateFolderPath(folderPath); err != nil {
 		return nil, err
 	}
@@ -45,8 +69,12 @@ func (s *Store) Browse(ctx context.Context, folderPath string) ([]backup.RemoteF
 	if err != nil {
 		return nil, err
 	}
+	responseCount = len(items.Responses)
+	if responseCount == 0 {
+		return nil, errInvalidPROPFINDResponse
+	}
 	basePath := strings.TrimSuffix(u.Path, "/")
-	folders := make([]backup.RemoteFolder, 0)
+	folders = make([]backup.RemoteFolder, 0)
 	seen := make(map[string]struct{})
 	for _, item := range items.Responses {
 		href, ok := canonicalHref(item.Href, s.base)
@@ -75,6 +103,40 @@ func (s *Store) Browse(ctx context.Context, folderPath string) ([]backup.RemoteF
 	}
 	sort.Slice(folders, func(i, j int) bool { return folders[i].Name < folders[j].Name })
 	return folders, nil
+}
+
+func folderErrorClass(err error) string {
+	if err == nil {
+		return "none"
+	}
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "cancelled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case errors.Is(err, backup.ErrFolderUnauthorized):
+		return "unauthorized"
+	case errors.Is(err, backup.ErrFolderPermissionDenied):
+		return "forbidden"
+	case errors.Is(err, backup.ErrFolderParentNotFound):
+		return "not_found"
+	case errors.Is(err, backup.ErrFolderResponseTooLarge):
+		return "response_too_large"
+	case errors.Is(err, backup.ErrTooManyFolders):
+		return "too_many_folders"
+	case errors.Is(err, backup.ErrInvalidFolderPath):
+		return "invalid_path"
+	case errors.Is(err, errInvalidPROPFINDResponse):
+		return "invalid_response"
+	case errors.Is(err, errHTTPSRequired):
+		return "https_required"
+	default:
+		var status statusError
+		if errors.As(err, &status) {
+			return fmt.Sprintf("http_%d", status.status)
+		}
+		return "operation"
+	}
 }
 
 func (s *Store) CreateFolder(ctx context.Context, parentPath, name string) (bool, error) {
@@ -148,13 +210,25 @@ func (s *Store) confirmCollection(ctx context.Context, u *url.URL) (bool, error)
 	return false, nil
 }
 
-func (s *Store) propfind(ctx context.Context, u *url.URL, depth string) (folderMultistatus, error) {
+func (s *Store) propfind(ctx context.Context, u *url.URL, depth string) (result folderMultistatus, propfindErr error) {
+	started := time.Now()
+	statusCode := 0
+	responseBytes := 0
+	responseCount := 0
+	defer func() {
+		slog.Info("webdav propfind", "depth", depth, "duration_ms", time.Since(started).Milliseconds(), "http_status", statusCode, "response_bytes", responseBytes, "response_count", responseCount, "error_class", folderErrorClass(propfindErr))
+	}()
 	body := strings.NewReader(`<?xml version="1.0" encoding="utf-8"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/></d:prop></d:propfind>`)
 	resp, err := s.request(ctx, "PROPFIND", u, body, int64(body.Len()), http.Header{"Depth": []string{depth}, "Content-Type": []string{"application/xml"}})
 	if err != nil {
+		var status statusError
+		if errors.As(err, &status) {
+			statusCode = status.status
+		}
 		return folderMultistatus{}, folderStatusError(err)
 	}
 	defer resp.Body.Close()
+	statusCode = resp.StatusCode
 	if resp.StatusCode == http.StatusUnauthorized {
 		return folderMultistatus{}, backup.ErrFolderUnauthorized
 	}
@@ -164,8 +238,11 @@ func (s *Store) propfind(ctx context.Context, u *url.URL, depth string) (folderM
 	if resp.StatusCode == http.StatusNotFound {
 		return folderMultistatus{}, backup.ErrFolderParentNotFound
 	}
-	if err := checkStatus(resp, http.StatusMultiStatus); err != nil {
-		return folderMultistatus{}, folderStatusError(err)
+	if resp.StatusCode != http.StatusMultiStatus {
+		if resp.StatusCode == http.StatusBadRequest && responseRequiresHTTPS(resp.Body) {
+			return folderMultistatus{}, errHTTPSRequired
+		}
+		return folderMultistatus{}, folderStatusError(statusError{status: resp.StatusCode})
 	}
 	if resp.ContentLength > maxPropfind {
 		return folderMultistatus{}, backup.ErrFolderResponseTooLarge
@@ -174,14 +251,24 @@ func (s *Store) propfind(ctx context.Context, u *url.URL, depth string) (folderM
 	if err != nil {
 		return folderMultistatus{}, err
 	}
+	responseBytes = len(data)
 	if len(data) > maxPropfind {
 		return folderMultistatus{}, backup.ErrFolderResponseTooLarge
 	}
-	var result folderMultistatus
 	if err := xml.Unmarshal(data, &result); err != nil {
-		return folderMultistatus{}, errors.New("invalid WebDAV PROPFIND response")
+		return folderMultistatus{}, errInvalidPROPFINDResponse
 	}
+	responseCount = len(result.Responses)
 	return result, nil
+}
+
+func responseRequiresHTTPS(body io.Reader) bool {
+	data, err := io.ReadAll(io.LimitReader(body, 8<<10))
+	if err != nil {
+		return false
+	}
+	text := strings.ToLower(string(data))
+	return strings.Contains(text, "https") && (strings.Contains(text, "http request") || strings.Contains(text, "https server") || strings.Contains(text, "ssl"))
 }
 
 func responseIsCollection(propstats []folderPropstat) bool {

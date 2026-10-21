@@ -171,8 +171,7 @@ jobs:
         with:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/tangentry
           tags: |
-            type=semver,pattern={{version}},value=${{ github.ref_name }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ github.ref_name }}
+            type=raw,value=${{ steps.version.outputs.version }}
             type=raw,value=latest
 
       - name: Build and push multi-arch image

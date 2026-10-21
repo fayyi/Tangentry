@@ -479,8 +479,9 @@ func TestFanoutPersistsPartialSuccessAndRetriesOnlyFailedTarget(t *testing.T) {
 		return fanoutStore{count: &badUploads, fail: badUploads.Load() == 0, content: badContent}, nil
 	}, workDir, "test")
 	snapshot, err := service.Create(context.Background(), "task-1", "fixture-backup-passphrase")
-	if err != nil {
-		t.Fatal(err)
+	var targetErr safeSummary
+	if !errors.As(err, &targetErr) || !strings.Contains(targetErr.ErrorSummary(), "部分目标") {
+		t.Fatalf("partial upload was not returned as a failure: snapshot=%+v err=%v", snapshot, err)
 	}
 	if snapshot.Status != "partial_success" || snapshot.Targets[0].Status != "succeeded" || snapshot.Targets[1].Status != "failed" {
 		t.Fatalf("partial result: %+v", snapshot)
@@ -509,6 +510,34 @@ func TestFanoutPersistsPartialSuccessAndRetriesOnlyFailedTarget(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(workDir, "retry-"+snapshot.ID+".tgb")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("retry package retained after success: %v", err)
+	}
+}
+
+type failingSnapshotSource struct{ err error }
+
+func (s failingSnapshotSource) Snapshot(context.Context, string, bool) ([]File, error) {
+	return nil, s.err
+}
+
+func TestCreateReportsLocalSnapshotFailureBeforeAnyUpload(t *testing.T) {
+	repo := &fanoutRepo{
+		targets:   map[string]Target{"target": {ID: "target", Name: "Fixture", Type: "local", Enabled: true}},
+		task:      Task{ID: "task-1", TargetIDs: []string{"target"}},
+		snapshots: map[string]Snapshot{},
+		runs:      map[string][]TargetRun{},
+	}
+	var uploads atomic.Int32
+	service := NewService(repo, failingSnapshotSource{err: errors.New("fixture database snapshot failure")}, func(Target) (ObjectStore, error) {
+		return fanoutStore{count: &uploads}, nil
+	}, t.TempDir(), "test")
+
+	snapshot, err := service.Create(context.Background(), "task-1", "fixture-backup-passphrase")
+	var summary safeSummary
+	if err == nil || !errors.As(err, &summary) || !strings.Contains(summary.ErrorSummary(), "尚未上传") {
+		t.Fatalf("local snapshot failure was not explained: snapshot=%+v err=%v", snapshot, err)
+	}
+	if uploads.Load() != 0 || len(repo.snapshots) != 0 {
+		t.Fatalf("local snapshot failure reached upload or created history: uploads=%d snapshots=%d", uploads.Load(), len(repo.snapshots))
 	}
 }
 
@@ -968,8 +997,9 @@ func TestFanoutContinuesAfterEachTargetFactoryAndUploadError(t *testing.T) {
 		return fanoutStore{count: &uploaded, fail: target.ID == "upload-error"}, nil
 	}, t.TempDir(), "test")
 	snapshot, err := service.Create(context.Background(), "task-1", "fixture-backup-passphrase")
-	if err != nil {
-		t.Fatal(err)
+	var targetErr safeSummary
+	if !errors.As(err, &targetErr) || !strings.Contains(targetErr.ErrorSummary(), "部分目标") {
+		t.Fatalf("failed uploads were not returned as a failure: snapshot=%+v err=%v", snapshot, err)
 	}
 	if snapshot.Status != "partial_success" || snapshot.Targets[0].Status != "failed" || snapshot.Targets[1].Status != "failed" || snapshot.Targets[2].Status != "succeeded" || uploaded.Load() != 2 {
 		t.Fatalf("fan-out did not continue to final target: %+v uploads=%d", snapshot, uploaded.Load())

@@ -1088,16 +1088,70 @@ func (s *Service) Create(ctx context.Context, taskID, password string) (Snapshot
 	s.runMu.Lock()
 	defer s.runMu.Unlock()
 	if err := ctx.Err(); err != nil {
-		return Snapshot{}, err
+		return Snapshot{}, backupOperationError{phase: "prepare", cause: err}
 	}
 	task, err := s.repo.GetTask(ctx, taskID)
 	if err != nil {
-		return Snapshot{}, err
+		return Snapshot{}, backupOperationError{phase: "task_read", cause: err}
 	}
 	return s.create(ctx, task, password)
 }
 
-func (s *Service) create(ctx context.Context, task Task, password string) (Snapshot, error) {
+type backupOperationError struct {
+	phase string
+	cause error
+}
+
+func (e backupOperationError) Error() string { return e.phase + ": " + e.cause.Error() }
+func (e backupOperationError) Unwrap() error { return e.cause }
+func (e backupOperationError) ErrorSummary() string {
+	switch e.phase {
+	case "task_read":
+		return "读取备份任务失败，请刷新任务后重试。"
+	case "prepare":
+		return "准备备份目录失败，请检查磁盘空间和目录权限。"
+	case "source_snapshot":
+		return "生成本机数据快照失败，尚未上传。请查看桌面日志中的 SQLite/快照错误。"
+	case "archive":
+		return "打包本机快照失败，尚未上传。请检查磁盘空间和临时目录权限。"
+	case "encrypt":
+		return "加密备份失败，尚未上传。请检查磁盘空间和临时目录权限。"
+	case "persist_run":
+		return "本机加密快照已生成，但保存备份记录失败，无法确认远端上传结果。请检查本机数据库状态。"
+	case "upload":
+		return "备份上传被中断。已生成的加密快照会保留在历史中，可重试失败目标。"
+	case "finalize":
+		return "备份文件已处理，但保存本机备份结果失败。请刷新历史并检查本机数据库状态。"
+	default:
+		return "备份操作未完成，请检查桌面日志后重试。"
+	}
+}
+
+func (s *Service) create(ctx context.Context, task Task, password string) (_ Snapshot, returnErr error) {
+	started := time.Now()
+	phase := "prepare"
+	phaseStarted := started
+	logPhase := func(next string) {
+		slog.Info("backup create phase", "phase", phase, "duration_ms", time.Since(phaseStarted).Milliseconds(), "target_count", len(task.TargetIDs))
+		phase = next
+		phaseStarted = time.Now()
+	}
+	defer func() {
+		errorClass := "none"
+		errorType := "none"
+		if returnErr != nil {
+			errorType = fmt.Sprintf("%T", returnErr)
+			errorClass = "operation"
+			if isContextError(returnErr) {
+				errorClass = "cancelled"
+			}
+			var staged safeSummary
+			if !errors.As(returnErr, &staged) {
+				returnErr = backupOperationError{phase: phase, cause: returnErr}
+			}
+		}
+		slog.Info("backup create timing", "phase", phase, "phase_duration_ms", time.Since(phaseStarted).Milliseconds(), "duration_ms", time.Since(started).Milliseconds(), "target_count", len(task.TargetIDs), "error_class", errorClass, "error_type", errorType)
+	}()
 	if password == "" {
 		return Snapshot{}, errors.New("backup password is required")
 	}
@@ -1113,6 +1167,7 @@ func (s *Service) create(ctx context.Context, task Task, password string) (Snaps
 		return Snapshot{}, err
 	}
 	defer removeAll(stage)
+	logPhase("source_snapshot")
 	files, err := s.source.Snapshot(ctx, stage, task.IncludeDownloads)
 	if err != nil {
 		return Snapshot{}, err
@@ -1125,6 +1180,7 @@ func (s *Service) create(ctx context.Context, task Task, password string) (Snaps
 	if err := validateManifestFiles(manifest.Files, task.IncludeDownloads); err != nil {
 		return Snapshot{}, fmt.Errorf("backup source omitted tangentry.db")
 	}
+	logPhase("archive")
 	archivePath := filepath.Join(s.workDir, "archive-"+id+".zip")
 	archive, err := os.OpenFile(archivePath, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
@@ -1144,6 +1200,7 @@ func (s *Service) create(ctx context.Context, task Task, password string) (Snaps
 		archive.Close()
 		return Snapshot{}, err
 	}
+	logPhase("encrypt")
 	packagePath := filepath.Join(s.workDir, "package-"+id+".tgb")
 	packageFile, err := os.OpenFile(packagePath, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
@@ -1206,6 +1263,7 @@ func (s *Service) create(ctx context.Context, task Task, password string) (Snaps
 			_ = removeAllErr(retryPath)
 		}
 	}()
+	logPhase("persist_run")
 	snap := Snapshot{ID: id, TaskID: task.ID, CreatedAt: manifest.CreatedAt, Size: packageInfo.Size(), Status: "running", Targets: runs}
 	if err = s.repo.SaveSnapshot(ctx, snap); err != nil {
 		return Snapshot{}, err
@@ -1216,6 +1274,7 @@ func (s *Service) create(ctx context.Context, task Task, password string) (Snaps
 	if err := s.persistTargetRuns(ctx, id, runs); err != nil {
 		return Snapshot{}, err
 	}
+	logPhase("upload")
 	for activeIndex, target := range active {
 		if err := ctx.Err(); err != nil {
 			runErr = err
@@ -1227,8 +1286,10 @@ func (s *Service) create(ctx context.Context, task Task, password string) (Snaps
 			_ = s.persistTargetRuns(ctx, id, runs)
 			break
 		}
+		targetStarted := time.Now()
 		store, e := s.stores(target)
 		if e != nil {
+			slog.Warn("backup target upload failed", "duration_ms", time.Since(targetStarted).Milliseconds(), "target_type", safeTargetType(target.Type), "phase", "store_open", "error_type", fmt.Sprintf("%T", e))
 			runsForTarget := targetRunIndex(runs, target.ID)
 			runs[runsForTarget].Status = "failed"
 			runs[runsForTarget].Error = safeTargetError(e)
@@ -1238,6 +1299,11 @@ func (s *Service) create(ctx context.Context, task Task, password string) (Snaps
 		runIndex := targetRunIndex(runs, target.ID)
 		e = uploadPackage(ctx, store, name, retryPath)
 		closeStore(store)
+		if e != nil {
+			slog.Warn("backup target upload failed", "duration_ms", time.Since(targetStarted).Milliseconds(), "target_type", safeTargetType(target.Type), "phase", "upload", "error_type", fmt.Sprintf("%T", e))
+		} else {
+			slog.Info("backup target upload succeeded", "duration_ms", time.Since(targetStarted).Milliseconds(), "target_type", safeTargetType(target.Type))
+		}
 		if e != nil {
 			if isContextError(e) || ctx.Err() != nil {
 				runs[runIndex].Status = "pending"
@@ -1266,6 +1332,7 @@ func (s *Service) create(ctx context.Context, task Task, password string) (Snaps
 	status := targetRunsStatus(runs)
 	snap.Status, snap.Targets = status, runs
 	snap.RetryAvailable = status != "succeeded"
+	logPhase("finalize")
 	if err = s.persistTargetRuns(ctx, id, runs); err != nil {
 		return Snapshot{}, err
 	}
@@ -1278,9 +1345,24 @@ func (s *Service) create(ctx context.Context, task Task, password string) (Snaps
 		keepPackage = false
 	}
 	if runErr != nil {
-		return snap, runErr
+		return snap, backupOperationError{phase: "upload", cause: runErr}
+	}
+	if status == "failed" || status == "partial_success" {
+		return snap, backupTargetRunError{status: status}
 	}
 	return snap, nil
+}
+
+type backupTargetRunError struct{ status string }
+
+func (e backupTargetRunError) Error() string {
+	return "backup targets finished with status " + e.status
+}
+func (e backupTargetRunError) ErrorSummary() string {
+	if e.status == "partial_success" {
+		return "备份只上传到部分目标，请查看下方逐目标结果。"
+	}
+	return "加密快照已生成，但没有成功上传到任何目标，请查看下方逐目标错误并重试。"
 }
 
 func (s *Service) RetryFailed(ctx context.Context, snapshotID string) (Snapshot, error) {

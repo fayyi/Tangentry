@@ -1,6 +1,6 @@
 import { renderToString } from 'react-dom/server'
 import { expect, test } from 'vitest'
-import { BackupSettings } from './BackupSettings'
+import { BackupSettings, backupDestination } from './BackupSettings'
 import { normalizeBackupSettingsData } from './backupFolderBrowser'
 
 test('backup settings render safely before empty API responses arrive', () => {
@@ -15,4 +15,22 @@ test('backup settings can initialize with empty or missing API data', () => {
   expect(targets).toEqual([])
   expect(tasks).toEqual([])
   expect(snapshots).toEqual([])
+})
+
+test('backup settings show a focused backup workspace and the actual snapshot directory', () => {
+  const html = renderToString(<BackupSettings />)
+  expect(html).toContain('创建备份')
+  expect(html).toContain('立即备份')
+  expect(html).toContain('备份与恢复页面')
+  expect(backupDestination({ id: 'dav', name: 'NAS', type: 'webdav', endpoint: 'https://nas.example/dav', remotePath: 'archive/Tangentry', enabled: true }))
+    .toBe('https://nas.example/dav/archive/Tangentry/tangentry/v1/snapshots')
+  expect(backupDestination({ id: 'local', name: 'Disk', type: 'local', path: '/tmp/backups', enabled: true }))
+    .toBe('/tmp/backups/tangentry/v1/snapshots')
+})
+
+test('backup settings distinguish archive encryption from WebDAV authentication', () => {
+  const html = renderToString(<BackupSettings />)
+  expect(html).toContain('备份文件加密密码')
+  expect(html).toContain('确认加密密码')
+  expect(html).toContain('不是 WebDAV 登录密码')
 })

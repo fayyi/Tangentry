@@ -732,9 +732,6 @@ func youtubeCaptionChoices(raw []byte, id string) ([]youtubeCaptionChoice, error
 			}
 		}
 	}
-	if len(choices) > 200 {
-		return nil, subtitles.ErrFormat
-	}
 	unique := make(map[string]youtubeCaptionChoice, len(choices))
 	for _, choice := range choices {
 		key := strings.TrimSuffix(choice.language.Language, "-orig")
@@ -746,6 +743,12 @@ func youtubeCaptionChoices(raw []byte, id string) ([]youtubeCaptionChoice, error
 	choices = choices[:0]
 	for _, choice := range unique {
 		choices = append(choices, choice)
+	}
+	// yt-dlp can expose a translated entry for every output language and
+	// format. Deduplicate those entries before applying the public limit;
+	// otherwise a large but valid translation matrix hides the native tracks.
+	if len(choices) > 200 {
+		return nil, subtitles.ErrFormat
 	}
 	sort.Slice(choices, func(i, j int) bool { return choices[i].language.Language < choices[j].language.Language })
 	return choices, nil

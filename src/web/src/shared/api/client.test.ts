@@ -30,4 +30,17 @@ describe('API diagnostics errors', () => {
       expect(cause).toMatchObject({ code: 'legacy_error', status: 503, message: '旧格式错误', details: [] })
     }
   })
+
+  it('retains typed failure payloads for backup results', async () => {
+    const payload = { code: 'backup_run_failed', message: '上传失败', snapshot: { id: 'snapshot-1', status: 'failed' } }
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(JSON.stringify(payload), { status: 502 }))))
+
+    try {
+      await request('/backup/tasks/task-1/run', { method: 'POST', body: JSON.stringify({ password: 'fixture' }) })
+      throw new Error('expected APIError')
+    } catch (cause) {
+      expect(cause).toBeInstanceOf(APIError)
+      expect(cause).toMatchObject({ code: 'backup_run_failed', status: 502, message: '上传失败', payload })
+    }
+  })
 })

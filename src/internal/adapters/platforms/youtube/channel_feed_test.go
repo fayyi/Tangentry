@@ -165,6 +165,22 @@ func TestChannelConditionalUsesFallbackAfterRSSFailure(t *testing.T) {
 	}
 }
 
+func TestChannelConditionalUsesFallbackForPublicFeedForbidden(t *testing.T) {
+	c := New(&http.Client{Transport: trip(func(r *http.Request) (*http.Response, error) {
+		if r.Header.Get("Cookie") != "" {
+			t.Fatal("public channel fetch unexpectedly forwarded cookies")
+		}
+		return &http.Response{StatusCode: http.StatusForbidden, Header: http.Header{"Content-Type": {"text/html"}}, Body: io.NopCloser(strings.NewReader("edge block")), Request: r}, nil
+	})})
+	want := discovery.Feed{Items: []content.Item{{ID: "youtube:abcdefghijk", Platform: "youtube", PlatformID: "abcdefghijk", Kind: "video", Title: "公开视频", Author: "测试作者", AuthorID: fixtureChannel, URL: "https://www.youtube.com/watch?v=abcdefghijk", PublishedAt: 1}}, SourceTitle: "测试频道", Query: fixtureChannel}
+	calls := 0
+	c.SetChannelFallback(func(context.Context, string) (discovery.Feed, error) { calls++; return want, nil })
+	result, err := c.FetchConditional(context.Background(), fixtureChannel, feeds.Validators{})
+	if err != nil || calls != 1 || len(result.Feed.Items) != 1 || result.Feed.Items[0].Title != "公开视频" {
+		t.Fatalf("public forbidden did not fall back: %+v calls=%d err=%v", result, calls, err)
+	}
+}
+
 // Opt-in anonymous smoke test: no cookies, source writes, player requests or downloads.
 func TestRealPublicYouTubeChannelFeed(t *testing.T) {
 	if os.Getenv("TANGENTRY_YOUTUBE_CHANNEL_SMOKE") != "1" {

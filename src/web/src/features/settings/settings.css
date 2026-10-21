@@ -327,6 +327,66 @@
 .linuxdo-session { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .linuxdo-session .field-hint { flex-basis: 100%; margin: 0; }
 
+.backup-tabs { display: flex; align-items: center; gap: 4px; min-height: 50px; margin: -4px 0 20px; border-bottom: 1px solid var(--line); }
+.backup-tabs > button:not(.backup-refresh) { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 42px; padding: 0 12px; border-bottom: 2px solid transparent; color: var(--muted); font-size: 12.5px; }
+.backup-tabs > button:not(.backup-refresh):hover { color: var(--ink); background: var(--hover); }
+.backup-tabs > button.active:not(.backup-refresh) { border-bottom-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.backup-tabs > button > span { display: grid; place-items: center; min-width: 19px; height: 19px; padding-inline: 4px; border-radius: 10px; background: var(--surface); color: var(--muted); font-size: 10px; }
+.backup-tabs .backup-refresh { margin-left: auto; margin-bottom: 4px; }
+.backup-panel { min-width: 0; }
+.backup-panel-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding-bottom: 18px; border-bottom: 1px solid var(--line); margin-bottom: 20px; }
+.backup-panel-heading h2 { margin: 0; font-size: 17px; font-weight: 650; line-height: 1.5; }
+.backup-panel-heading p { margin: 5px 0 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.backup-latest { display: grid; justify-items: end; gap: 4px; color: var(--muted); font-size: 11px; }
+.backup-latest strong { color: var(--ink); font-size: 12px; font-weight: 550; }
+.backup-run-form { display: grid; gap: 16px; max-width: 720px; }
+.backup-run-form > label:not(.backup-checkbox), .backup-run-form > label:not(.backup-checkbox) select { min-width: 0; }
+.backup-run-form > label:first-child { display: grid; gap: 7px; color: var(--muted); font-size: 12px; }
+.backup-run-form > label:first-child select { width: 100%; min-height: 36px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--card); color: var(--ink); font: inherit; font-size: 13px; }
+.backup-task-select-row { display: grid; grid-template-columns: minmax(0, 1fr) 36px; align-items: end; gap: 8px; }
+.backup-task-select-row > label { display: grid; gap: 7px; min-width: 0; color: var(--muted); font-size: 12px; }
+.backup-task-select-row select { width: 100%; min-height: 36px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--card); color: var(--ink); font: inherit; font-size: 13px; }
+.backup-task-select-row .backup-delete-task { margin-bottom: 1px; color: var(--danger); }
+.backup-task-select-row .backup-delete-task:disabled { color: var(--faint); }
+.backup-destinations { display: grid; gap: 9px; padding: 12px 14px; border-left: 3px solid var(--accent); background: var(--surface); }
+.backup-destinations > span { color: var(--muted); font-size: 11px; }
+.backup-destinations > div { display: grid; gap: 3px; min-width: 0; }
+.backup-destinations strong { font-size: 12px; font-weight: 550; }
+.backup-destinations code, .backup-run-result code { color: var(--muted); font: 11px/1.55 var(--font-mono); overflow-wrap: anywhere; }
+.backup-run-result { display: grid; gap: 10px; margin-top: 20px; padding: 14px; border-left: 3px solid var(--control-line); background: var(--surface); }
+.backup-run-result.backup-result-success { border-left-color: var(--accent); }
+.backup-run-result.backup-result-warning { border-left-color: #b87920; }
+.backup-run-result.backup-result-danger { border-left-color: var(--danger); }
+.backup-run-result > div:first-child { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
+.backup-run-result > div:first-child strong { font-size: 13px; }
+.backup-run-result > div:first-child span { color: var(--muted); font-size: 11px; }
+.backup-run-result > p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
+.backup-result-targets { display: grid; gap: 5px; min-width: 0; }
+.backup-result-targets > div { display: flex; align-items: baseline; flex-wrap: wrap; gap: 7px; min-width: 0; }
+.backup-result-targets strong { font-size: 11px; font-weight: 550; }
+.backup-result-targets > div > span:last-child:not(.backup-status) { color: var(--danger); font-size: 11px; overflow-wrap: anywhere; }
+.backup-destination-path { color: var(--accent-ink) !important; }
+.backup-snapshot-title { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.backup-snapshot-title > span:last-child { margin-left: auto; color: var(--muted); font-size: 11px; }
+.backup-snapshot-row { align-items: start; }
+.backup-snapshot-actions { justify-content: flex-end; flex-wrap: wrap; }
+.backup-restore-form { max-width: 680px; }
+.backup-tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (max-width: 560px) {
+  .backup-tabs { gap: 0; }
+  .backup-tabs > button:not(.backup-refresh) { flex: 1; gap: 5px; padding-inline: 6px; font-size: 11px; }
+  .backup-tabs > button:not(.backup-refresh) svg { width: 14px; }
+  .backup-panel-heading { flex-direction: column; gap: 10px; }
+  .backup-latest { justify-items: start; display: flex; align-items: center; flex-wrap: wrap; }
+  .backup-run-form { gap: 14px; }
+  .backup-run-form > label:first-child select { min-height: 44px; }
+  .backup-task-select-row select { min-height: 44px; }
+  .backup-password-grid { grid-template-columns: minmax(0, 1fr); }
+  .backup-target-row, .backup-snapshot-row { grid-template-columns: auto minmax(0, 1fr); }
+  .backup-row-actions, .backup-snapshot-actions { grid-column: 2; justify-content: flex-start; }
+  .backup-snapshot-title > span:last-child { margin-left: 0; }
+}
+
 /* Card appearance: controls on the left, a live sample wall above them. */
 .card-appearance-preview { margin: 4px 0 8px; padding: 18px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--canvas); container-type: inline-size; overflow: hidden; }
 .card-preview-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--card-min, 248px)), 1fr)); gap: var(--card-gap, 18px); align-items: start; }

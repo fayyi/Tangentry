@@ -19,10 +19,20 @@ func TestYouTubeChannelLocatorsNormalizeWithoutNetwork(t *testing.T) {
 			t.Fatal(raw, r, err)
 		}
 	}
+	for _, test := range []struct{ raw, want string }{
+		{"https://www.youtube.com/c/LegacyCreator", "https://www.youtube.com/c/LegacyCreator"},
+		{"https://youtube.com/user/legacy_creator/videos", "https://www.youtube.com/user/legacy_creator"},
+		{"https://m.youtube.com/c/Legacy.Creator", "https://www.youtube.com/c/Legacy.Creator"},
+	} {
+		r, err := ParseYouTubeChannel(test.raw)
+		if err != nil || r.ID != "" || r.URL != test.want {
+			t.Fatal(test.raw, r, err)
+		}
+	}
 	if _, err := ParseYouTubeChannel("@中文频道"); err != nil {
 		t.Fatal("international handle rejected", err)
 	}
-	for _, raw := range []string{"", "UCshort", "@", "@bad space", "@-leading", "@trailing.", "@a/b", "@a?x", "@" + strings.Repeat("a", 31), "https://youtu.be/abcdefghijk", "https://www.youtube.com/watch?v=abcdefghijk", "https://www.youtube.com/playlist?list=foo", "https://www.youtube.com.evil.example/@name", "https://user:secret@youtube.com/@name", "https://youtube.com:443/@name", "https://youtube.com/channel/" + id + "/videos/extra", "https://youtube.com/@name%2Fwatch", "https://youtube.com/feeds/videos.xml?channel_id=" + id + "&channel_id=" + id, "https://youtube.com/feeds/videos.xml?channel_id=" + id + "&playlist_id=foo", strings.Repeat("x", 2049)} {
+	for _, raw := range []string{"", "UCshort", "@", "@bad space", "@-leading", "@trailing.", "@a/b", "@a?x", "@" + strings.Repeat("a", 31), "https://youtu.be/abcdefghijk", "https://www.youtube.com/watch?v=abcdefghijk", "https://www.youtube.com/playlist?list=foo", "https://www.youtube.com.evil.example/@name", "https://user:secret@youtube.com/@name", "https://youtube.com:443/@name", "https://youtube.com/channel/" + id + "/videos/extra", "https://youtube.com/@name%2Fwatch", "https://youtube.com/c/legacy creator", "https://youtube.com/c/..", "https://youtube.com/feeds/videos.xml?channel_id=" + id + "&channel_id=" + id, "https://youtube.com/feeds/videos.xml?channel_id=" + id + "&playlist_id=foo", strings.Repeat("x", 2049)} {
 		if r, err := ParseYouTubeChannel(raw); err == nil {
 			t.Fatal("accepted invalid source", raw, r)
 		}

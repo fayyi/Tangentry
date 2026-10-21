@@ -3,6 +3,10 @@ export interface BackupRemoteFolder {
   path: string
 }
 
+export function backupFolderBrowseRequest<T extends object>(target: T, folderPath: string) {
+  return { ...target, type: 'webdav', folderPath }
+}
+
 export type FolderBrowserStatus = 'idle' | 'loading' | 'ready' | 'error'
 export type FolderCreateStatus = 'idle' | 'creating' | 'created' | 'exists' | 'error'
 

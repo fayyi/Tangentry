@@ -173,8 +173,74 @@ func TestAIHTTPStrictPrivateConfigurationAndExplicitInference(t *testing.T) {
 		t.Fatal("repeat translation charged")
 	}
 	tooBig := strings.Repeat(" ", ai.MaxInputBytes) + string(payload)
-	if storageRequest(h, "POST", "/api/ai/subtitles/inspect", tooBig, "application/json").Code != 400 {
+	if storageRequest(h, "POST", "/api/ai/subtitles/inspect", tooBig, "application/json").Code != http.StatusRequestEntityTooLarge {
 		t.Fatal("unbounded request")
+	}
+}
+
+func TestAITitleTranslationPreservesTitleFieldsAndUsesTitleCache(t *testing.T) {
+	var calls atomic.Int64
+	service, err := ai.New(filepath.Join(t.TempDir(), "ai"), ai.NewMemoryResults(), aiTranslatorFunc(func(_ context.Context, _ ai.Config, segments []ai.Segment) ([]ai.Segment, error) {
+		calls.Add(1)
+		return []ai.Segment{{Index: segments[0].Index, Text: "Translated title"}}, nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Close()
+	key := "title-translation-key"
+	status, err := service.Configure(ai.ConfigureInput{BaseURL: "https://ai-fixture.example/v1", Model: "fixture", Key: &key, Revision: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := New(nil, nil, nil, Options{AI: service})
+	payload, err := json.Marshal(ai.Input{
+		ContentID:      "youtube:jNQXAC9IVRw",
+		Source:         "title",
+		TargetLanguage: "en",
+		Revision:       status.Revision,
+		Track:          subtitles.Track{Language: "text-title", Label: "title", Cues: []subtitles.Cue{{Start: 0, End: 1, Text: "Original title"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := storageRequest(h, "POST", "/api/ai/subtitles/inspect", string(payload), "application/json")
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"targetLanguage":"en"`) {
+		t.Fatalf("title inspection rejected or lost target: %d %s", response.Code, response.Body.String())
+	}
+	response = storageRequest(h, "POST", "/api/ai/subtitles/translate", string(payload), "application/json")
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "Translated title") || calls.Load() != 1 {
+		t.Fatalf("title translation failed: %d %s calls=%d", response.Code, response.Body.String(), calls.Load())
+	}
+}
+
+func TestAIRequestErrorsExplainWhatNeedsFixing(t *testing.T) {
+	service, err := ai.New(filepath.Join(t.TempDir(), "ai"), ai.NewMemoryResults(), aiTranslatorFunc(func(context.Context, ai.Config, []ai.Segment) ([]ai.Segment, error) {
+		return nil, ai.ErrProvider
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Close()
+	h := New(nil, nil, nil, Options{AI: service})
+	valid := `{"contentId":"youtube:jNQXAC9IVRw","revision":1,"track":{"language":"en","cues":[{"start":0,"end":1,"text":"hello"}]}}`
+	tests := []struct {
+		name, body, media, code, message string
+		status                           int
+	}{
+		{name: "media", body: valid, media: "text/plain", code: "ai_json_required", message: "格式", status: http.StatusUnsupportedMediaType},
+		{name: "trailing", body: valid + ` {}`, media: "application/json", code: "ai_invalid_json", message: "额外内容", status: http.StatusBadRequest},
+		{name: "unknown", body: strings.Replace(valid, `"track"`, `"extra":true,"track"`, 1), media: "application/json", code: "ai_unknown_field", message: "不支持的字段", status: http.StatusBadRequest},
+		{name: "missing", body: `{"contentId":"youtube:jNQXAC9IVRw","revision":1,"track":{"language":"en","cues":[{"start":0,"end":1}]}}`, media: "application/json", code: "ai_incomplete_content", message: "缺少必需字段", status: http.StatusBadRequest},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			response := storageRequest(h, "POST", "/api/ai/subtitles/inspect", test.body, test.media)
+			var output apiError
+			if json.Unmarshal(response.Body.Bytes(), &output) != nil || response.Code != test.status || output.Code != test.code || !strings.Contains(output.Message, test.message) {
+				t.Fatalf("unexpected error: %d %s", response.Code, response.Body.String())
+			}
+		})
 	}
 }
 func TestAIHTTPOverwritesOnlyThisOperationsWriteDeadline(t *testing.T) {

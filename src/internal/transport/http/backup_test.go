@@ -2,6 +2,7 @@ package httptransport
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,8 +12,10 @@ import (
 )
 
 type backupHTTPFixture struct {
-	testErr error
-	saveErr error
+	testErr   error
+	saveErr   error
+	browseErr error
+	createErr error
 }
 
 func (backupHTTPFixture) Targets(context.Context) ([]backup.Target, error)     { return nil, nil }
@@ -22,8 +25,8 @@ func (f backupHTTPFixture) SaveTarget(context.Context, backup.Target) error    {
 func (backupHTTPFixture) DeleteTarget(context.Context, string) error           { return nil }
 func (backupHTTPFixture) SaveTask(context.Context, backup.Task) error          { return nil }
 func (backupHTTPFixture) DeleteTask(context.Context, string) error             { return nil }
-func (backupHTTPFixture) Create(context.Context, string, string) (backup.Snapshot, error) {
-	return backup.Snapshot{ID: "snapshot-1", Status: "succeeded"}, nil
+func (f backupHTTPFixture) Create(context.Context, string, string) (backup.Snapshot, error) {
+	return backup.Snapshot{ID: "snapshot-1", Status: "partial_success", Targets: []backup.TargetRun{{TargetID: "target-1", Name: "Fixture", Status: "failed", Error: "WebDAV 返回 HTTP 403。"}}}, f.createErr
 }
 func (backupHTTPFixture) RetryFailed(context.Context, string) (backup.Snapshot, error) {
 	return backup.Snapshot{ID: "snapshot-1", Status: "succeeded"}, nil
@@ -41,7 +44,10 @@ func (backupHTTPFixture) ConfirmRestore(context.Context, string) (backup.Restore
 	return backup.RestoreResult{PlanID: "plan-1", Status: "switched"}, nil
 }
 func (backupHTTPFixture) CancelRestore(context.Context, string) error { return nil }
-func (backupHTTPFixture) BrowseTarget(context.Context, backup.Target, string) ([]backup.RemoteFolder, error) {
+func (f backupHTTPFixture) BrowseTarget(context.Context, backup.Target, string) ([]backup.RemoteFolder, error) {
+	if f.browseErr != nil {
+		return nil, f.browseErr
+	}
 	return []backup.RemoteFolder{{Name: "Tangentry", Path: "Tangentry"}}, nil
 }
 func (backupHTTPFixture) CreateTargetFolder(context.Context, backup.Target, string, string) (bool, error) {
@@ -91,6 +97,19 @@ func TestBackupListRoutesReturnEmptyArrays(t *testing.T) {
 				t.Fatalf("GET %s = %d %s, want 200 []", path, w.Code, w.Body.String())
 			}
 		})
+	}
+}
+
+func TestBackupRunReturnsPersistedSnapshotWhenUploadFails(t *testing.T) {
+	h := NewWithDependencies(Dependencies{Backup: backupHTTPFixture{createErr: errors.New("fixture upload failure")}}, nil)
+	r := httptest.NewRequest(http.MethodPost, "/api/backup/tasks/task-1/run", strings.NewReader(`{"password":"fixture-backup-password"}`))
+	r.Host = "127.0.0.1"
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	if w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), `"snapshot":{"id":"snapshot-1"`) || !strings.Contains(w.Body.String(), "HTTP 403") || strings.Contains(w.Body.String(), "fixture-backup-password") {
+		t.Fatalf("backup upload failure did not return its safe persisted result: %d %s", w.Code, w.Body.String())
 	}
 }
 
@@ -149,5 +168,29 @@ func TestBackupFolderRoutesReturnRedactedFolderDataAndStatus(t *testing.T) {
 	mkdir := request("/api/backup/targets/mkdir", `{"type":"webdav","endpoint":"https://dav.example.test/root","username":"fixture-user","password":"fixture-password","folderPath":"","folderName":"Tangentry"}`)
 	if mkdir.Code != http.StatusOK || !strings.Contains(mkdir.Body.String(), `"status":"created"`) || strings.Contains(mkdir.Body.String(), "fixture-password") {
 		t.Fatalf("mkdir response: %d %s", mkdir.Code, mkdir.Body.String())
+	}
+}
+
+func TestBackupFolderBrowseMapsTimeoutToGatewayTimeout(t *testing.T) {
+	h := NewWithDependencies(Dependencies{Backup: backupHTTPFixture{browseErr: context.DeadlineExceeded}}, nil)
+	r := httptest.NewRequest(http.MethodPost, "/api/backup/targets/browse", strings.NewReader(`{"type":"webdav","endpoint":"https://dav.example.test/","username":"fixture-user","password":"fixture-password","folderPath":""}`))
+	r.Host = "127.0.0.1"
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusGatewayTimeout || !strings.Contains(w.Body.String(), "读取 WebDAV 目录超时") || strings.Contains(w.Body.String(), "fixture-password") {
+		t.Fatalf("browse timeout response: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestBackupFolderErrorDoesNotMisclassifyOtherErrorsAsTimeout(t *testing.T) {
+	h := NewWithDependencies(Dependencies{Backup: backupHTTPFixture{browseErr: errors.New("fixture failure")}}, nil)
+	r := httptest.NewRequest(http.MethodPost, "/api/backup/targets/browse", strings.NewReader(`{"type":"webdav","endpoint":"https://dav.example.test/","username":"fixture-user","password":"fixture-password","folderPath":""}`))
+	r.Host = "127.0.0.1"
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusBadRequest || strings.Contains(w.Body.String(), "超时") {
+		t.Fatalf("non-timeout folder error was misclassified: %d %s", w.Code, w.Body.String())
 	}
 }
