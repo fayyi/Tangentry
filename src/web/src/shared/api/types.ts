@@ -280,7 +280,7 @@ export interface SubtitleLanguage {
   sourceLanguage?: string
 }
 
-export type SubtitleAvailability = 'cc' | 'ai' | 'ai_mismatch' | 'api_empty' | 'none' | 'error' | 'rate_limited'
+export type SubtitleAvailability = 'cc' | 'ai' | 'ai_mismatch' | 'api_empty' | 'none' | 'login_required' | 'error' | 'rate_limited'
 
 export interface SubtitlePart {
   cid: number

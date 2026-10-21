@@ -18,6 +18,7 @@ import (
 	"unicode/utf8"
 
 	"tangentry/internal/discovery"
+	"tangentry/internal/platformfetch"
 	"tangentry/internal/subtitles"
 )
 
@@ -41,7 +42,8 @@ var subtitleCDNHosts = map[string]bool{
 }
 
 type playerSubtitleResponse struct {
-	Subtitle *struct {
+	NeedLoginSubtitle bool `json:"need_login_subtitle"`
+	Subtitle          *struct {
 		List      *[]playerSubtitle `json:"list"`
 		Subtitles *[]playerSubtitle `json:"subtitles"`
 	} `json:"subtitle"`
@@ -86,6 +88,7 @@ type playerSubtitle struct {
 }
 
 type subtitleView struct {
+	AID   int64  `json:"aid"`
 	CID   int64  `json:"cid"`
 	Title string `json:"title"`
 	Pages []struct {
@@ -93,6 +96,13 @@ type subtitleView struct {
 		Page  int    `json:"page"`
 		Title string `json:"part"`
 	} `json:"pages"`
+}
+
+type subtitleNav struct {
+	WBI struct {
+		Image string `json:"img_url"`
+		Sub   string `json:"sub_url"`
+	} `json:"wbi_img"`
 }
 
 type subtitleCuePayload struct {
@@ -123,12 +133,16 @@ func (c *Client) readSubtitles(ctx context.Context, bvid, selectedLanguage strin
 		if ctx.Err() != nil {
 			return subtitles.Document{}, ctx.Err()
 		}
-		status := "error"
-		if isSubtitleRateLimited(err) {
-			status = "rate_limited"
+		if pageView, pageErr := c.pageSubtitleView(ctx, bvid); pageErr == nil {
+			view = pageView
+		} else {
+			status := "error"
+			if isSubtitleRateLimited(err) {
+				status = "rate_limited"
+			}
+			code, message := platformSubtitleError(err)
+			return subtitles.Document{VideoID: bvid, Part: 1, Status: status, ErrorCode: code, ErrorMessage: message, Tracks: []subtitles.Track{}}, nil
 		}
-		code, message := platformSubtitleError(err)
-		return subtitles.Document{VideoID: bvid, Part: 1, Status: status, ErrorCode: code, ErrorMessage: message, Tracks: []subtitles.Track{}}, nil
 	}
 	parts := view.Pages
 	if len(parts) == 0 && view.CID > 0 {
@@ -167,7 +181,7 @@ func (c *Client) readSubtitles(ctx context.Context, bvid, selectedLanguage strin
 			continue
 		}
 		title := safeSubtitleText(view.Title+" "+page.Title, 240)
-		result, err := c.readSubtitlePart(ctx, bvid, page.CID, title, i == 0, selectedLanguage, &remainingBodyBytes)
+		result, err := c.readSubtitlePart(ctx, bvid, view.AID, page.CID, title, i == 0, selectedLanguage, &remainingBodyBytes)
 		if err != nil {
 			if ctx.Err() != nil {
 				return subtitles.Document{}, ctx.Err()
@@ -202,11 +216,21 @@ func (c *Client) readSelectedSubtitleLanguage(ctx context.Context, bvid string, 
 	if part.Page < 1 {
 		part.Page = 1
 	}
+	if page.CID <= 0 && c.PageFetcher != nil {
+		if pageView, err := c.pageSubtitleView(ctx, bvid); err == nil {
+			if len(pageView.Pages) > 0 {
+				page.CID, page.Page, page.Title = pageView.Pages[0].CID, pageView.Pages[0].Page, pageView.Pages[0].Title
+			} else if pageView.CID > 0 {
+				page.CID, page.Page, page.Title = pageView.CID, 1, pageView.Title
+			}
+			part.CID, part.Page, part.Title = page.CID, page.Page, safeSubtitleText(page.Title, 120)
+		}
+	}
 	if page.CID <= 0 {
 		part.ErrorMessage = "B站没有返回第一分 P 的 CID。"
 	} else {
 		title := safeSubtitleText(view.Title+" "+page.Title, 240)
-		result, err := c.readSubtitlePart(ctx, bvid, page.CID, title, true, language, nil)
+		result, err := c.readSubtitlePart(ctx, bvid, view.AID, page.CID, title, true, language, nil)
 		if err != nil {
 			if ctx.Err() != nil {
 				return subtitles.Document{}, ctx.Err()
@@ -223,17 +247,54 @@ func (c *Client) readSelectedSubtitleLanguage(ctx context.Context, bvid string, 
 	}, nil
 }
 
-func (c *Client) readSubtitlePart(ctx context.Context, bvid string, cid int64, title string, readBodies bool, selectedLanguage string, remainingBodyBytes *int) (subtitles.Part, error) {
+func (c *Client) readSubtitlePart(ctx context.Context, bvid string, aid, cid int64, title string, readBodies bool, selectedLanguage string, remainingBodyBytes *int) (subtitles.Part, error) {
 	params := url.Values{"bvid": {bvid}, "cid": {strconv.FormatInt(cid, 10)}}
 	first, firstErr := c.playerSubtitles(ctx, "/x/player/v2", params)
-	if isSubtitleRateLimited(firstErr) {
-		return subtitles.Part{}, firstErr
-	}
 	var firstCandidates []playerSubtitle
 	var firstPart subtitles.Part
 	firstPartBuilt := false
+	pageReturnedEmptyTrackList := false
+	pageRequiresLogin := false
 	if firstErr == nil {
 		firstCandidates = first.candidates()
+	}
+	if (firstErr != nil || len(firstCandidates) == 0 || !hasSubtitleURL(firstCandidates)) && c.PageFetcher != nil {
+		var pageResponse playerSubtitleResponse
+		var pageErr error
+		if aid > 0 {
+			pageResponse, pageErr = c.pagePlayerSubtitles(ctx, "/x/player/wbi/v2", bvid, aid, cid)
+		}
+		pageCandidates := pageResponse.candidates()
+		if pageErr != nil || !pageResponse.hasTrackList() || len(pageCandidates) > 0 && !hasSubtitleURL(pageCandidates) {
+			legacyResponse, legacyErr := c.pagePlayerSubtitles(ctx, "/x/player/v2", bvid, aid, cid)
+			if legacyErr == nil && (hasSubtitleURL(legacyResponse.candidates()) || pageErr != nil) {
+				pageResponse, pageErr = legacyResponse, nil
+			} else if pageErr != nil {
+				pageErr = legacyErr
+			}
+		}
+		if pageErr == nil {
+			pageCandidates := pageResponse.candidates()
+			pageReturnedEmptyTrackList = pageResponse.hasTrackList() && len(pageCandidates) == 0
+			pageRequiresLogin = pageResponse.NeedLoginSubtitle
+			if len(pageCandidates) > 0 || firstErr != nil || !first.hasTrackList() {
+				first = pageResponse
+				firstErr = nil
+				firstCandidates = pageCandidates
+			}
+		}
+	}
+	if pageReturnedEmptyTrackList {
+		if pageRequiresLogin {
+			return loginRequiredSubtitlePart(title), nil
+		}
+		return c.buildSubtitlePart(ctx, nil, title, readBodies, selectedLanguage, remainingBodyBytes), nil
+	}
+	if firstErr == nil && (first.NeedLoginSubtitle || pageRequiresLogin) && len(firstCandidates) == 0 {
+		return loginRequiredSubtitlePart(title), nil
+	}
+	if isSubtitleRateLimited(firstErr) {
+		return subtitles.Part{}, firstErr
 	}
 	if len(firstCandidates) > 0 {
 		if hasSubtitleURL(firstCandidates) {
@@ -287,6 +348,9 @@ func (c *Client) readSubtitlePart(ctx context.Context, bvid string, cid int64, t
 		}
 		return subtitles.Part{}, secondErr
 	}
+	if second.NeedLoginSubtitle && len(second.candidates()) == 0 {
+		return loginRequiredSubtitlePart(title), nil
+	}
 	if !second.hasTrackList() {
 		if len(firstCandidates) > 0 {
 			if firstPartBuilt {
@@ -310,6 +374,74 @@ func (c *Client) readSubtitlePart(ctx context.Context, bvid string, cid int64, t
 		return c.buildSubtitlePart(ctx, secondCandidates, title, readBodies, selectedLanguage, remainingBodyBytes), nil
 	}
 	return c.buildSubtitlePart(ctx, secondCandidates, title, readBodies, selectedLanguage, remainingBodyBytes), nil
+}
+
+func (c *Client) pageSubtitleView(ctx context.Context, bvid string) (subtitleView, error) {
+	var view subtitleView
+	body, err := c.pageSubtitleJSON(ctx, "/x/web-interface/view?bvid="+url.QueryEscape(bvid))
+	if err != nil {
+		return view, err
+	}
+	if body.Code != 0 || len(body.Data) == 0 || string(body.Data) == "null" {
+		return view, apiSubtitleError{code: body.Code, message: body.Message}
+	}
+	if err := json.Unmarshal(body.Data, &view); err != nil {
+		return view, errors.New("B站页面返回的视频信息无法解析")
+	}
+	return view, nil
+}
+
+func (c *Client) pagePlayerSubtitles(ctx context.Context, endpoint, bvid string, aid, cid int64) (playerSubtitleResponse, error) {
+	var response playerSubtitleResponse
+	params := url.Values{"cid": {strconv.FormatInt(cid, 10)}}
+	if endpoint == "/x/player/wbi/v2" && aid > 0 {
+		params.Set("aid", strconv.FormatInt(aid, 10))
+	} else {
+		params.Set("bvid", bvid)
+	}
+	path := endpoint + "?" + params.Encode()
+	body, err := c.pageSubtitleJSON(ctx, path)
+	if err != nil {
+		return response, err
+	}
+	if body.Code != 0 || len(body.Data) == 0 || string(body.Data) == "null" {
+		return response, apiSubtitleError{code: body.Code, message: body.Message}
+	}
+	if err := json.Unmarshal(body.Data, &response); err != nil {
+		return response, errors.New("B站页面返回的字幕列表无法解析")
+	}
+	if !response.hasTrackList() && !response.NeedLoginSubtitle {
+		return response, errNoSubtitleData
+	}
+	return response, nil
+}
+
+func loginRequiredSubtitlePart(title string) subtitles.Part {
+	return subtitles.Part{
+		Title:        title,
+		Status:       "login_required",
+		ErrorMessage: "B站提示读取字幕需要登录，请在 B站登录后重试。",
+		Languages:    []subtitles.Language{},
+		Tracks:       []subtitles.Track{},
+	}
+}
+
+func (c *Client) pageSubtitleJSON(ctx context.Context, path string) (envelope, error) {
+	if c.PageFetcher == nil {
+		return envelope{}, errors.New("B站页面字幕桥不可用")
+	}
+	response, err := c.PageFetcher.Fetch(ctx, "bilibili", path, platformfetch.Request{Method: http.MethodGet, Headers: map[string]string{"Accept": "application/json"}})
+	if err != nil {
+		return envelope{}, err
+	}
+	if response.Status != http.StatusOK || response.Body == "" || response.ContentType != "" && !strings.Contains(strings.ToLower(response.ContentType), "json") {
+		return envelope{}, fmt.Errorf("B站页面字幕接口返回 HTTP %d（%s）", response.Status, safeSubtitleText(response.ContentType, 80))
+	}
+	var body envelope
+	if err := json.Unmarshal([]byte(response.Body), &body); err != nil {
+		return envelope{}, errors.New("B站页面字幕接口返回了无法识别的数据")
+	}
+	return body, nil
 }
 
 func (c *Client) subtitleFallbackError(ctx context.Context, candidates []playerSubtitle, title string, err error, readBodies bool, selectedLanguage string, remainingBodyBytes *int) subtitles.Part {
@@ -337,7 +469,7 @@ func (c *Client) playerSubtitles(ctx context.Context, endpoint string, params ur
 	if json.Unmarshal(body.Data, &response) != nil {
 		return playerSubtitleResponse{}, errors.New("subtitle API response could not be decoded")
 	}
-	if !response.hasTrackList() {
+	if !response.hasTrackList() && !response.NeedLoginSubtitle {
 		return playerSubtitleResponse{}, errNoSubtitleData
 	}
 	return response, nil
@@ -642,7 +774,10 @@ func aiSubtitleMismatch(track subtitles.Track, title string) bool {
 	}
 	var sample strings.Builder
 	for i, cue := range track.Cues {
-		if i >= 24 || sample.Len() >= 24000 {
+		// Titles often contain brand/model words that are never spoken verbatim.
+		// Use a bounded but much wider sample so a topic mentioned after the
+		// intro can establish that the automatic track belongs to this video.
+		if i >= 120 || sample.Len() >= 64000 {
 			break
 		}
 		sample.WriteString(cue.Text)
@@ -658,7 +793,10 @@ func aiSubtitleMismatch(track subtitles.Track, title string) bool {
 			shared++
 		}
 	}
-	return float64(shared)/float64(len(titleTerms)) < 0.25
+	// Product titles often contain brand and model terms that are never spoken
+	// verbatim. Keep this warning conservative: a little topic overlap is enough
+	// to avoid calling an otherwise related AI track mismatched.
+	return float64(shared)/float64(len(titleTerms)) < 0.10
 }
 
 func subtitleTerms(raw string) map[string]bool {

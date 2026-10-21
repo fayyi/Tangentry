@@ -84,6 +84,7 @@ func newPlatforms(dataDir string, configuration config.Config, toolkit *tools.To
 		public = netpolicy.NewClient()
 	}
 	client := bilibili.NewClient(&http.Client{Timeout: 15 * time.Second}, configuration.BilibiliCookie, toolkit)
+	client.PageFetcher = option.PlatformPageFetcher
 	client.SetCookieProvider(func(rawURL string) string { return cookies.Header("bilibili", rawURL) })
 	client.SetUserAgentProvider(func(rawURL string) string { return cookies.UserAgent("bilibili") })
 	client.SetCredentialRefresher(&bilibili.CredentialRefresher{HTTP: public, Load: cookies.BilibiliPair, Save: cookies.SaveBilibiliIfCurrent, UserAgent: func() string { return cookies.UserAgent("bilibili") }})

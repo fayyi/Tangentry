@@ -33,7 +33,7 @@ function validDocument(value: unknown): value is SubtitleDocument {
   if (doc.languages !== undefined && (!Array.isArray(doc.languages) || doc.languages.length > 64 || !doc.languages.every(validLanguage))) return false
   let partCueCount = 0
   const validParts = doc.parts === undefined || (Array.isArray(doc.parts) && doc.parts.length <= 100 && doc.parts.every(part => {
-    if (!part || !Number.isInteger(part.cid) || part.cid <= 0 || !Number.isInteger(part.page) || part.page < 1 || !['cc','ai','ai_mismatch','api_empty','none','error','rate_limited'].includes(part.status) ||
+    if (!part || !Number.isInteger(part.cid) || part.cid <= 0 || !Number.isInteger(part.page) || part.page < 1 || !['cc','ai','ai_mismatch','api_empty','none','login_required','error','rate_limited'].includes(part.status) ||
         (part.aiMismatch !== undefined && typeof part.aiMismatch !== 'boolean') ||
         part.title !== undefined && (typeof part.title !== 'string' || part.title.length > 120) ||
         part.errorCode !== undefined && (!Number.isInteger(part.errorCode) || Math.abs(part.errorCode) > 100000) ||

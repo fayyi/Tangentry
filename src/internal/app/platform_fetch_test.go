@@ -31,4 +31,7 @@ func TestPlatformPageFetcherIsInjectedIntoPageBackedPlatforms(t *testing.T) {
 	if services.adapters.discovery.notes.Page != fetcher {
 		t.Fatal("Xiaohongshu client did not receive page fetcher")
 	}
+	if services.adapters.discovery.bilibili.PageFetcher != fetcher {
+		t.Fatal("B站 client did not receive page fetcher")
+	}
 }

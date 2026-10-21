@@ -3,6 +3,7 @@ package bilibili
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -11,8 +12,120 @@ import (
 	"strings"
 	"testing"
 
+	"tangentry/internal/platformfetch"
 	"tangentry/internal/subtitles"
 )
+
+type subtitlePageFetcher func(context.Context, string, string, platformfetch.Request) (platformfetch.Response, error)
+
+func (f subtitlePageFetcher) Fetch(ctx context.Context, platform, path string, request platformfetch.Request) (platformfetch.Response, error) {
+	return f(ctx, platform, path, request)
+}
+
+func TestReadSubtitlesUsesLoggedInPageWhenNativeAPIIsRestricted(t *testing.T) {
+	var pagePaths []string
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/x/web-interface/view", "/x/player/v2", "/x/web-interface/nav":
+			w.WriteHeader(http.StatusPreconditionFailed)
+		case "/caption.json":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"body":[{"from":0,"to":1,"content":"页面上下文 AI 字幕"}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	client := NewClient(subtitleFixtureClient(handler), "")
+	client.baseURL = "https://api.fixture.invalid"
+	client.PageFetcher = subtitlePageFetcher(func(_ context.Context, platform, path string, request platformfetch.Request) (platformfetch.Response, error) {
+		if platform != "bilibili" || request.Method != http.MethodGet || request.Headers["Accept"] != "application/json" {
+			t.Fatalf("unexpected page request: %q %q %+v", platform, path, request)
+		}
+		pagePaths = append(pagePaths, path)
+		switch {
+		case strings.HasPrefix(path, "/x/web-interface/view?"):
+			return platformfetch.Response{Status: http.StatusOK, ContentType: "application/json", URL: "https://api.bilibili.com" + path, Body: `{"code":0,"data":{"aid":11,"title":"页面上下文 AI 字幕","pages":[{"cid":111,"page":1,"part":"页面上下文 AI 字幕"}]}}`}, nil
+		case strings.HasPrefix(path, "/x/player/wbi/v2?"):
+			parsed, err := url.Parse(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			query := parsed.Query()
+			if len(query) != 2 || query.Get("aid") != "11" || query.Get("cid") != "111" {
+				t.Fatalf("WBI page request lacks exact aid/cid query: %q", path)
+			}
+			return platformfetch.Response{Status: http.StatusOK, ContentType: "application/json", URL: "https://api.bilibili.com" + path, Body: `{"code":0,"data":{"subtitle":{"subtitles":[{"lan":"ai-zh","lan_doc":"简体中文 AI","is_ai_subtitle":true,"subtitle_url":"https://subtitle.hdslb.com/caption.json"}]}}}`}, nil
+		case strings.HasPrefix(path, "/x/player/v2?"):
+			return platformfetch.Response{Status: http.StatusOK, ContentType: "application/json", URL: "https://api.bilibili.com" + path, Body: `{"code":0,"data":{"subtitle":{"subtitles":[{"lan":"ai-zh","lan_doc":"简体中文 AI","is_ai_subtitle":true,"subtitle_url":"https://subtitle.hdslb.com/caption.json"}]}}}`}, nil
+		default:
+			return platformfetch.Response{}, errors.New("unexpected page path")
+		}
+	})
+	doc, err := client.ReadSubtitles(context.Background(), "BV17x411w7KC")
+	if err != nil || doc.Status != "ai" || len(doc.Tracks) != 1 || doc.Tracks[0].Cues[0].Text != "页面上下文 AI 字幕" {
+		t.Fatalf("page-context subtitle fallback failed: %+v %v", doc, err)
+	}
+	if len(pagePaths) != 2 || !strings.HasPrefix(pagePaths[0], "/x/web-interface/view?") || !strings.HasPrefix(pagePaths[1], "/x/player/wbi/v2?") {
+		t.Fatalf("unexpected page fallback paths: %v", pagePaths)
+	}
+}
+
+func TestReadSubtitlesKeepsNativeTrackWithoutOpeningPageFallback(t *testing.T) {
+	pageCalls := 0
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/x/web-interface/view":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"title":"页面上下文 AI 字幕","cid":111}}`))
+		case "/x/player/v2":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"subtitle":{"list":[{"lan":"zh-CN","lan_doc":"简体中文","subtitle_url":"https://subtitle.hdslb.com/caption.json"}]}}}`))
+		case "/caption.json":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"body":[{"from":0,"to":1,"content":"页面上下文 AI 字幕"}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	client := NewClient(subtitleFixtureClient(handler), "")
+	client.baseURL = "https://api.fixture.invalid"
+	client.PageFetcher = subtitlePageFetcher(func(context.Context, string, string, platformfetch.Request) (platformfetch.Response, error) {
+		pageCalls++
+		return platformfetch.Response{}, errors.New("should not be called")
+	})
+	doc, err := client.ReadSubtitles(context.Background(), "BV17x411w7KC")
+	if err != nil || doc.Status != "cc" || len(doc.Tracks) != 1 || pageCalls != 0 {
+		t.Fatalf("native subtitle did not stay preferred: %+v err=%v pageCalls=%d", doc, err, pageCalls)
+	}
+}
+
+func TestReadSubtitlesPreservesExplicitEmptyPageTrackList(t *testing.T) {
+	pageCalls := 0
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/x/web-interface/view":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"aid":11,"title":"无字幕视频","cid":111}}`))
+		case "/x/player/v2":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"subtitle":null}}`))
+		case "/x/web-interface/nav":
+			_, _ = w.Write([]byte(`{"code":-412,"message":"restricted"}`))
+		default:
+			t.Errorf("unexpected request: %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	})
+	client := NewClient(subtitleFixtureClient(handler), "")
+	client.baseURL = "https://api.fixture.invalid"
+	client.PageFetcher = subtitlePageFetcher(func(_ context.Context, _ string, path string, _ platformfetch.Request) (platformfetch.Response, error) {
+		pageCalls++
+		if !strings.HasPrefix(path, "/x/player/wbi/v2?") {
+			t.Fatalf("unexpected page request: %q", path)
+		}
+		return platformfetch.Response{Status: http.StatusOK, ContentType: "application/json", URL: "https://api.bilibili.com" + path, Body: `{"code":0,"data":{"subtitle":{"subtitles":[]}}}`}, nil
+	})
+	doc, err := client.ReadSubtitles(context.Background(), "BV17x411w7KC")
+	if err != nil || doc.Status != "none" || doc.ErrorMessage != "" || pageCalls != 1 {
+		t.Fatalf("explicitly empty page track list was lost: %+v err=%v pageCalls=%d", doc, err, pageCalls)
+	}
+}
 
 func TestReadSubtitlesFallsBackToSignedWBIAndKeepsPerPartFailures(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -99,7 +212,7 @@ func TestReadSubtitlesDistinguishesMissingURLFromNoCaptionsAndRetainsAIMismatch(
 			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/x/web-interface/view":
-					_, _ = w.Write([]byte(`{"code":0,"data":{"bvid":"BV17x411w7KC","title":"与字幕完全无关的标题","cid":111,"pages":[]}}`))
+					_, _ = w.Write([]byte(`{"code":0,"data":{"bvid":"BV17x411w7KC","title":"量子计算机的奇妙运行方式","cid":111,"pages":[]}}`))
 				case "/x/player/v2":
 					v2Calls++
 					var body string
@@ -387,6 +500,29 @@ func TestReadSubtitlesPreservesLoginErrorWhenWBIHasNoTracks(t *testing.T) {
 	}
 }
 
+func TestReadSubtitlesMapsNeedLoginSubtitleToLoginRequired(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/x/web-interface/view":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"title":"需要登录的字幕","cid":111}}`))
+		case "/x/player/v2":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"subtitle":{"subtitles":[]},"need_login_subtitle":true}}`))
+		default:
+			t.Errorf("unexpected request: %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	})
+	client := NewClient(subtitleFixtureClient(handler), "")
+	client.baseURL = "https://api.fixture.invalid"
+	doc, err := client.ReadSubtitles(context.Background(), "BV17x411w7KC")
+	if err != nil || doc.Status != "login_required" || len(doc.Parts) != 1 || doc.Parts[0].Status != "login_required" {
+		t.Fatalf("need_login_subtitle was not preserved: %+v, %v", doc, err)
+	}
+	if !strings.Contains(doc.ErrorMessage, "登录") || !strings.Contains(doc.Parts[0].ErrorMessage, "登录") {
+		t.Fatalf("login guidance missing: %+v", doc)
+	}
+}
+
 func TestPlayerSubtitleResponseRecognizesBothTrackCollectionFields(t *testing.T) {
 	for name, raw := range map[string]string{
 		"missing":          `{"subtitle":null}`,
@@ -551,6 +687,13 @@ func TestSubtitlePriorityAndMismatchArePure(t *testing.T) {
 	track := subtitlesTrackForMismatchFixture()
 	if !aiSubtitleMismatch(track, "量子计算机的奇妙运行方式") || aiSubtitleMismatch(track, "课程讲解欢迎大家学习") {
 		t.Fatal("AI title relevance heuristic did not discriminate")
+	}
+	productTitleTrack := subtitles.Track{Automatic: true, Cues: []subtitles.Cue{
+		{Text: "今天我们来聊聊本地做 AI 短剧到底需要什么。"},
+		{Text: "不需要把品牌和具体型号完整念出来，重点是实际制作流程。"},
+	}}
+	if aiSubtitleMismatch(productTitleTrack, "做AI短剧，本地0费用真的可以吗？联想 YOGA Pro 15 RTX Spark 笔记本电脑") {
+		t.Fatal("topic overlap in a product title was incorrectly marked as mismatched")
 	}
 }
 

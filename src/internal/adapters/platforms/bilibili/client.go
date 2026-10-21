@@ -14,6 +14,7 @@ import (
 
 	"tangentry/internal/content"
 	"tangentry/internal/discovery"
+	"tangentry/internal/platformfetch"
 	"tangentry/internal/playback"
 )
 
@@ -33,6 +34,7 @@ type Client struct {
 	videoFallback     VideoExtractor
 	playbackFallback  PlaybackExtractor
 	refresher         *CredentialRefresher
+	PageFetcher       platformfetch.Fetcher
 }
 
 // A generic media extractor is optional; platform failures remain errors if it also fails.

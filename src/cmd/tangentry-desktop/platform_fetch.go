@@ -507,8 +507,14 @@ func (b *platformPageBridge) Fetch(ctx context.Context, platform, path string, r
 	if err := validatePlatformPath(path); err != nil {
 		return app.PlatformPageResponse{}, err
 	}
+	if platform == "bilibili" && !validateBilibiliSubtitlePath(path) {
+		return app.PlatformPageResponse{}, errors.New("B站页面请求路径不受支持")
+	}
 	if err := validatePlatformFetchRequest(&request); err != nil {
 		return app.PlatformPageResponse{}, err
+	}
+	if platform == "bilibili" && (request.Method != http.MethodGet || request.Body != "" || len(request.Headers) != 1 || request.Headers["Accept"] != "application/json") {
+		return app.PlatformPageResponse{}, errors.New("B站页面字幕请求参数无效")
 	}
 
 	session, err := b.session(platform, origin)
@@ -546,6 +552,9 @@ func (b *platformPageBridge) Fetch(ctx context.Context, platform, path string, r
 	}
 	if err := validatePlatformFetchResponse(result); err != nil {
 		return app.PlatformPageResponse{}, err
+	}
+	if platform == "bilibili" && !validBilibiliSubtitleResponseURL(result.URL) {
+		return app.PlatformPageResponse{}, errors.New("B站字幕响应地址无效")
 	}
 	if session.closeAt == nil {
 		session.closeAt = time.AfterFunc(platformFetchIdle, func() {
@@ -2145,6 +2154,12 @@ func (b *platformPageBridge) Close() {
 
 func platformPageOrigin(platform string) (string, bool) {
 	switch platform {
+	case "bilibili":
+		// Keep the hidden page in the real Bilibili site context. Bilibili's
+		// subtitle APIs depend on the page's signed-in cookies, Origin and
+		// browser session; calling them from an api.bilibili.com document does
+		// not reproduce the viewer tab used by qiaomu-clipper.
+		return "https://www.bilibili.com/", true
 	case "linuxdo":
 		return "https://linux.do/", true
 	case "douyin":
@@ -2197,6 +2212,8 @@ func platformPageURLAllowed(raw, platform string) bool {
 	}
 	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
 	switch platform {
+	case "bilibili":
+		return host == "www.bilibili.com"
 	case "linuxdo":
 		return host == "linux.do"
 	case "douyin":
@@ -2206,6 +2223,45 @@ func platformPageURLAllowed(raw, platform string) bool {
 	default:
 		return false
 	}
+}
+
+func validateBilibiliSubtitlePath(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.IsAbs() || u.Host != "" || u.User != nil || u.Fragment != "" {
+		return false
+	}
+	query := u.Query()
+	if u.Path == "/x/web-interface/nav" {
+		return u.RawQuery == ""
+	}
+	if u.Path == "/x/web-interface/view" {
+		return len(query) == 1 && len(query["bvid"]) == 1 && regexp.MustCompile(`^BV[0-9A-Za-z]{10}$`).MatchString(query.Get("bvid"))
+	}
+	if u.Path == "/x/player/v2" {
+		if len(query) != 2 || len(query["cid"]) != 1 || len(query["aid"])+len(query["bvid"]) != 1 {
+			return false
+		}
+		return validBilibiliNumericID(query.Get("cid")) && (validBilibiliNumericID(query.Get("aid")) || regexp.MustCompile(`^BV[0-9A-Za-z]{10}$`).MatchString(query.Get("bvid")))
+	}
+	if u.Path == "/x/player/wbi/v2" {
+		if len(query) == 2 && len(query["aid"]) == 1 && len(query["cid"]) == 1 {
+			return validBilibiliNumericID(query.Get("aid")) && validBilibiliNumericID(query.Get("cid"))
+		}
+		if len(query) != 4 || len(query["aid"]) != 1 || len(query["cid"]) != 1 || len(query["wts"]) != 1 || len(query["w_rid"]) != 1 {
+			return false
+		}
+		return validBilibiliNumericID(query.Get("aid")) && validBilibiliNumericID(query.Get("cid")) && regexp.MustCompile(`^[1-9][0-9]{0,11}$`).MatchString(query.Get("wts")) && regexp.MustCompile(`^[a-f0-9]{32}$`).MatchString(query.Get("w_rid"))
+	}
+	return false
+}
+
+func validBilibiliNumericID(value string) bool {
+	return regexp.MustCompile(`^[1-9][0-9]{0,19}$`).MatchString(value)
+}
+
+func validBilibiliSubtitleResponseURL(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && u.Scheme == "https" && u.Host == "api.bilibili.com" && u.User == nil && u.Port() == "" && u.Fragment == "" && validateBilibiliSubtitlePath(u.RequestURI())
 }
 
 func validatePlatformFetchResponse(result platformFetchResult) error {
@@ -2241,7 +2297,14 @@ func platformFetchScript(path string, request app.PlatformPageRequest) (string, 
 	if request.Method != "GET" && request.Method != "HEAD" {
 		bodyOption = ", body:" + string(body)
 	}
-	return fmt.Sprintf(`const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), %d); try { return await fetch(location.origin + %s, {method:%s, headers:%s, credentials:"include"%s, signal:controller.signal}).then(async response => { const max=%d; const meta={status:response.status, url:response.url || "", contentType:response.headers.get("content-type") || ""}; const type=String(meta.contentType).toLowerCase().split(";",1)[0].trim(); const length=Number(response.headers.get("content-length") || 0); const jsonType=!type || type === "application/json" || type === "text/json" || type.endsWith("+json"); if (!jsonType) return {...meta, body:"", tooLarge:false}; if (!response.body) { if (!length || length>max) return {...meta, body:"", tooLarge:true}; const body=await response.text(); return {...meta, body:body, tooLarge:false}; } const reader=response.body.getReader(); const decoder=new TextDecoder(); let body="", bytes=0; try { for (;;) { const part=await reader.read(); if (part.done) break; bytes+=part.value.byteLength; if (bytes>max) { await reader.cancel(); return {...meta, body:"", tooLarge:true}; } body+=decoder.decode(part.value,{stream:true}); } body+=decoder.decode(); return {...meta, body:body, tooLarge:false}; } finally { reader.releaseLock(); } }); } finally { clearTimeout(timer); }`, platformFetchTimeout.Milliseconds(), pathJSON, method, headers, bodyOption, platformFetchMaxBody), nil
+	base := "location.origin"
+	if request.Method == http.MethodGet && request.Headers["Accept"] == "application/json" && validateBilibiliSubtitlePath(path) {
+		// The API is cross-origin from the real video page. This mirrors the
+		// browser-tab request used by qiaomu-clipper while keeping the path
+		// allowlist in Go as the security boundary.
+		base = `"https://api.bilibili.com"`
+	}
+	return fmt.Sprintf(`const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), %d); try { return await fetch(%s + %s, {method:%s, headers:%s, credentials:"include"%s, signal:controller.signal}).then(async response => { const max=%d; const meta={status:response.status, url:response.url || "", contentType:response.headers.get("content-type") || ""}; const type=String(meta.contentType).toLowerCase().split(";",1)[0].trim(); const length=Number(response.headers.get("content-length") || 0); const jsonType=!type || type === "application/json" || type === "text/json" || type.endsWith("+json"); if (!jsonType) return {...meta, body:"", tooLarge:false}; if (!response.body) { if (!length || length>max) return {...meta, body:"", tooLarge:true}; const body=await response.text(); return {...meta, body:body, tooLarge:false}; } const reader=response.body.getReader(); const decoder=new TextDecoder(); let body="", bytes=0; try { for (;;) { const part=await reader.read(); if (part.done) break; bytes+=part.value.byteLength; if (bytes>max) { await reader.cancel(); return {...meta, body:"", tooLarge:true}; } body+=decoder.decode(part.value,{stream:true}); } body+=decoder.decode(); return {...meta, body:body, tooLarge:false}; } finally { reader.releaseLock(); } }); } finally { clearTimeout(timer); }`, platformFetchTimeout.Milliseconds(), base, pathJSON, method, headers, bodyOption, platformFetchMaxBody), nil
 }
 
 func isCloudflarePage(status int, body string, contentTypes ...string) bool {

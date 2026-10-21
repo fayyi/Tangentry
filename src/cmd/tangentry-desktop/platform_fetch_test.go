@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"os/exec"
 	"strings"
 	"testing"
@@ -400,6 +401,7 @@ func TestPlatformPageOriginAndCloudflareRecognition(t *testing.T) {
 		{"linuxdo", "https://linux.do/"},
 		{"douyin", "https://www.douyin.com/"},
 		{"xiaohongshu", "https://www.xiaohongshu.com/"},
+		{"bilibili", "https://www.bilibili.com/"},
 	} {
 		origin, ok := platformPageOrigin(test.platform)
 		if !ok || origin != test.origin {
@@ -419,6 +421,34 @@ func TestPlatformPageOriginAndCloudflareRecognition(t *testing.T) {
 	}
 }
 
+func TestBilibiliSubtitlePageAllowlist(t *testing.T) {
+	for _, raw := range []string{
+		"/x/web-interface/nav",
+		"/x/web-interface/view?bvid=BV17x411w7KC",
+		"/x/player/v2?bvid=BV17x411w7KC&cid=111",
+		"/x/player/v2?aid=11&cid=111",
+		"/x/player/wbi/v2?aid=11&cid=111",
+		"/x/player/wbi/v2?aid=11&cid=111&wts=1761000000&w_rid=0123456789abcdef0123456789abcdef",
+	} {
+		if !validateBilibiliSubtitlePath(raw) || !platformPageURLAllowed("https://www.bilibili.com"+raw, "bilibili") {
+			t.Fatalf("valid B站字幕路径 rejected: %q", raw)
+		}
+	}
+	for _, raw := range []string{
+		"/x/player/v2?bvid=BV17x411w7KC&cid=111&extra=1",
+		"/x/web-interface/view?bvid=not-a-bvid",
+		"/x/web-interface/nav?bvid=BV17x411w7KC",
+		"/x/player/wbi/v2?bvid=BV17x411w7KC&cid=111",
+		"/x/player/wbi/v2?aid=11&cid=111&wts=1761000000&w_rid=bad",
+		"/x/player/wbi/v2?aid=11&cid=111&wts=1761000000&w_rid=0123456789abcdef0123456789abcdef&extra=1",
+		"https://evil.example/x/player/v2?bvid=BV17x411w7KC&cid=111",
+	} {
+		if validateBilibiliSubtitlePath(raw) {
+			t.Fatalf("unsafe B站字幕路径 accepted: %q", raw)
+		}
+	}
+}
+
 func TestPlatformFetchScriptHonorsMethodBodyAndLimits(t *testing.T) {
 	code, err := platformFetchScript("/feed.json", app.PlatformPageRequest{Method: "POST", Headers: map[string]string{"Accept": "application/json"}, Body: "a=1"})
 	if err != nil {
@@ -428,6 +458,26 @@ func TestPlatformFetchScriptHonorsMethodBodyAndLimits(t *testing.T) {
 		if !strings.Contains(code, part) {
 			t.Fatalf("script does not contain %q: %s", part, code)
 		}
+	}
+}
+
+func TestBilibiliSubtitleScriptUsesAPIFromSiteContext(t *testing.T) {
+	code, err := platformFetchScript("/x/player/v2?bvid=BV17x411w7KC&cid=111", app.PlatformPageRequest{
+		Method:  http.MethodGet,
+		Headers: map[string]string{"Accept": "application/json"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(code, `fetch("https://api.bilibili.com" + "/x/player/v2?bvid=BV17x411w7KC`) || !strings.Contains(code, `credentials:"include"`) {
+		t.Fatalf("B站字幕请求 does not use the signed-in site context: %s", code)
+	}
+	ordinary, err := platformFetchScript("/feed.json", app.PlatformPageRequest{Method: http.MethodGet, Headers: map[string]string{"Accept": "application/json"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(ordinary, `fetch(location.origin + "/feed.json"`) {
+		t.Fatalf("ordinary platform fetch unexpectedly targets the B站 API: %s", ordinary)
 	}
 }
 
@@ -973,6 +1023,9 @@ func TestPlatformPageURLAllowed(t *testing.T) {
 		{"xiaohongshu", "https://www.xiaohongshu.com/", true},
 		{"xiaohongshu", "https://xiaohongshu.com/", false},
 		{"xiaohongshu", "https://edith.xiaohongshu.com/", false},
+		{"bilibili", "https://www.bilibili.com/", true},
+		{"bilibili", "https://api.bilibili.com/", false},
+		{"bilibili", "https://www.bilibili.com.evil.example/", false},
 	} {
 		if got := platformPageURLAllowed(test.raw, test.platform); got != test.allowed {
 			t.Fatalf("platformPageURLAllowed(%q, %q) = %v, want %v", test.raw, test.platform, got, test.allowed)

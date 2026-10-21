@@ -24,6 +24,8 @@ func TestPlatformLoginURLAllowlist(t *testing.T) {
 		{"douyin", "https://douyin.com.evil.example/", false},
 		{"douyin", "https://www.douyin.com:443/", false},
 		{"bilibili", "https://passport.bilibili.com/login", true},
+		{"bilibili", "https://passport.bilibili.com/h5-app/passport/login", true},
+		{"bilibili", "https://account.bilibili.com/account/homesite", true},
 		{"bilibili", "https://evil.bilibili.com.evil.example/", false},
 		{"xiaohongshu", "https://www.xiaohongshu.com/explore", true},
 		{"xiaohongshu", "https://edith.xiaohongshu.com/api", true},
@@ -37,6 +39,19 @@ func TestPlatformLoginURLAllowlist(t *testing.T) {
 				t.Fatalf("platformLoginURLAllowed(%q, %q) = %v, want %v", test.url, test.platform, got, test.allowed)
 			}
 		})
+	}
+}
+
+func TestBilibiliLoginOpensH5PageAndAllowsOfficialRedirect(t *testing.T) {
+	origin, ok := platformLoginOrigin("bilibili")
+	if !ok || origin != "https://passport.bilibili.com/h5-app/passport/login" {
+		t.Fatalf("B站 login origin = %q, %v", origin, ok)
+	}
+	if !platformLoginURLAllowed("https://account.bilibili.com/account/homesite", "bilibili") {
+		t.Fatal("official B站 account redirect was blocked")
+	}
+	if platformLoginURLAllowed("https://account.bilibili.com.evil.example/", "bilibili") {
+		t.Fatal("lookalike B站 account host was allowed")
 	}
 }
 

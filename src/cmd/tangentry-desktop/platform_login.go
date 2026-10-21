@@ -151,7 +151,7 @@ func (b *platformLoginBridge) Complete(ctx context.Context) error {
 func platformLoginOrigin(platform string) (string, bool) {
 	switch platform {
 	case "bilibili":
-		return "https://passport.bilibili.com/", true
+		return "https://passport.bilibili.com/h5-app/passport/login", true
 	case "linuxdo":
 		return "https://linux.do/", true
 	case "douyin":
@@ -198,7 +198,7 @@ func platformLoginTrustedOrigins(platform string) []string {
 		return []string{"https://douyin.com", "https://www.douyin.com", "https://passport.douyin.com", "https://www.iesdouyin.com", "https://aweme.snssdk.com", "https://challenges.cloudflare.com", "https://turnstile.cloudflare.com", "https://static.cloudflareinsights.com"}
 	}
 	if platform == "bilibili" {
-		return []string{"https://bilibili.com", "https://www.bilibili.com", "https://passport.bilibili.com", "https://captcha.bilibili.com", "https://s1.hdslb.com"}
+		return []string{"https://bilibili.com", "https://www.bilibili.com", "https://passport.bilibili.com", "https://account.bilibili.com", "https://captcha.bilibili.com", "https://s1.hdslb.com"}
 	}
 	if platform == "xiaohongshu" {
 		return []string{"https://xiaohongshu.com", "https://www.xiaohongshu.com", "https://edith.xiaohongshu.com", "https://sso.xiaohongshu.com", "https://captcha.xiaohongshu.com"}
@@ -225,7 +225,7 @@ func platformLoginURLAllowed(rawURL, platform string) bool {
 	case "douyin":
 		return host == "douyin.com" || host == "www.douyin.com" || host == "passport.douyin.com" || host == "www.iesdouyin.com" || host == "aweme.snssdk.com"
 	case "bilibili":
-		return host == "bilibili.com" || host == "www.bilibili.com" || host == "passport.bilibili.com" || host == "captcha.bilibili.com" || host == "s1.hdslb.com"
+		return host == "bilibili.com" || host == "www.bilibili.com" || host == "passport.bilibili.com" || host == "account.bilibili.com" || host == "captcha.bilibili.com" || host == "s1.hdslb.com"
 	case "xiaohongshu":
 		return host == "xiaohongshu.com" || host == "www.xiaohongshu.com" || host == "edith.xiaohongshu.com" || host == "sso.xiaohongshu.com" || host == "captcha.xiaohongshu.com"
 	case "youtube":

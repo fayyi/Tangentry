@@ -154,8 +154,7 @@ func (c *Client) mixinKey(ctx context.Context) (string, error) {
 	if err := c.get(ctx, "/x/web-interface/nav", nil, &data, true); err != nil {
 		return "", err
 	}
-	image, sub := strings.TrimSuffix(path.Base(data.WBI.Image), ".png"), strings.TrimSuffix(path.Base(data.WBI.Sub), ".png")
-	key, err := deriveKey(image + sub)
+	key, err := wbiMixinKey(data.WBI.Image, data.WBI.Sub)
 	if err != nil {
 		return "", &discovery.PlatformError{Message: "暂时无法获取 B站接口签名，请稍后重试。"}
 	}
@@ -163,6 +162,12 @@ func (c *Client) mixinKey(ctx context.Context) (string, error) {
 	c.key, c.keyExpires = key, time.Now().Add(10*time.Minute)
 	c.mu.Unlock()
 	return key, nil
+}
+
+func wbiMixinKey(imageURL, subURL string) (string, error) {
+	image := strings.TrimSuffix(path.Base(imageURL), ".png")
+	sub := strings.TrimSuffix(path.Base(subURL), ".png")
+	return deriveKey(image + sub)
 }
 
 // The permutation is a protocol constant documented by bilibili-api-collect.
