@@ -1,6 +1,6 @@
-import { ArrowLeft, BookOpen, Download, ExternalLink, PanelRightClose, PanelRightOpen, RotateCw, StickyNote } from 'lucide-react'
+import { ArrowLeft, BookOpen, Download, ExternalLink, RotateCw, StickyNote } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { CSSProperties, ReactNode, RefObject } from 'react'
+import type { ReactNode, RefObject } from 'react'
 import type { ContentItem, Discussion, DownloadJob, ReadingNote, TextAnchor, PDFAnchor } from '../../shared/api/types'
 import { APIError, request } from '../../shared/api/client'
 import { diagnosticOutcomeName, diagnosticStageFacts, diagnosticStageName, parseDouyinDiagnostics, type DouyinDiagnosticStage } from './douyinDiagnostics'
@@ -13,14 +13,14 @@ import { IframePlayer } from './IframePlayer'
 import type { PlaybackHandle } from '../../shared/media/types'
 import { mediaLabel } from '../../shared/ui/ContentCard'
 import { BilingualTitle } from '../ai/TextTranslation'
-import { ReaderActionsSlot } from '../../shared/reader/ReaderActions'
+import { ReaderActionsSlot, ReaderNavigationSlot } from '../../shared/reader/ReaderActions'
 import { useNativePlaybackClock } from '../player/useNativePlaybackClock'
 import { NativeReadingProgress } from '../progress/NativeReadingProgress'
 import { useCompatibilityPlayback } from '../player/useCompatibilityPlayback'
 import { ReaderDescription } from './ReaderDescription'
 import { hasPlayableOnlineSource, shouldStartCompatibilityPlayback } from './onlinePlayback'
 import { AudioControls } from './AudioControls'
-import { ReaderPlayerSizeHandle, ReadingNotebook, useReadingNotebook } from '../../shared/reader/ReadingNotebook'
+import { ReadingNotebook } from '../../shared/reader/ReadingNotebook'
 import { XiaohongshuSourceForm } from './XiaohongshuSourceForm'
 import { PodcastArtwork } from '../../shared/ui/PodcastArtwork'
 import { ReaderPublication } from './ReaderPublication'
@@ -91,12 +91,6 @@ function useDouyinPlayback(identity: string, id: string) {
   return { source, error, diagnostics, active: attempt > 0, start: () => { automaticRetries.current = 0; readyReported.current = false; setDiagnostics([]); setError(''); setSource(''); setSession(''); setAttempt(value => value + 1) }, fail, ready }
 }
 
-function ResizableReaderPlayer({ children }: { children: ReactNode }) {
-  const notebook = useReadingNotebook()
-  if (!notebook) return <>{children}</>
-  return <div className="reader-player-resizable" style={{ '--reader-player-width': `${notebook.playerWidth}%` } as CSSProperties}>{children}<ReaderPlayerSizeHandle value={notebook.playerWidth} onChange={notebook.setPlayerWidth} onReset={notebook.resetPlayerWidth}/></div>
-}
-
 export function MediaReader({ id, initialItem, jobs, jobsLoading = false, video, reading, notes, insights, mediaRef, playbackRef, onReady, onPosition, onSeek, onItem, onDiscussionChange, onQuote, annotations = [], textFocus, onOpenNotes, onUnresolved, onPDFQuote, onCreator, onReturn }: { id: string; initialItem?: ContentItem; jobs: DownloadJob[]; jobsLoading?: boolean; video?: ReactNode; reading?: ReactNode; notes?: ReactNode; insights?: ReactNode; mediaRef?:RefObject<HTMLMediaElement|null>; playbackRef?:RefObject<PlaybackHandle|null>; onReady?:(ready:boolean)=>void; onPosition?:(seconds:number|null)=>void; onSeek?:(seconds:number)=>void; onItem?:(item:ContentItem)=>void; onDiscussionChange?:(discussion:Discussion)=>void; onQuote?:(text:string,anchor?:TextAnchor)=>void; annotations?:ReadingNote[]; textFocus?:{id:string;token:number;allowReturn?:boolean}|null; onOpenNotes?:(ids:string[])=>void; onUnresolved?:(ids:string[])=>void; onPDFQuote?:(text:string,anchor:PDFAnchor)=>void; onCreator?:(platform:string, authorID:string)=>void; onReturn: () => void }) {
   const [quote,setQuote]=useState('')
   const { item, error, errorRequiresVerification, localReadFailed, retryLocalRead, social, localSocial, refreshDetails, detailError, detailRequiresVerification, detailLoading, detailRead, sourceEditing, setSourceEditing, onSourceUpdated } = useReaderContent({ id, initialItem, jobs, jobsLoading, onItem })
@@ -108,8 +102,6 @@ export function MediaReader({ id, initialItem, jobs, jobsLoading = false, video,
     onDiscussionChange?.(discussion)
   }, [onDiscussionChange, onItem])
   const capabilities = useCapabilities()
-  const [focusReading, setFocusReading] = useState(false)
-  useEffect(() => setFocusReading(false), [id])
   const [audioError, setAudioError] = useState(false)
   const lastAudioPosition = useRef(0)
   const audioResume = useRef<number | null>(null)
@@ -128,7 +120,6 @@ export function MediaReader({ id, initialItem, jobs, jobsLoading = false, video,
   function openNotes() {
     if (!notesRegion.current) return
     if (readingPosition.current === null) readingPosition.current = window.scrollY
-    setFocusReading(false)
     setNotesVisited(true)
     requestAnimationFrame(() => {
       notesRegion.current?.scrollIntoView({ block: 'start', behavior: 'instant' })
@@ -244,9 +235,9 @@ export function MediaReader({ id, initialItem, jobs, jobsLoading = false, video,
     onPosition?.(null)
     native.current?.load()
   }
-  const quoteText = onQuote ? (text: string, anchor?: TextAnchor) => { setFocusReading(false); onQuote(text, anchor) } : undefined
-  const revealNotes = onOpenNotes ? (ids: string[]) => { setFocusReading(false); onOpenNotes(ids) } : undefined
-  const pdfAnnotations={notes:annotations,focus:textFocus,onQuote:onPDFQuote ? (text: string, anchor: PDFAnchor) => { setFocusReading(false); onPDFQuote(text, anchor) } : undefined,onOpenNotes:revealNotes,onUnresolved}
+  const quoteText = onQuote ? (text: string, anchor?: TextAnchor) => onQuote(text, anchor) : undefined
+  const revealNotes = onOpenNotes ? (ids: string[]) => onOpenNotes(ids) : undefined
+  const pdfAnnotations={notes:annotations,focus:textFocus,onQuote:onPDFQuote,onOpenNotes:revealNotes,onUnresolved}
   const descriptionSeek = onSeek ?? (!video && (item?.kind === 'audio' && item.mediaUrl || item?.kind === 'video' && (local || item.mediaUrl || compatibility.source || douyinPlayback.source)) ? (seconds: number) => {
     const node = native.current
     if (!node || Number.isFinite(node.duration) && seconds > node.duration) return
@@ -266,14 +257,14 @@ export function MediaReader({ id, initialItem, jobs, jobsLoading = false, video,
   const videoLayout = Boolean(video || item?.kind === 'video')
   const audioLayout = item?.kind === 'audio'
   const heading = <>{item ? <BilingualTitle heading contentId={item.id} text={item.title}/> : <h1>内容阅读</h1>}{item && <p className="reading-meta">{item.authorId && onCreator && creatorViewSupported(item.platform) ? <button type="button" className="reader-author-link" aria-label={`查看 ${item.author || '未知作者'} 的最近内容`} title={`查看 ${item.author || '未知作者'} 的最近内容`} onClick={() => onCreator(item.platform, item.authorId)}>{item.author || '未知作者'}</button> : item.author || '未知作者'} · <ReaderPublication key={item.id} item={item}/></p>}</>
-  const player = video ? <ResizableReaderPlayer>{video}</ResizableReaderPlayer> : null
+  const player = video
   const videoDetails = <div className="watch-details">{heading}{description}</div>
   const onlineVideoRequired = Boolean(item?.kind === 'video' && !video && !local && ((item.platform === 'rss' || item.platform === 'xiaohongshu') && item.mediaUrl || item.platform === 'douyin'))
   const compatibilityMessage = item?.platform === 'douyin' ? (douyinPlayback.error || '正在准备抖音视频…') : compatibility.message
   const douyinDetails = douyinPlayback.diagnostics.length > 0 && <details className="douyin-playback-details"><summary>详情</summary><ol>{douyinPlayback.diagnostics.map((stage, index) => <li key={`${stage.stage}-${index}`}><div className="douyin-diagnostic-heading"><strong>{diagnosticStageName(stage.stage)}</strong><span data-outcome={stage.outcome}>{diagnosticOutcomeName(stage.outcome)}</span></div>{diagnosticStageFacts(stage).length > 0 && <p>{diagnosticStageFacts(stage).join(' · ')}</p>}</li>)}</ol></details>
   const onlineSource = item?.platform === 'douyin' ? douyinPlayback.source : (compatibility.source || item?.mediaUrl || '')
-  return <section data-focus-reading={focusReading} className={`media-reader${item?.kind === 'article' ? ' article-workspace' : ''}${item?.kind === 'pdf' ? ' document-workspace' : ''}${videoLayout ? ' video-workspace' : ''}${audioLayout ? ' audio-workspace' : ''}`}>
-    <div className="reading-nav"><button className="button button-secondary" title="返回列表" onClick={onReturn}><ArrowLeft size={16}/>返回列表</button><span>{item?mediaLabel(item):'内容阅读'}</span><ReaderActionsSlot/>{notes && item && (item.kind === 'article' || item.kind === 'pdf') && <button className="button button-secondary reading-focus-toggle" aria-label={focusReading ? '展开笔记' : '专注阅读'} title={focusReading ? '展开笔记' : '专注阅读'} aria-pressed={focusReading} onClick={() => setFocusReading(value => !value)}>{focusReading ? <PanelRightOpen size={16}/> : <PanelRightClose size={16}/>}<span>{focusReading ? '展开笔记' : '专注阅读'}</span></button>}{item?.platform==='xiaohongshu'&&<button className="icon-button" aria-label="刷新笔记详情" title="刷新笔记详情" disabled={detailLoading} onClick={refreshDetails}><RotateCw size={16}/></button>}{item && <a className="button button-secondary" title={item.kind==='pdf'?'打开 PDF 原文件':'打开原内容'} href={item.platform==='pdf'?'/api/documents/'+item.platformId+'/file':item.mediaUrl&&item.kind==='pdf'?item.mediaUrl:item.url} target="_blank" rel="noopener noreferrer">{item.kind==='pdf'?'打开 PDF 原文件':'打开原内容'}<ExternalLink size={15}/></a>}</div>
+  return <section className={`media-reader${item?.kind === 'article' ? ' article-workspace' : ''}${item?.kind === 'pdf' ? ' document-workspace' : ''}${videoLayout ? ' video-workspace' : ''}${audioLayout ? ' audio-workspace' : ''}`}>
+    <div className="reading-nav"><button className="button button-secondary" title="返回列表" onClick={onReturn}><ArrowLeft size={16}/>返回列表</button><span>{item?mediaLabel(item):'内容阅读'}</span><ReaderNavigationSlot/><ReaderActionsSlot/>{item?.platform==='xiaohongshu'&&<button className="icon-button" aria-label="刷新笔记详情" title="刷新笔记详情" disabled={detailLoading} onClick={refreshDetails}><RotateCw size={16}/></button>}{item && <a className="button button-secondary" title={item.kind==='pdf'?'打开 PDF 原文件':'打开原内容'} href={item.kind==='pdf' ? (item.platform === 'pdf' ? '/api/documents/'+item.platformId+'/file' : item.mediaUrl || item.url) : item.url} target="_blank" rel="noopener noreferrer">{item.kind==='pdf'?'打开 PDF 原文件':'打开原内容'}<ExternalLink size={15}/></a>}</div>
     {!videoLayout && !audioLayout && heading}
     {item?.paper && <PaperInfoCard paper={item.paper}/>}
     {error&&<div className={`error-panel${social?.[0]==='xiaohongshu'?' reader-source-error':''}`} role="alert"><p>{error}</p>{localReadFailed?<div className="reader-source-error-actions"><button className="button button-secondary" onClick={retryLocalRead}><RotateCw size={14}/>重新读取</button></div>:social?.[0]==='xiaohongshu'?<div className="reader-source-error-actions"><button className="button button-secondary" onClick={refreshDetails}>重新读取</button><button className="button button-secondary" onClick={()=>setSourceEditing(true)}>更新链接</button><a className="button button-secondary" href="/tools#accounts">检查登录</a></div>:<div className="reader-source-error-actions"><button className="button button-secondary" onClick={refreshDetails}>重新读取</button>{errorRequiresVerification && id.startsWith('linuxdo:') && capabilities.platformWebViewLogin && <button className="button button-secondary" onClick={() => { void verifyLinuxdo() }}>重新验证</button>}</div>}</div>}
@@ -281,7 +272,7 @@ export function MediaReader({ id, initialItem, jobs, jobsLoading = false, video,
       onSourceUpdated(detail)
     }}/>}
     {!item&&!error&&<p role="status" className="field-hint">正在读取内容…</p>}
-      <ReadingNotebook enabled={Boolean(notes || insights || reading)} ai={insights}><div className="reader-primary" ref={body} onMouseUp={captureQuote} onKeyUp={captureQuote}>{videoLayout && videoDetails}{player}{(!item||item.kind==='video'&&Boolean(video))&&reading}
+      <ReadingNotebook enabled={Boolean(notes || insights || reading)} ai={insights} contentLabel={videoLayout ? '字幕与正文' : audioLayout ? '逐字稿与正文' : '正文'}><div className="reader-primary" ref={body} onMouseUp={captureQuote} onKeyUp={captureQuote}>{videoLayout && videoDetails}{player}{(!item||item.kind==='video'&&Boolean(video))&&reading}
       {audioLayout && item && <div className="listen-heading"><PodcastArtwork key={item.id + item.thumbnailUrl} item={item} className="listen-artwork" resolveMissing={Boolean(item.mediaUrl)}/><div>{heading}</div></div>}
       {detailLoading && item?.platform === 'xiaohongshu' && <p className="field-hint" role="status">正在读取笔记正文与图片…</p>}
       {detailError && item?.platform === 'xiaohongshu' && <div className="error-panel reader-source-error" role="alert"><p>{detailError}</p><div className="reader-source-error-actions"><button className="button button-secondary" onClick={refreshDetails}><RotateCw size={14}/>重新获取笔记</button><button className="button button-secondary" onClick={()=>setSourceEditing(true)}>更新链接</button><a className="button button-secondary" href="/tools#accounts">检查登录</a></div></div>}

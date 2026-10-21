@@ -68,8 +68,23 @@
 .gallery-errors-feedback { grid-column: 1 / -1 !important; color: var(--danger) !important; }
 .discovery-search-result { display: flex; align-items: center; gap: 8px; margin: -6px 0 14px; color: var(--muted); font-size: 13px; }
 .discovery-new-content { display: flex; align-items: center; gap: 8px; margin: -8px 0 14px; color: var(--muted); font-size: 13px; }
+.discovery-home-toolbar .discovery-heading h1 { font-size: 24px; }
+.discovery-home-toolbar { grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: 'heading filters actions'; gap: 8px 12px; }
+.discovery-home-toolbar .discovery-heading { min-width: 0; }
+.discovery-home-toolbar .discovery-filter-rail { min-width: 0; gap: 8px; }
+.discovery-home-toolbar .discovery-toolbar-actions { min-width: 0; }
+.discovery-home-toolbar .content-count { display: inline; margin: 0; padding: 0 4px; }
+.discovery-feed-status { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px; color: var(--muted); font-size: 12px; }
+.discovery-feed-status:empty { display: none; }
+.empty-state-actions { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.empty-state-actions .text-button { min-height: 36px; padding-inline: 10px; }
 
 @media (max-width: 760px) {
+  .discovery-home-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: 'heading actions' 'filters filters'; gap: 10px 8px; }
+  .discovery-home-toolbar .discovery-heading { grid-area: heading; }
+  .discovery-home-toolbar .discovery-filter-rail { grid-area: filters; }
+  .discovery-home-toolbar .discovery-toolbar-actions { grid-area: actions; }
+  .discovery-home-toolbar .content-count { display: none; }
   .discovery-toolbar { gap: 10px 8px; margin-bottom: 14px; }
   .discovery-heading { gap: 10px; }
   .discovery-heading h1 { font-size: 22px; }
@@ -78,4 +93,5 @@
   .gallery-errors-summary > summary { width: 44px; height: 44px; padding: 0; justify-content: center; border-radius: 50%; }
   .discovery-batch-controls { width: 100%; padding: 8px 0 0; border-left: 0; border-top: 1px solid var(--line); overflow-x: auto; }
   .discovery-range input { width: 64px; }
+  .empty-state-actions { flex-direction: column; align-items: stretch; width: min(100%, 280px); margin-inline: auto; }
 }

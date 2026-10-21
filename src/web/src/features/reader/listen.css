@@ -10,7 +10,6 @@
 .experience-reading .audio-workspace .podcast-play { background: var(--ink); color: var(--canvas); border-color: var(--ink); }
 .experience-reading .audio-workspace .reader-description { margin-block: 18px; padding: 12px 14px; background: var(--surface); border-radius: 6px; }
 .experience-reading .audio-workspace .reader-description > :is(p, .description-bilingual) { max-height: none; }
-.audio-workspace .reading-layout-label, .audio-workspace .reading-theater-toggle { display: none; }
 .experience-reading .audio-workspace .subtitle-cues { max-height: 480px; }
 .experience-reading .audio-workspace .reading-columns { grid-template-columns: minmax(0, 1fr) minmax(360px, clamp(380px, 25vw, 480px)); gap: 28px; }
 .experience-reading .audio-workspace .listen-heading { grid-template-columns: 120px minmax(0, 1fr); gap: 20px; padding-bottom: 24px; border-bottom: 1px solid var(--line); margin-bottom: 0; }
@@ -29,26 +28,4 @@
   .experience-reading .audio-workspace .podcast-console-tools { gap: 0; }
   .experience-reading .audio-workspace .podcast-console-tools .icon-button { width: 32px; }
   .experience-reading .audio-workspace .subtitle-cues { max-height: 45dvh; }
-}
-
-@media (min-width: 961px) {
-  .experience-reading .audio-workspace .reading-columns.reading-notebook:has(> .reading-ai) {
-    grid-template-columns: var(--reading-ai-width, 280px) 12px minmax(0, 1fr) 12px var(--reading-notes-width, 420px);
-    gap: 20px 0;
-  }
-  .experience-reading .audio-workspace .reading-columns.reading-notebook:not(:has(> .reading-ai)) {
-    grid-template-columns: minmax(0, 1fr) 12px var(--reading-notes-width, 420px);
-    gap: 20px 0;
-  }
-  .experience-reading .audio-workspace .reading-columns.reading-notebook:has(> .reading-ai) > .reading-ai { grid-column: 1; }
-  .experience-reading .audio-workspace .reading-columns.reading-notebook:has(> .reading-ai) > .reading-resize-ai { grid-column: 2; }
-  .experience-reading .audio-workspace .reading-columns.reading-notebook:has(> .reading-ai) > .reader-primary { grid-column: 3; }
-  .experience-reading .audio-workspace .reading-columns.reading-notebook:has(> .reading-ai) > .reading-resize-notes { grid-column: 4; }
-  .experience-reading .audio-workspace .reading-columns.reading-notebook:has(> .reading-ai) > .reading-notes { grid-column: 5; }
-  .experience-reading .audio-workspace .reading-columns.reading-notebook:not(:has(> .reading-ai)) > .reader-primary { grid-column: 1; }
-  .experience-reading .audio-workspace .reading-columns.reading-notebook:not(:has(> .reading-ai)) > .reading-resize-notes { grid-column: 2; }
-  .experience-reading .audio-workspace .reading-columns.reading-notebook:not(:has(> .reading-ai)) > .reading-notes { grid-column: 3; }
-}
-@media (max-width: 960px) {
-  .experience-reading .audio-workspace .reading-resize-handle { display: none; }
 }

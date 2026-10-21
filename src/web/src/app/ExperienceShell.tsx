@@ -53,7 +53,7 @@ export function ExperienceShell({ view, onNavigate, onNavigateSavedView, savedVi
   })
   const menu = useRef<HTMLDialogElement>(null)
   const trigger = useRef<HTMLButtonElement>(null)
-  const { dark, preference, setTheme, switchTheme } = useThemeSwitch()
+  const { dark, switchTheme } = useThemeSwitch()
   useEffect(() => {
     try { localStorage.setItem('tangentry-sidebar-collapsed', String(collapsed)) } catch { /* Navigation remains usable without storage. */ }
   }, [collapsed])
@@ -90,7 +90,7 @@ export function ExperienceShell({ view, onNavigate, onNavigateSavedView, savedVi
       {group.items.map(({ view: next, label, Icon }) => <button key={next} type="button" className={view === next ? 'active' : ''} aria-label={label} title={label} aria-current={view === next ? 'page' : undefined} onClick={() => go(next)}>
         <Icon size={18} strokeWidth={1.8} aria-hidden="true"/><span>{label}</span>{badge(next) > 0 && <small className={next === 'downloads' ? 'is-live' : undefined} aria-hidden="true">{badge(next)}</small>}
       </button>)}
-      {group.label === '资料库' && <div className="saved-view-nav-list" aria-label="保存视图">{savedViews.map((savedView,index)=><div className="saved-view-nav-row" key={savedView.id}>
+      {group.label === '资料库' && <div className="saved-view-nav-list" role="group" aria-label="保存视图">{savedViews.map((savedView,index)=><div className="saved-view-nav-row" key={savedView.id}>
         {(() => { const ViewIcon = savedViewIcons[savedView.icon as keyof typeof savedViewIcons] ?? Filter; return <button type="button" className={view === 'subscriptions' && new URLSearchParams(location.search).get('view') === savedView.id ? 'active' : ''} aria-label={`${savedView.name}，${savedView.count} 条`} title={savedView.name} onClick={()=>{setMenuOpen(false);onNavigateSavedView(savedView.id)}}><span className={`saved-view-mark ${savedView.color}`}><ViewIcon size={13}/></span><span>{savedView.name}</span><small>{savedView.count}</small></button> })()}
         {!collapsed && <span className="saved-view-order"><button type="button" aria-label={`上移 ${savedView.name}`} title="上移" disabled={index===0} onClick={()=>{const ids=savedViews.map(item=>item.id);[ids[index-1],ids[index]]=[ids[index],ids[index-1]];onReorderSavedViews(ids)}}><ChevronUp size={12}/></button><button type="button" aria-label={`下移 ${savedView.name}`} title="下移" disabled={index===savedViews.length-1} onClick={()=>{const ids=savedViews.map(item=>item.id);[ids[index],ids[index+1]]=[ids[index+1],ids[index]];onReorderSavedViews(ids)}}><ChevronDown size={12}/></button></span>}
       </div>)}</div>}
@@ -125,7 +125,6 @@ export function ExperienceShell({ view, onNavigate, onNavigateSavedView, savedVi
       {view === 'discovery' && <div className="discovery-search" role="search"><Search size={16} aria-hidden="true"/><input type="search" aria-label="搜索发现内容" placeholder="搜索本机与各平台" value={discoveryQuery} onChange={event => onDiscoveryQuery(event.target.value)} onFocus={() => onSearchQuery(discoveryQuery)}/>{discoveryQuery && <button type="button" className="icon-button" aria-label="清除发现搜索" title="清除搜索" onClick={() => onDiscoveryQuery('')}><X size={15}/></button>}</div>}
       <div className="experience-header-actions">
         <button type="button" className="experience-add" aria-label="添加内容" title="粘贴链接或导入 PDF" onClick={onAdd}><Plus size={17} aria-hidden="true"/><span>添加内容</span></button>
-        <label className="theme-picker"><span className="sr-only">主题</span><select aria-label="主题" value={preference} onChange={event => setTheme(event.target.value as 'light' | 'dark' | 'system')}><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></label>
         <button type="button" className="icon-button theme-switch" aria-label={dark ? '切换浅色模式' : '切换深色模式'} title={dark ? '切换浅色模式' : '切换深色模式'} onClick={switchTheme}>{dark ? <Sun size={18}/> : <Moon size={18}/>}</button>
       </div>
     </header>

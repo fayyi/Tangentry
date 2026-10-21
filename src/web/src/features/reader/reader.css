@@ -9,13 +9,29 @@
 .reading-nav .button { min-height: 32px; padding: 5px 11px; font-size: 12.5px; }
 .reading-nav .button-secondary { box-shadow: none; }
 .reading-nav-actions { min-width: 0; display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 6px; }
+.reading-nav-modes { display: flex; flex: 0 1 auto; min-width: 0; align-items: center; }
+.reading-nav-modes .reading-notebook-navigation { display: flex; align-items: center; gap: 2px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.reading-nav-modes .reading-notebook-navigation::-webkit-scrollbar { display: none; }
+.reading-nav-modes .reading-notebook-navigation button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 32px; padding: 4px 8px; border: 1px solid transparent; border-radius: var(--radius); color: var(--muted); font-size: 12px; white-space: nowrap; }
+.reading-nav-modes .reading-notebook-navigation button[aria-pressed='true'] { border-color: var(--line); background: var(--surface); color: var(--ink); }
+.reading-nav-modes .reading-notebook-navigation .reading-theater-toggle { margin-left: 4px; border-color: var(--line); }
+.reading-nav-actions .reader-read-state { flex-wrap: nowrap; }
+.reading-nav-actions .reader-read-state .button,
+.reading-nav-actions > .button,
+.reading-nav-actions .ai-inline-trigger { width: 34px; min-width: 34px; height: 34px; min-height: 34px; padding: 0; gap: 0; justify-content: center; overflow: hidden; font-size: 0; }
+.reading-nav-actions :is(.reader-read-state .button, .button, .ai-inline-trigger) svg { flex: 0 0 auto; }
 .reader-read-state { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; }
 .reader-read-state .button[aria-pressed='true'] { border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent-ink); }
 .immersive-reader .reading-nav { position: static; }
 @media (max-width: 760px) {
-  .reading-nav { padding: 2px 0 8px; }
+  .reading-nav { padding: 2px 0 8px; gap: 4px 6px; }
   .reading-nav > span { display: none; }
-  .reading-nav-actions { flex: 1; }
+  .reading-nav-actions { flex: 0 1 auto; margin-left: auto; }
+  .reading-nav-modes { order: 5; flex: 1 0 100%; overflow: hidden; }
+  .reading-nav-modes .reading-notebook-navigation { width: 100%; }
+  .reading-nav-modes .reading-notebook-navigation > button { flex: 1 1 auto; min-height: 40px; }
+  .reading-nav-modes .reading-notebook-navigation .reading-theater-toggle { display: inline-flex; flex: 0 0 auto; margin-left: 2px; }
+  .reading-nav-actions .reader-read-state { flex: 0 1 auto; }
 }
 
 .media-reader h1 { margin-top: 28px; overflow-wrap: anywhere; }
@@ -330,7 +346,7 @@
 .bilingual-reader-heading > p { flex-basis: 100%; margin: 0; }
 .bilingual-reader-heading > .text-translation-control { display: inline-flex; vertical-align: middle; }
 @media (max-width: 760px) {
-  .immersive-reader .reading-nav { flex-wrap: nowrap; justify-content: flex-start; gap: 4px; }
+  .immersive-reader .reading-nav { flex-wrap: wrap; justify-content: flex-start; gap: 4px; }
   .immersive-reader .reading-nav-actions { margin-left: auto; flex-shrink: 0; }
   .immersive-reader .reader-read-state { flex-wrap: nowrap; gap: 4px; }
   .immersive-reader .reading-nav .button { width: 40px; height: 40px; min-height: 40px; padding: 0; font-size: 0; gap: 0; flex-shrink: 0; }
@@ -448,12 +464,10 @@
 .experience-reading .reading-notes { border-left: 1px solid var(--line); padding-left: 20px; }
 .experience-reading .reading-focus-toggle[aria-pressed='true'] { background: var(--surface); border-color: var(--ink); }
 .experience-reading .media-reader[data-focus-reading='true'] .reading-notes { display: none; }
-.experience-reading .media-reader[data-focus-reading='true'] .reading-ai,
-.experience-reading .media-reader[data-focus-reading='true'] .reading-resize-handle { display: none; }
+.experience-reading .media-reader[data-focus-reading='true'] .reading-ai { display: none; }
 .experience-reading .media-reader[data-focus-reading='true'] .reading-columns { display: grid !important; grid-template-columns: minmax(0, 1fr) !important; gap: 0; }
 .experience-reading .media-reader[data-focus-reading='true'] .reading-columns > .reading-ai,
 .experience-reading .media-reader[data-focus-reading='true'] .reading-columns > .reading-notes,
-.experience-reading .media-reader[data-focus-reading='true'] .reading-columns > .reading-resize-handle,
   .experience-reading .media-reader[data-focus-reading='true'] .reading-columns > .reading-notebook-navigation { display: none !important; }
 .experience-reading .media-reader[data-focus-reading='true'] .reading-columns > .reader-primary { grid-column: 1 !important; grid-row: 1 !important; width: 100%; max-width: none; }
 .experience-reading .article-workspace[data-focus-reading='true'] { max-width: none; }

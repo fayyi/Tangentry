@@ -216,7 +216,21 @@ export function App() {
   const readingID = readerQuery.startsWith('BV') ? `bilibili:${readerQuery}` : readerQuery
   // What was open in the reader stays one click away after leaving it, so a
   // stray click elsewhere never loses the video or article being worked on.
-  const [lastReader, setLastReader] = useState<{ path: string; title: string; sourceID: string } | null>(null)
+  const [lastReader, setLastReader] = useState<{ path: string; title: string; sourceID: string } | null>(() => {
+    try {
+      const raw = sessionStorage.getItem('tangentry.last-reader')
+      if (!raw) return null
+      const value = JSON.parse(raw) as Partial<{ path: string; title: string; sourceID: string }>
+      if (typeof value.path !== 'string' || !value.path.startsWith('/reader?') || typeof value.sourceID !== 'string') return null
+      return { path: value.path, title: typeof value.title === 'string' && value.title.trim() ? value.title : '正在阅读的内容', sourceID: value.sourceID }
+    } catch { return null }
+  })
+  useEffect(() => {
+    try {
+      if (lastReader) sessionStorage.setItem('tangentry.last-reader', JSON.stringify(lastReader))
+      else sessionStorage.removeItem('tangentry.last-reader')
+    } catch { /* Resume is a convenience; navigation remains usable when storage is unavailable. */ }
+  }, [lastReader])
   useEffect(() => {
     if (view === 'reader' && readerQuery) {
       setLastReader({
@@ -307,7 +321,7 @@ export function App() {
       {pageLayers.mountDiscovery && <PageLoadBoundary key="discovery-page">
         <Activity mode={pageLayers.discoveryVisible ? 'visible' : 'hidden'}>
           <div data-app-view="discovery">
-            <DiscoveryGallery active={pageLayers.discoveryVisible} kind={galleryKind} onKind={setGalleryKind} origin={galleryOrigin} onOrigin={setGalleryOrigin} query={galleryQuery} onClearQuery={() => updateDiscoveryQuery('')} onQueryChange={setGalleryQuery} onRouteChange={path => navigate('discovery', false, path)} notice={library.notice} noticeError={library.noticeError} gallery={gallery} savedIDs={savedIDs} pending={library.pending} savingUnavailable={savingUnavailable} onSave={item => void library.toggle(item)} onRead={openReader} onDownload={onDownload} onCreator={openCreator} onSearch={() => navigate('search')} onSubscriptions={() => navigate('subscriptions')} onBilibili={openBilibili} />
+            <DiscoveryGallery active={pageLayers.discoveryVisible} kind={galleryKind} onKind={setGalleryKind} origin={galleryOrigin} onOrigin={setGalleryOrigin} query={galleryQuery} onClearQuery={() => updateDiscoveryQuery('')} onQueryChange={setGalleryQuery} onRouteChange={path => navigate('discovery', false, path)} notice={library.notice} noticeError={library.noticeError} gallery={gallery} savedIDs={savedIDs} pending={library.pending} savingUnavailable={savingUnavailable} onSave={item => void library.toggle(item)} onRead={openReader} onDownload={onDownload} onCreator={openCreator} onSearch={focusSource} onSubscriptions={() => navigate('subscriptions')} onSettings={() => navigate('tools', true, '/tools#accounts')} onBilibili={openBilibili} />
           </div>
         </Activity>
       </PageLoadBoundary>}

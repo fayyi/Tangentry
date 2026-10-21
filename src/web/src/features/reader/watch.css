@@ -38,12 +38,7 @@
 .experience-reading .video-workspace .subtitle-cues::after { height: var(--watch-transcript-height); }
 .experience-reading .video-workspace .reading-notes { position: sticky; top: calc(var(--nav-height) + 16px); margin-top: 0; }
 .experience-reading .video-workspace .notes-workspace { max-height: calc(100dvh - var(--nav-height) - 40px); }
-.experience-reading .video-workspace .reading-notebook-navigation { display: flex; align-items: center; gap: 12px; grid-column: 1 / -1; border-bottom: 1px solid var(--line); padding-bottom: 8px; margin: 0; }
-.video-workspace .reading-notebook-navigation > button:not(.reading-theater-toggle) { display: none; }
-.reading-layout-label { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; }
-.reading-theater-toggle { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 34px; margin-left: auto; font-size: 12px; color: var(--ink); border-radius: 4px; padding: 5px 8px; }
-.reading-theater-toggle:hover { background: var(--surface); }
-.reading-theater-toggle:focus-visible { outline-offset: 2px; }
+.experience-reading .video-workspace .reading-notebook-v2 > .reading-notebook-navigation { display: flex; align-items: center; gap: 8px; grid-column: 1 / -1; border-bottom: 1px solid var(--line); padding-bottom: 8px; margin: 0; }
 .experience-reading .video-workspace .reading-columns[data-theater=true] { grid-template-columns: minmax(0, 1fr); }
 .video-workspace [data-theater=true] > .reading-notes,
 .video-workspace [data-theater=true] > .reader-primary > .subtitle-reader,
@@ -86,11 +81,9 @@
 @media (max-width: 760px) {
   .experience-reading .content-container { padding: 12px 16px 90px; }
   .experience-reading .video-workspace .reading-columns { align-items: stretch; gap: 0; margin-top: 12px; }
-  .experience-reading .video-workspace .reading-notebook-navigation { order: 1; margin-top: 14px; padding: 0; gap: 0; }
-  .video-workspace .reading-notebook-navigation > button:not(.reading-theater-toggle) { display: flex; }
-  .video-workspace .reading-layout-label { display: none; }
-  .video-workspace .reading-notebook-navigation .reading-theater-toggle { display: none; }
-  .experience-reading .video-workspace .reading-notebook > .reader-primary { display: contents; }
+  .experience-reading .video-workspace .reading-notebook-v2 > .reading-notebook-navigation { order: 1; margin-top: 14px; padding: 0; gap: 0; }
+  .video-workspace .reading-notebook-v2 .reading-notebook-navigation .reading-theater-toggle { display: none; }
+  .experience-reading .video-workspace .reading-notebook-v2 > .reader-primary { display: contents; }
   .experience-reading .video-workspace .reader-primary > .watch-details { order: 0; margin-block: 0 16px; }
   .experience-reading .video-workspace .reader-primary > .subtitle-reader,
   .experience-reading .video-workspace .reader-primary > .podcast-transcript { order: 2; }
@@ -98,37 +91,6 @@
   .experience-reading .video-workspace .reading-meta { font-size: 12px; }
   .experience-reading .video-workspace .subtitle-cues { --watch-transcript-height: 45dvh; min-height: 160px; }
   .experience-reading .video-workspace .reading-notes { padding-top: 16px; }
-  .experience-reading .video-workspace [data-theater=true] > .reading-notes,
-  .experience-reading .video-workspace [data-theater=true] > .reader-primary > .subtitle-reader,
-  .experience-reading .video-workspace [data-theater=true] > .reader-primary > .podcast-transcript { display: revert; }
-  .experience-reading .video-workspace .reading-notebook[data-notebook-view=captions] > .reading-notes,
-  .experience-reading .video-workspace .reading-notebook[data-notebook-view=notes] > .reader-primary > .subtitle-reader,
-  .experience-reading .video-workspace .reading-notebook[data-notebook-view=notes] > .reader-primary > .podcast-transcript { display: none; }
-}
-
-/* User-adjustable desktop notebook columns. The mobile drawer keeps the
-   existing stacked layout and intentionally hides these handles. */
-@media (min-width: 961px) {
-  .experience-reading .video-workspace .reading-columns.reading-notebook:has(> .reading-ai) {
-    grid-template-columns: var(--reading-ai-width, 280px) 12px minmax(0, 1fr) 12px var(--reading-notes-width, 420px);
-    gap: 16px 0;
-  }
-  .experience-reading .video-workspace .reading-columns.reading-notebook:not(:has(> .reading-ai)) {
-    grid-template-columns: minmax(0, 1fr) 12px var(--reading-notes-width, 420px);
-    gap: 16px 0;
-  }
-  .experience-reading .video-workspace .reading-columns.reading-notebook:has(> .reading-ai) > .reading-ai { grid-column: 1; }
-  .experience-reading .video-workspace .reading-columns.reading-notebook:has(> .reading-ai) > .reading-resize-ai { grid-column: 2; }
-  .experience-reading .video-workspace .reading-columns.reading-notebook:has(> .reading-ai) > .reader-primary { grid-column: 3; }
-  .experience-reading .video-workspace .reading-columns.reading-notebook:has(> .reading-ai) > .reading-resize-notes { grid-column: 4; }
-  .experience-reading .video-workspace .reading-columns.reading-notebook:has(> .reading-ai) > .reading-notes { grid-column: 5; }
-  .experience-reading .video-workspace .reading-columns.reading-notebook:not(:has(> .reading-ai)) > .reader-primary { grid-column: 1; }
-  .experience-reading .video-workspace .reading-columns.reading-notebook:not(:has(> .reading-ai)) > .reading-resize-notes { grid-column: 2; }
-  .experience-reading .video-workspace .reading-columns.reading-notebook:not(:has(> .reading-ai)) > .reading-notes { grid-column: 3; }
-  .experience-reading .video-workspace .reading-columns.reading-notebook[data-theater=true] { grid-template-columns: minmax(0, 1fr); }
-  .experience-reading .video-workspace .reading-columns.reading-notebook[data-theater=true] > .reading-resize-ai,
-  .experience-reading .video-workspace .reading-columns.reading-notebook[data-theater=true] > .reading-resize-notes { display: none; }
-}
-@media (max-width: 960px) {
-  .experience-reading .video-workspace .reading-resize-handle { display: none; }
+  .experience-reading .video-workspace .reading-notebook-v2[data-notebook-panel=content] > .reading-notes,
+  .experience-reading .video-workspace .reading-notebook-v2[data-theater=true] > .reading-notes { display: none; }
 }
