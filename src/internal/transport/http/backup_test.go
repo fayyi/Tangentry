@@ -100,6 +100,17 @@ func TestBackupListRoutesReturnEmptyArrays(t *testing.T) {
 	}
 }
 
+func TestBackupEncryptionStateUnavailableForLegacyFixture(t *testing.T) {
+	h := NewWithDependencies(Dependencies{Backup: backupHTTPFixture{}}, nil)
+	r := httptest.NewRequest(http.MethodGet, "/api/backup/encryption", nil)
+	r.Host = "127.0.0.1"
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusServiceUnavailable || !strings.Contains(w.Body.String(), "backup_encryption_unavailable") {
+		t.Fatalf("encryption state should fail closed without credential support: %d %s", w.Code, w.Body.String())
+	}
+}
+
 func TestBackupRunReturnsPersistedSnapshotWhenUploadFails(t *testing.T) {
 	h := NewWithDependencies(Dependencies{Backup: backupHTTPFixture{createErr: errors.New("fixture upload failure")}}, nil)
 	r := httptest.NewRequest(http.MethodPost, "/api/backup/tasks/task-1/run", strings.NewReader(`{"password":"fixture-backup-password"}`))

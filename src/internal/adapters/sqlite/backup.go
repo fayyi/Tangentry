@@ -3,6 +3,8 @@ package sqlite
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -255,7 +257,7 @@ func (s *Store) DeleteBackupTarget(ctx context.Context, id string) error {
 	return err
 }
 func (s *Store) BackupTasks(ctx context.Context) ([]backup.Task, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,include_downloads,retention,enabled FROM backup_task ORDER BY name,id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,include_downloads,retention,enabled,interval_hours FROM backup_task ORDER BY name,id`)
 	if err != nil {
 		return nil, err
 	}
@@ -264,7 +266,7 @@ func (s *Store) BackupTasks(ctx context.Context) ([]backup.Task, error) {
 	for rows.Next() {
 		var t backup.Task
 		var inc, en int
-		if err := rows.Scan(&t.ID, &t.Name, &inc, &t.Retention, &en); err != nil {
+		if err := rows.Scan(&t.ID, &t.Name, &inc, &t.Retention, &en, &t.IntervalHours); err != nil {
 			return nil, err
 		}
 		t.IncludeDownloads = inc != 0
@@ -279,7 +281,7 @@ func (s *Store) BackupTasks(ctx context.Context) ([]backup.Task, error) {
 		return nil, err
 	}
 	for i := range out {
-		out[i].TargetIDs, err = s.backupTaskTargets(ctx, out[i].ID)
+		out[i].TargetIDs, out[i].TargetIntervalHours, err = s.backupTaskTargets(ctx, out[i].ID)
 		if err != nil {
 			return nil, err
 		}
@@ -289,30 +291,35 @@ func (s *Store) BackupTasks(ctx context.Context) ([]backup.Task, error) {
 func (s *Store) BackupTask(ctx context.Context, id string) (backup.Task, error) {
 	var t backup.Task
 	var inc, en int
-	err := s.db.QueryRowContext(ctx, `SELECT id,name,include_downloads,retention,enabled FROM backup_task WHERE id=?`, id).Scan(&t.ID, &t.Name, &inc, &t.Retention, &en)
+	err := s.db.QueryRowContext(ctx, `SELECT id,name,include_downloads,retention,enabled,interval_hours FROM backup_task WHERE id=?`, id).Scan(&t.ID, &t.Name, &inc, &t.Retention, &en, &t.IntervalHours)
 	if err != nil {
 		return t, err
 	}
 	t.IncludeDownloads = inc != 0
 	t.Enabled = en != 0
-	t.TargetIDs, _ = s.backupTaskTargets(ctx, id)
+	t.TargetIDs, t.TargetIntervalHours, _ = s.backupTaskTargets(ctx, id)
 	return t, nil
 }
-func (s *Store) backupTaskTargets(ctx context.Context, id string) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT target_id FROM backup_task_target WHERE task_id=? ORDER BY position,target_id`, id)
+func (s *Store) backupTaskTargets(ctx context.Context, id string) ([]string, map[string]int, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT target_id,interval_hours FROM backup_task_target WHERE task_id=? ORDER BY position,target_id`, id)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer rows.Close()
 	var ids []string
+	intervals := make(map[string]int)
 	for rows.Next() {
 		var v string
-		if err := rows.Scan(&v); err != nil {
-			return nil, err
+		var interval int
+		if err := rows.Scan(&v, &interval); err != nil {
+			return nil, nil, err
 		}
 		ids = append(ids, v)
+		if interval > 0 {
+			intervals[v] = interval
+		}
 	}
-	return ids, rows.Err()
+	return ids, intervals, rows.Err()
 }
 func (s *Store) SaveBackupTask(ctx context.Context, t backup.Task) error {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -320,14 +327,32 @@ func (s *Store) SaveBackupTask(ctx context.Context, t backup.Task) error {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err = tx.ExecContext(ctx, `INSERT INTO backup_task(id,name,include_downloads,retention,enabled) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,include_downloads=excluded.include_downloads,retention=excluded.retention,enabled=excluded.enabled`, t.ID, t.Name, boolInt(t.IncludeDownloads), t.Retention, boolInt(t.Enabled)); err != nil {
+	var otherID string
+	err = tx.QueryRowContext(ctx, `SELECT id FROM backup_task WHERE id<>? LIMIT 1`, t.ID).Scan(&otherID)
+	if err == nil {
+		return errors.New("only one backup plan is supported")
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if t.IntervalHours < 1 || t.IntervalHours > 720 {
+		t.IntervalHours = 6
+	}
+	if t.Retention < 1 || t.Retention > 1000 {
+		t.Retention = 10
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO backup_task(id,name,include_downloads,retention,enabled,interval_hours) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,include_downloads=excluded.include_downloads,retention=excluded.retention,enabled=excluded.enabled,interval_hours=excluded.interval_hours`, t.ID, t.Name, boolInt(t.IncludeDownloads), t.Retention, boolInt(t.Enabled), t.IntervalHours); err != nil {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM backup_task_target WHERE task_id=?`, t.ID); err != nil {
 		return err
 	}
 	for i, id := range t.TargetIDs {
-		if _, err = tx.ExecContext(ctx, `INSERT INTO backup_task_target(task_id,target_id,position) VALUES(?,?,?)`, t.ID, id, i); err != nil {
+		interval := t.TargetIntervalHours[id]
+		if interval < 0 || interval > 720 {
+			interval = 0
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO backup_task_target(task_id,target_id,position,interval_hours) VALUES(?,?,?,?)`, t.ID, id, i, interval); err != nil {
 			return err
 		}
 	}

@@ -16,7 +16,7 @@ var migrationFiles embed.FS
 
 // Go steps run after a version's SQL in the same transaction, for data
 // rewrites SQL alone cannot express.
-var migrationSteps = map[int]func(*sql.Tx) error{14: archiveLegacySnapshots, 70: addBackupWebDAVColumns, 71: addBackupRetryColumns}
+var migrationSteps = map[int]func(*sql.Tx) error{14: archiveLegacySnapshots, 70: addBackupWebDAVColumns, 71: addBackupRetryColumns, 73: configureSingleBackupPlan}
 
 // A file holding only one ADD COLUMN is skipped when the column exists:
 // older builds added some columns before recording their version.
@@ -162,4 +162,97 @@ func addBackupRetryColumns(tx *sql.Tx) error {
 			AND backup_task_target.target_id = backup_run_target.target_id
 		), backup_run_target.position)`)
 	return err
+}
+
+func configureSingleBackupPlan(tx *sql.Tx) error {
+	var exists int
+	if err := tx.QueryRow(`SELECT count(*) FROM pragma_table_info('backup_task_target') WHERE name='interval_hours'`).Scan(&exists); err != nil {
+		return err
+	}
+	if exists == 0 {
+		if _, err := tx.Exec(`ALTER TABLE backup_task_target ADD COLUMN interval_hours INTEGER NOT NULL DEFAULT 0 CHECK(interval_hours BETWEEN 0 AND 720)`); err != nil {
+			return err
+		}
+	}
+	rows, err := tx.Query(`SELECT id,name,include_downloads,retention,enabled,interval_hours FROM backup_task ORDER BY id`)
+	if err != nil {
+		return err
+	}
+	type oldTask struct {
+		id, name                                       string
+		includeDownloads, retention, enabled, interval int
+	}
+	var tasks []oldTask
+	for rows.Next() {
+		var task oldTask
+		if err := rows.Scan(&task.id, &task.name, &task.includeDownloads, &task.retention, &task.enabled, &task.interval); err != nil {
+			rows.Close()
+			return err
+		}
+		tasks = append(tasks, task)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if len(tasks) < 2 {
+		return nil
+	}
+	primary := tasks[0]
+	includeDownloads, enabled := primary.includeDownloads, 0
+	retention, interval := primary.retention, primary.interval
+	if retention <= 0 {
+		retention = 10
+	}
+	for _, task := range tasks {
+		if task.includeDownloads != 0 {
+			includeDownloads = 1
+		}
+		if task.enabled != 0 {
+			enabled = 1
+		}
+		if task.retention > retention {
+			retention = task.retention
+		}
+		if task.interval > interval {
+			interval = task.interval
+		}
+	}
+	if interval < 1 || interval > 720 {
+		interval = 6
+	}
+	if _, err := tx.Exec(`UPDATE backup_task SET include_downloads=?,retention=?,enabled=?,interval_hours=? WHERE id=?`, includeDownloads, retention, enabled, interval, primary.id); err != nil {
+		return err
+	}
+	seen := make(map[string]bool)
+	for _, task := range tasks {
+		bindings, err := tx.Query(`SELECT target_id,position,interval_hours FROM backup_task_target WHERE task_id=? ORDER BY position,target_id`, task.id)
+		if err != nil {
+			return err
+		}
+		for bindings.Next() {
+			var targetID string
+			var position, targetInterval int
+			if err := bindings.Scan(&targetID, &position, &targetInterval); err != nil {
+				bindings.Close()
+				return err
+			}
+			if seen[targetID] {
+				continue
+			}
+			seen[targetID] = true
+			if _, err := tx.Exec(`INSERT OR IGNORE INTO backup_task_target(task_id,target_id,position,interval_hours) VALUES(?,?,?,?)`, primary.id, targetID, len(seen)-1, targetInterval); err != nil {
+				bindings.Close()
+				return err
+			}
+		}
+		if err := bindings.Close(); err != nil {
+			return err
+		}
+	}
+	for _, task := range tasks[1:] {
+		if _, err := tx.Exec(`DELETE FROM backup_task WHERE id=?`, task.id); err != nil {
+			return err
+		}
+	}
+	return nil
 }

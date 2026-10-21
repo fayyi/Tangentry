@@ -50,9 +50,15 @@ export function BackupSettings() {
   const [selectedTargetIDs, setSelectedTargetIDs] = useState<string[]>([])
   const [editingTarget, setEditingTarget] = useState<string | null>(null)
   const [savingTarget, setSavingTarget] = useState(false)
-  const [deletingTask, setDeletingTask] = useState(false)
   const [password, setPassword] = useState('')
-  const [passwordConfirm, setPasswordConfirm] = useState('')
+  const [encryptionPassword, setEncryptionPassword] = useState('')
+  const [encryptionPasswordConfirm, setEncryptionPasswordConfirm] = useState('')
+  const [encryptionConfigured, setEncryptionConfigured] = useState(false)
+  const [savingEncryption, setSavingEncryption] = useState(false)
+  const [intervalHours, setIntervalHours] = useState(6)
+  const [retention, setRetention] = useState(10)
+  const [targetIntervals, setTargetIntervals] = useState<Record<string, number>>({})
+  const [savingPlan, setSavingPlan] = useState(false)
   const [includeDownloads, setIncludeDownloads] = useState(false)
   const [backupState, setBackupState] = useState<'idle' | 'running' | 'success' | 'error'>('idle')
   const [backupResult, setBackupResult] = useState<BackupSnapshot | null>(null)
@@ -68,20 +74,24 @@ export function BackupSettings() {
   async function reload() {
     setLoading(true); setError('')
     try {
-      const [loadedTargets, loadedTasks, loadedSnapshots] = await Promise.all([
-        request<BackupTarget[]>('/backup/targets'), request<BackupTask[]>('/backup/tasks'), request<BackupSnapshot[]>('/backup/snapshots'),
+      const [loadedTargets, loadedTasks, loadedSnapshots, encryption] = await Promise.all([
+        request<BackupTarget[]>('/backup/targets'), request<BackupTask[]>('/backup/tasks'), request<BackupSnapshot[]>('/backup/snapshots'), request<{ configured: boolean }>('/backup/encryption'),
       ])
       const safeTargets = normalizeBackupSettingsData(loadedTargets)
       const safeTasks = normalizeBackupSettingsData(loadedTasks)
       setTargets(safeTargets)
-      setTasks(safeTasks)
+      setTasks(safeTasks.slice(0, 1))
       setSnapshots(normalizeBackupSettingsData(loadedSnapshots))
+      setEncryptionConfigured(encryption.configured)
       if (!restoreTargetID && safeTargets[0]) setRestoreTargetID(safeTargets[0].id)
       const activeLoadedTask = safeTasks.find(task => task.id === selectedTaskID) ?? safeTasks[0]
       if (activeLoadedTask && (!selectedTaskID || !safeTasks.some(task => task.id === selectedTaskID))) {
         setSelectedTaskID(activeLoadedTask.id)
         setSelectedTargetIDs(activeLoadedTask.targetIds ?? [])
         setIncludeDownloads(Boolean(activeLoadedTask.includeDownloads))
+        setIntervalHours(activeLoadedTask.intervalHours || 6)
+        setRetention(activeLoadedTask.retention || 10)
+        setTargetIntervals(activeLoadedTask.targetIntervalHours ?? {})
       } else if (!activeLoadedTask && !selectedTaskID) {
         setSelectedTargetIDs(safeTargets.length ? [safeTargets[0].id] : [])
         setIncludeDownloads(false)
@@ -91,12 +101,41 @@ export function BackupSettings() {
   }
   useEffect(() => { void reload() }, [])
 
-  const activeTask = selectedTaskID ? tasks.find(task => task.id === selectedTaskID) : undefined
+  const activeTask = tasks[0]
   const selectedTarget = targets.find(target => target.id === restoreTargetID) ?? targets[0]
   const backupTargets = targets.filter(target => selectedTargetIDs.includes(target.id))
-  const passwordError = password.length > 0 && password !== passwordConfirm ? '两次输入的密码不一致。' : ''
-  const runAvailability = immediateBackupAvailability({ hasTarget: selectedTargetIDs.length > 0, targetCount: selectedTargetIDs.length, password, pendingAction: backupState === 'running' ? 'backup' : null })
+  const passwordError = encryptionPassword.length > 0 && encryptionPassword !== encryptionPasswordConfirm ? '两次输入的密码不一致。' : ''
+  const runAvailability = immediateBackupAvailability({ hasTarget: selectedTargetIDs.length > 0, targetCount: selectedTargetIDs.length, hasPassword: encryptionConfigured, pendingAction: backupState === 'running' ? 'backup' : null })
   const restoreValidation = restore.validation ? backupValidationPresentation(restore.validation) : null
+
+  function currentPlan(): BackupTask {
+    return {
+      id: activeTask?.id ?? newID('task'), name: '自动备份', targetIds: selectedTargetIDs,
+      includeDownloads, retention, intervalHours,
+      targetIntervalHours: Object.fromEntries(Object.entries(targetIntervals).filter(([id, hours]) => selectedTargetIDs.includes(id) && hours > 0)), enabled: true,
+    }
+  }
+
+  async function savePlan() {
+    if (savingPlan || selectedTargetIDs.length === 0) return
+    setSavingPlan(true); setError('')
+    const task = currentPlan()
+    try {
+      await request('/backup/tasks', { method: 'POST', body: JSON.stringify(task) })
+      setTasks([task]); setSelectedTaskID(task.id)
+    } catch (cause) { setError(cause instanceof Error ? cause.message : '备份计划保存失败，请重试。') }
+    finally { setSavingPlan(false) }
+  }
+
+  async function saveEncryption() {
+    if (savingEncryption || encryptionPassword.length < 8 || encryptionPassword !== encryptionPasswordConfirm) return
+    setSavingEncryption(true); setError('')
+    try {
+      await request('/backup/encryption', { method: 'PUT', body: JSON.stringify({ password: encryptionPassword }) })
+      setEncryptionConfigured(true); setEncryptionPassword(''); setEncryptionPasswordConfirm('')
+    } catch (cause) { setError(cause instanceof Error ? cause.message : '备份密码保存失败，请重试。') }
+    finally { setSavingEncryption(false) }
+  }
 
   function resetTargetForm() { setEditingTarget(null); setTargetName(''); setTargetPath(''); setTargetEndpoint(''); setTargetUsername(''); setTargetPassword(''); setTargetRemotePath(''); setAllowInsecureTLS(false); setTargetTest('idle'); setFolderBrowserOpen(false); setTargetType('local') }
   function editTarget(target: BackupTarget) { setEditingTarget(target.id); setTargetName(target.name); setTargetPath(target.path ?? ''); setTargetEndpoint(target.endpoint ?? ''); setTargetUsername(target.username ?? ''); setTargetPassword(''); setTargetRemotePath(target.remotePath ?? ''); setAllowInsecureTLS(Boolean(target.allowInsecureTLS)); setTargetTest('idle'); setFolderBrowserOpen(false); setTargetType(target.type === 'webdav' || target.type === 's3' ? target.type : 'local') }
@@ -129,36 +168,15 @@ export function BackupSettings() {
     try { await request(`/backup/targets/${encodeURIComponent(target.id)}`, { method: 'DELETE' }); setTargets(current => current.filter(item => item.id !== target.id)); setSelectedTargetIDs(current => current.filter(id => id !== target.id)); setTasks(current => current.map(task => ({ ...task, targetIds: task.targetIds.filter(id => id !== target.id) }))); if (restoreTargetID === target.id) setRestoreTargetID('') }
     catch (cause) { setError(cause instanceof Error ? cause.message : '备份目标删除失败，请重试。') }
   }
-  async function deleteTask() {
-    if (!activeTask || deletingTask) return
-    const confirmed = window.confirm(`删除备份任务“${activeTask.name}”？本机快照历史和 WebDAV 上已上传的文件会保留。`)
-    if (!confirmed) return
-    setDeletingTask(true)
-    setError('')
-    try {
-      await request(`/backup/tasks/${encodeURIComponent(activeTask.id)}`, { method: 'DELETE' })
-      setTasks(current => current.filter(task => task.id !== activeTask.id))
-      setSelectedTaskID('')
-      setSelectedTargetIDs(targets[0] ? [targets[0].id] : [])
-      setIncludeDownloads(false)
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : '备份任务删除失败，请重试。')
-    } finally {
-      setDeletingTask(false)
-    }
-  }
   async function runBackup() {
-    if (runAvailability.disabled || !password.trim() || password !== passwordConfirm) return
+    if (runAvailability.disabled || !encryptionConfigured) return
     const knownSnapshotIDs = new Set(snapshots.map(snapshot => snapshot.id))
     setBackupState('running'); setBackupResult(null); setError('')
     try {
-      const task: BackupTask = activeTask ?? { id: newID('task'), name: '手动备份', targetIds: selectedTargetIDs, includeDownloads, retention: 10, enabled: true }
-      if (!activeTask) { await request('/backup/tasks', { method: 'POST', body: JSON.stringify(task) }); setTasks(current => [...current, task]); setSelectedTaskID(task.id) }
-      else if (activeTask.includeDownloads !== includeDownloads || activeTask.targetIds.join('|') !== selectedTargetIDs.join('|')) {
-        const updated = { ...activeTask, targetIds: selectedTargetIDs, includeDownloads }
-        await request('/backup/tasks', { method: 'POST', body: JSON.stringify(updated) }); setTasks(current => current.map(item => item.id === updated.id ? updated : item))
-      }
-      const result = await request<BackupSnapshot>(`/backup/tasks/${encodeURIComponent(task.id)}/run`, { method: 'POST', body: JSON.stringify({ password }) })
+      const task = currentPlan()
+      await request('/backup/tasks', { method: 'POST', body: JSON.stringify(task) })
+      setTasks([task]); setSelectedTaskID(task.id)
+      const result = await request<BackupSnapshot>(`/backup/tasks/${encodeURIComponent(task.id)}/run`, { method: 'POST', body: JSON.stringify({}) })
       setBackupResult(result); setSnapshots(current => [result, ...current.filter(snapshot => snapshot.id !== result.id)]); setBackupState('success')
     } catch (cause) {
       setBackupState('error')
@@ -251,16 +269,18 @@ export function BackupSettings() {
     {error && <p className="subtitle-error" role="alert">{error}</p>}
 
     {panel === 'backup' && <section className="backup-panel" aria-labelledby="backup-run-title">
-      <div className="backup-panel-heading"><div><h2 id="backup-run-title">创建备份</h2><p>使用密码加密后，快照会上传到所选位置。</p></div>{snapshots[0] && <div className="backup-latest"><span>最近一次</span><strong>{formatBackupDate(snapshots[0].createdAt)}</strong><span className={`backup-status backup-status-${backupStatusPresentation(snapshots[0].status).tone}`}>{backupStatusPresentation(snapshots[0].status).label}</span></div>}</div>
+      <div className="backup-panel-heading"><div><h2 id="backup-run-title">创建备份与计划</h2><p>应用运行时按计划保存快照，也可以随时手动执行。</p></div>{snapshots[0] && <div className="backup-latest"><span>最近一次</span><strong>{formatBackupDate(snapshots[0].createdAt)}</strong><span className={`backup-status backup-status-${backupStatusPresentation(snapshots[0].status).tone}`}>{backupStatusPresentation(snapshots[0].status).label}</span></div>}</div>
       {!targets.length && <div className="backup-empty"><HardDrive size={20}/><div><strong>还没有备份目标</strong><p>先添加一个本地目录或 WebDAV 位置。</p><button type="button" className="text-button" onClick={() => setPanel('targets')}>添加目标</button></div></div>}
       <div className="backup-run-form">
-        <div className="backup-task-select-row"><label>备份任务<select value={selectedTaskID} onChange={event => { const id = event.target.value; const task = tasks.find(item => item.id === id); setSelectedTaskID(id); setSelectedTargetIDs(task?.targetIds ?? []); setIncludeDownloads(Boolean(task?.includeDownloads)) }}><option value="">新建手动备份</option>{tasks.map(task => <option key={task.id} value={task.id}>{task.name}</option>)}</select></label><button type="button" className="icon-button backup-delete-task" aria-label={`删除备份任务${activeTask?.name ?? ''}`} title="删除当前备份任务" disabled={!activeTask || deletingTask || backupState === 'running'} onClick={() => void deleteTask()}><Trash2 size={15}/></button></div>
-        <div className="backup-password-grid"><label><span><KeyRound size={14}/>备份文件加密密码</span><input id="backup-password" type="password" autoComplete="new-password" value={password} onChange={event => setPassword(event.target.value)} placeholder="设置或输入备份密码"/></label><label><span>确认加密密码</span><input type="password" autoComplete="new-password" value={passwordConfirm} onChange={event => setPasswordConfirm(event.target.value)} placeholder="再次输入密码"/></label></div>
-        <p className="field-hint backup-warning"><CircleAlert size={14}/>这是备份文件的加密密码，不是 WebDAV 登录密码。忘记后无法恢复；密码仅在当前页面内存中使用。</p>{passwordError && <p className="subtitle-error" role="alert">{passwordError}</p>}
-        <fieldset className="backup-target-checkboxes"><legend>保存到</legend>{targets.length === 0 ? <span>请先添加备份目标。</span> : targets.map(target => <label key={target.id}><input type="checkbox" checked={selectedTargetIDs.includes(target.id)} onChange={event => setSelectedTargetIDs(current => event.target.checked ? [...current, target.id] : current.filter(id => id !== target.id))}/>{target.name}</label>)}</fieldset>
+        <div className="backup-plan-settings"><label>默认备份间隔（小时）<input aria-label="默认备份间隔小时" type="number" min={1} max={720} value={intervalHours} onChange={event => setIntervalHours(Math.max(1, Math.min(720, Number(event.target.value) || 1)))}/></label><label>每个位置最多保留<input type="number" min={1} max={1000} value={retention} onChange={event => setRetention(Math.max(1, Math.min(1000, Number(event.target.value) || 1)))}/></label><span className="field-hint">自动备份仅在应用运行时执行；电脑唤醒后会补跑逾期目标。</span></div>
+        <div className="backup-password-grid"><label><span><KeyRound size={14}/>备份文件加密密码</span><input id="backup-password" type="password" autoComplete="new-password" value={encryptionPassword} onChange={event => setEncryptionPassword(event.target.value)} placeholder={encryptionConfigured ? '已安全保存；输入新密码可更换' : '至少 8 个字符'}/></label><label><span>确认加密密码</span><input type="password" autoComplete="new-password" value={encryptionPasswordConfirm} onChange={event => setEncryptionPasswordConfirm(event.target.value)} placeholder="再次输入密码"/></label></div>
+        <div className="backup-encryption-actions"><p className="field-hint backup-warning"><CircleAlert size={14}/>这是快照加密密码，不是 WebDAV 登录密码。忘记后无法恢复。</p><button type="button" className="button button-secondary" disabled={savingEncryption || encryptionPassword.length < 8 || encryptionPassword !== encryptionPasswordConfirm} onClick={() => void saveEncryption()}>{savingEncryption ? '正在安全保存…' : encryptionConfigured ? '更换密码' : '保存加密密码'}</button></div>{passwordError && <p className="subtitle-error" role="alert">{passwordError}</p>}
+        <label className="backup-history-password">用于校验旧快照的密码<input type="password" autoComplete="off" value={password} onChange={event => setPassword(event.target.value)} placeholder="重新输入创建旧快照时使用的密码"/></label>
+        <fieldset className="backup-target-checkboxes"><legend>保存位置与频率</legend>{targets.length === 0 ? <span>请先添加备份目标。</span> : targets.map(target => <div className="backup-plan-target" key={target.id}><label><input type="checkbox" checked={selectedTargetIDs.includes(target.id)} onChange={event => setSelectedTargetIDs(current => event.target.checked ? [...current, target.id] : current.filter(id => id !== target.id))}/>{target.name}</label><label className="backup-target-interval"><span>间隔小时</span><input aria-label={`${target.name}备份间隔小时`} type="number" min={1} max={720} placeholder={`默认 ${intervalHours}`} disabled={!selectedTargetIDs.includes(target.id)} value={targetIntervals[target.id] || ''} onChange={event => setTargetIntervals(current => ({ ...current, [target.id]: event.target.value ? Number(event.target.value) : 0 }))}/></label></div>)}</fieldset>
         {backupTargets.length > 0 && <div className="backup-destinations"><span>快照将写入</span>{backupTargets.map(target => <div key={target.id}><strong>{target.name}</strong><code>{backupDestination(target)}</code></div>)}</div>}
         <label className="backup-checkbox"><input type="checkbox" checked={includeDownloads} onChange={event => setIncludeDownloads(event.target.checked)}/>包含下载媒体（默认关闭）</label><p className="field-hint">{BACKUP_SCOPE_NOTICE}</p>
-        <div className="backup-run-actions"><button type="button" className="button button-primary" disabled={runAvailability.disabled || Boolean(passwordError) || !password.trim() || !passwordConfirm.trim()} onClick={() => void runBackup()}><Play size={15}/>{backupState === 'running' ? '正在生成、加密并上传…' : '立即备份'}</button>{selectedTargetIDs.length === 0 && <span className="field-hint" role="status">请至少选择一个备份目标</span>}{runAvailability.disabled && selectedTargetIDs.length > 0 && <span className="field-hint" role="status">{runAvailability.reason}</span>}</div>
+        {!encryptionConfigured && <p className="field-hint" role="status">请先保存备份加密密码，之后定时与手动备份都会使用它。</p>}
+        <div className="backup-run-actions"><button type="button" className="button button-secondary" disabled={savingPlan || selectedTargetIDs.length === 0 || backupState === 'running'} onClick={() => void savePlan()}><Check size={15}/>{savingPlan ? '正在保存…' : '保存计划'}</button><button type="button" className="button button-primary" disabled={runAvailability.disabled || !encryptionConfigured || savingPlan} onClick={() => void runBackup()}><Play size={15}/>{backupState === 'running' ? '正在生成、加密并上传…' : '立即备份'}</button>{selectedTargetIDs.length === 0 && <span className="field-hint" role="status">请至少选择一个备份目标</span>}{runAvailability.disabled && selectedTargetIDs.length > 0 && <span className="field-hint" role="status">{runAvailability.reason}</span>}</div>
       </div>
       {backupResult && <div className={`backup-run-result backup-result-${backupStatusPresentation(backupResult.status).tone}`} role="status"><div><strong>{backupStatusPresentation(backupResult.status).label}</strong><span>{formatBackupDate(backupResult.createdAt)} · {formatBackupSize(backupResult.size)}</span></div><code>{backupResult.id}.tgb</code><div className="backup-result-targets">{backupResult.targets?.map(target => <div key={target.targetId}><span className={`backup-status backup-status-${target.status === 'succeeded' ? 'success' : target.status === 'failed' ? 'danger' : 'neutral'}`}>{target.status === 'succeeded' ? '已上传' : target.status === 'failed' ? '上传失败' : target.status}</span><strong>{target.name || target.targetId}</strong>{target.status === 'failed' && target.error && <span>{target.error}</span>}</div>)}</div><p>远端文件位于所选目录下的 <code>{snapshotDirectory}/{backupResult.id}.tgb</code></p></div>}
     </section>}

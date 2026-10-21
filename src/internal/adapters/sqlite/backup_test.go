@@ -174,6 +174,43 @@ func TestBackupListsReleaseSQLiteConnectionBeforeLoadingRelatedRows(t *testing.T
 	}
 }
 
+func TestBackupPlanPersistsDefaultAndTargetIntervals(t *testing.T) {
+	store := inboxTestStore(t)
+	ctx := context.Background()
+	for _, id := range []string{"schedule-a", "schedule-b"} {
+		if err := store.SaveTarget(ctx, backup.Target{ID: id, Name: id, Type: "local", Path: t.TempDir(), Enabled: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	task := backup.Task{ID: "schedule-plan", Name: "Auto backup", TargetIDs: []string{"schedule-a", "schedule-b"}, IntervalHours: 6, TargetIntervalHours: map[string]int{"schedule-b": 3}, Retention: 12, Enabled: true}
+	if err := store.SaveTask(ctx, task); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.GetTask(ctx, task.ID)
+	if err != nil || loaded.IntervalHours != 6 || loaded.TargetIntervalHours["schedule-b"] != 3 || loaded.TargetIntervalHours["schedule-a"] != 0 || loaded.Retention != 12 {
+		t.Fatalf("backup schedule did not round-trip: %+v %v", loaded, err)
+	}
+}
+
+func TestBackupStoreRejectsSecondBackupPlan(t *testing.T) {
+	store := inboxTestStore(t)
+	ctx := context.Background()
+	first := backup.Task{ID: "single-plan-a", Name: "Auto backup", TargetIDs: []string{"target-a"}, Enabled: true}
+	if err := store.SaveTarget(ctx, backup.Target{ID: "target-a", Name: "A", Type: "local", Path: t.TempDir(), Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveTask(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveTask(ctx, backup.Task{ID: "single-plan-b", Name: "Another plan", TargetIDs: []string{"target-a"}, Enabled: true}); err == nil {
+		t.Fatal("second backup plan was accepted")
+	}
+	tasks, err := store.BackupTasks(ctx)
+	if err != nil || len(tasks) != 1 || tasks[0].ID != first.ID {
+		t.Fatalf("single-plan invariant changed after rejected save: %+v %v", tasks, err)
+	}
+}
+
 func TestDeletingBackupTaskKeepsSnapshotHistory(t *testing.T) {
 	store := inboxTestStore(t)
 	ctx := context.Background()

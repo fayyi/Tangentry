@@ -147,6 +147,32 @@ func (h *backupHandler) deleteTask(w http.ResponseWriter, r *http.Request) {
 	}
 	write(w, http.StatusNoContent, nil)
 }
+func (h *backupHandler) encryptionState(w http.ResponseWriter, r *http.Request) {
+	service, ok := h.service.(interface{ EncryptionConfigured() bool })
+	if !ok {
+		write(w, http.StatusServiceUnavailable, apiError{"backup_encryption_unavailable", "备份密码存储暂不可用。"})
+		return
+	}
+	write(w, http.StatusOK, map[string]bool{"configured": service.EncryptionConfigured()})
+}
+func (h *backupHandler) saveEncryptionPassword(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Password string `json:"password"`
+	}
+	if !decodeJSON(w, r, &request) {
+		return
+	}
+	service, ok := h.service.(interface{ SaveEncryptionPassword(string) error })
+	if !ok {
+		write(w, http.StatusServiceUnavailable, apiError{"backup_encryption_unavailable", "备份密码存储暂不可用。"})
+		return
+	}
+	if err := service.SaveEncryptionPassword(request.Password); err != nil {
+		write(w, http.StatusBadRequest, apiError{"backup_encryption_invalid", "备份密码至少需要 8 个字符。"})
+		return
+	}
+	write(w, http.StatusNoContent, nil)
+}
 func (h *backupHandler) run(w http.ResponseWriter, r *http.Request) {
 	started := time.Now()
 	var v struct {

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"tangentry/internal/backup"
 	"tangentry/internal/content"
 )
 
@@ -112,5 +113,47 @@ func TestFreshDatabaseRecordsEveryMigrationOnce(t *testing.T) {
 			t.Fatal("unexpected recorded versions", count, err)
 		}
 		store.Close()
+	}
+}
+
+func TestBackupScheduleMigrationMergesTasksAndPreservesRunHistory(t *testing.T) {
+	store := inboxTestStore(t)
+	ctx := context.Background()
+	for _, id := range []string{"migration-a", "migration-b"} {
+		if err := store.SaveTarget(ctx, backup.Target{ID: id, Name: id, Type: "local", Path: t.TempDir(), Enabled: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := store.db.Exec(`ALTER TABLE backup_task DROP COLUMN interval_hours`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`INSERT INTO backup_task(id,name,include_downloads,retention,enabled) VALUES('old-a','A',0,8,1),('old-b','B',1,4,1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`INSERT INTO backup_task_target(task_id,target_id,position) VALUES('old-a','migration-a',0),('old-b','migration-b',0)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`INSERT INTO backup_run(id,task_id,created_at,size,status,retry_available) VALUES('old-run','old-b',1,10,'succeeded',0)`); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(`ALTER TABLE backup_task ADD COLUMN interval_hours INTEGER NOT NULL DEFAULT 6 CHECK(interval_hours BETWEEN 1 AND 720)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := configureSingleBackupPlan(tx); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	tasks, err := store.BackupTasks(ctx)
+	if err != nil || len(tasks) != 1 || tasks[0].ID != "old-a" || !tasks[0].IncludeDownloads || !tasks[0].Enabled || tasks[0].Retention != 8 || len(tasks[0].TargetIDs) != 2 {
+		t.Fatalf("old tasks not merged: %+v %v", tasks, err)
+	}
+	if _, err := store.GetSnapshot(ctx, "old-run"); err != nil {
+		t.Fatalf("historical snapshot disappeared during task merge: %v", err)
 	}
 }

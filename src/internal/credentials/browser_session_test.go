@@ -192,6 +192,37 @@ func TestBackupTargetPasswordUsesSeparateNamespaceAndEncryptsWhenKeyed(t *testin
 	}
 }
 
+func TestBackupEncryptionPasswordIsStoredSeparatelyAndSurvivesReopen(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "credentials")
+	key := bytes.Repeat([]byte{0x57}, 32)
+	store, err := OpenWithKey(dir, "", "", key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	password := "fixture-backup-encryption-password"
+	if err := store.SaveBackupEncryptionPassword(password); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "backup-encryption.json"))
+	if err != nil || strings.Contains(string(raw), password) || strings.Contains(string(raw), `"password":"`) {
+		t.Fatalf("backup encryption password was not encrypted: %s %v", raw, err)
+	}
+	reopened, err := OpenWithKey(dir, "", "", key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := reopened.BackupEncryptionPassword(); !ok || got != password || !reopened.BackupEncryptionConfigured() {
+		t.Fatal("backup encryption password did not survive reopen")
+	}
+	headless, err := Open(dir, "", "")
+	if err != nil || !headless.BackupEncryptionConfigured() {
+		t.Fatalf("opaque backup encryption credential was not retained: %v", err)
+	}
+	if _, ok := headless.BackupEncryptionPassword(); ok {
+		t.Fatal("backup encryption password was exposed without the desktop key")
+	}
+}
+
 func TestBackupTargetCredentialCleanupRemovesOnlyOrphans(t *testing.T) {
 	store, err := OpenWithKey(filepath.Join(t.TempDir(), "credentials"), "", "", bytes.Repeat([]byte{0x42}, 32))
 	if err != nil {

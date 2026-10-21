@@ -34,3 +34,12 @@ test('backup settings distinguish archive encryption from WebDAV authentication'
   expect(html).toContain('确认加密密码')
   expect(html).toContain('不是 WebDAV 登录密码')
 })
+
+test('backup settings present a single scheduled plan with destination interval overrides', () => {
+  const html = renderToString(<BackupSettings />)
+  expect(html).toContain('创建备份与计划')
+  expect(html).toContain('默认备份间隔小时')
+  expect(html).toContain('保存位置与频率')
+  expect(html).toContain('每个位置最多保留')
+  expect(html).not.toContain('删除备份任务')
+})

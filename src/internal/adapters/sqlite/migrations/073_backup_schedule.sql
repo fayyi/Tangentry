@@ -1,0 +1,1 @@
+ALTER TABLE backup_task ADD COLUMN interval_hours INTEGER NOT NULL DEFAULT 6 CHECK(interval_hours BETWEEN 1 AND 720);

@@ -83,6 +83,7 @@ func openRuntimeResources(dataDir string, configuration config.Config, option Op
 		}
 	}, backupWorkDir, "dev")
 	backupService.SetTargetCredentials(cookies)
+	backupService.SetEncryptionCredentials(cookies)
 	if err := backupService.CleanupOrphanTargetCredentials(context.Background()); err != nil {
 		return nil, fmt.Errorf("backup credential cleanup: %w", err)
 	}

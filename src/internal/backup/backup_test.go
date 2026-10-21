@@ -513,6 +513,58 @@ func TestFanoutPersistsPartialSuccessAndRetriesOnlyFailedTarget(t *testing.T) {
 	}
 }
 
+func TestScheduledTargetIntervalsAreIndependentAndHonorRecentFailures(t *testing.T) {
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	task := Task{TargetIDs: []string{"default", "custom", "disabled"}, IntervalHours: 6, TargetIntervalHours: map[string]int{"custom": 3}}
+	snapshots := []Snapshot{
+		{ID: "default-last", CreatedAt: now.Add(-5 * time.Hour), Targets: []TargetRun{{TargetID: "default", Status: "succeeded"}}},
+		{ID: "custom-last", CreatedAt: now.Add(-4 * time.Hour), Targets: []TargetRun{{TargetID: "custom", Status: "failed"}}},
+		{ID: "disabled-last", CreatedAt: now.Add(-30 * time.Hour), Targets: []TargetRun{{TargetID: "disabled", Status: "succeeded"}}},
+	}
+	due := scheduledTargetIDs(task, snapshots, map[string]bool{"default": true, "custom": true, "disabled": false}, now)
+	if len(due) != 1 || due[0] != "custom" {
+		t.Fatalf("due targets = %v, want only custom interval target", due)
+	}
+	due = scheduledTargetIDs(task, snapshots, map[string]bool{"default": true, "custom": true}, now.Add(2*time.Hour))
+	if len(due) != 2 || due[0] != "default" || due[1] != "custom" {
+		t.Fatalf("due targets after 2 hours = %v, want default and custom", due)
+	}
+}
+
+func TestScheduledTargetPendingRunWaitsForIntervalBeforeRetry(t *testing.T) {
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	task := Task{TargetIDs: []string{"target"}, IntervalHours: 3}
+	snapshots := []Snapshot{{
+		ID: "interrupted-run", CreatedAt: now.Add(-time.Hour),
+		Targets: []TargetRun{{TargetID: "target", Status: "pending"}},
+	}}
+	enabled := map[string]bool{"target": true}
+	if due := scheduledTargetIDs(task, snapshots, enabled, now); len(due) != 0 {
+		t.Fatalf("pending target due after 1 hour = %v, want no retry before interval", due)
+	}
+	if due := scheduledTargetIDs(task, snapshots, enabled, now.Add(2*time.Hour)); len(due) != 1 || due[0] != "target" {
+		t.Fatalf("pending target due after 3 hours = %v, want target retry", due)
+	}
+}
+
+func TestManualTargetSubsetUploadsOnlyDueDestination(t *testing.T) {
+	repo := &fanoutRepo{
+		targets: map[string]Target{"first": {ID: "first", Name: "first", Type: "local", Enabled: true}, "second": {ID: "second", Name: "second", Type: "local", Enabled: true}},
+		task:    Task{ID: "task-1", TargetIDs: []string{"first", "second"}}, snapshots: map[string]Snapshot{}, runs: map[string][]TargetRun{},
+	}
+	var firstUploads, secondUploads atomic.Int32
+	service := NewService(repo, fanoutSource{}, func(target Target) (ObjectStore, error) {
+		if target.ID == "first" {
+			return fanoutStore{count: &firstUploads}, nil
+		}
+		return fanoutStore{count: &secondUploads}, nil
+	}, t.TempDir(), "test")
+	snapshot, err := service.CreateForTargets(context.Background(), "task-1", []string{"second"}, "fixture-backup-passphrase")
+	if err != nil || snapshot.Status != "succeeded" || len(snapshot.Targets) != 1 || snapshot.Targets[0].TargetID != "second" || firstUploads.Load() != 0 || secondUploads.Load() != 1 {
+		t.Fatalf("target subset was not isolated: snapshot=%+v uploads=(%d,%d) err=%v", snapshot, firstUploads.Load(), secondUploads.Load(), err)
+	}
+}
+
 type failingSnapshotSource struct{ err error }
 
 func (s failingSnapshotSource) Snapshot(context.Context, string, bool) ([]File, error) {

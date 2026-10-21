@@ -30,7 +30,8 @@ func newServices(dataDir string, configuration config.Config, option Options) (_
 	if err != nil {
 		return nil, started, err
 	}
-	startBackgroundServices(features)
+	started.addErr(runtime.backup.Close)
+	startBackgroundServices(features, runtime.backup)
 	return &services{
 		runtime: runtime, adapters: runtime.platforms, features: features,
 		imports: contentImporter{platforms: runtime.platforms.imports, records: runtime.repositories.xiaohongshu, documents: runtime.documents, papers: runtime.platforms.network.papers},

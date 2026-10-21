@@ -160,12 +160,14 @@ type TargetRun struct {
 }
 
 type Task struct {
-	ID               string   `json:"id"`
-	Name             string   `json:"name"`
-	TargetIDs        []string `json:"targetIds"`
-	IncludeDownloads bool     `json:"includeDownloads"`
-	Retention        int      `json:"retention"`
-	Enabled          bool     `json:"enabled"`
+	ID                  string         `json:"id"`
+	Name                string         `json:"name"`
+	TargetIDs           []string       `json:"targetIds"`
+	IncludeDownloads    bool           `json:"includeDownloads"`
+	Retention           int            `json:"retention"`
+	IntervalHours       int            `json:"intervalHours"`
+	TargetIntervalHours map[string]int `json:"targetIntervalHours,omitempty"`
+	Enabled             bool           `json:"enabled"`
 }
 
 type Snapshot struct {
@@ -584,22 +586,32 @@ type TargetCredentials interface {
 	CleanupBackupTargetPasswords([]string) error
 }
 
+type EncryptionCredentials interface {
+	BackupEncryptionPassword() (string, bool)
+	BackupEncryptionConfigured() bool
+	SaveBackupEncryptionPassword(string) error
+}
+
 type TargetTester func(context.Context, Target) error
 
 type StoreFactory func(Target) (ObjectStore, error)
 
 type Service struct {
-	repo         Repository
-	source       Source
-	stores       StoreFactory
-	workDir      string
-	version      string
-	credentials  TargetCredentials
-	testTarget   TargetTester
-	folderStores TargetFolderStoreFactory
-	runMu        sync.Mutex
-	mu           sync.Mutex
-	plans        map[string]restorePlan
+	repo          Repository
+	source        Source
+	stores        StoreFactory
+	workDir       string
+	version       string
+	credentials   TargetCredentials
+	encryption    EncryptionCredentials
+	testTarget    TargetTester
+	folderStores  TargetFolderStoreFactory
+	runMu         sync.Mutex
+	mu            sync.Mutex
+	plans         map[string]restorePlan
+	schedulerMu   sync.Mutex
+	schedulerRun  sync.WaitGroup
+	schedulerStop context.CancelFunc
 }
 
 func (s *Service) withRestoreLock(ctx context.Context, fn func() error) error {
@@ -618,9 +630,137 @@ func NewService(repo Repository, source Source, stores StoreFactory, workDir, ve
 	return service
 }
 
-func (s *Service) SetTargetCredentials(credentials TargetCredentials)     { s.credentials = credentials }
+func (s *Service) SetTargetCredentials(credentials TargetCredentials) { s.credentials = credentials }
+func (s *Service) SetEncryptionCredentials(credentials EncryptionCredentials) {
+	s.encryption = credentials
+}
 func (s *Service) SetTargetTester(tester TargetTester)                    { s.testTarget = tester }
 func (s *Service) SetTargetFolderStores(factory TargetFolderStoreFactory) { s.folderStores = factory }
+
+func (s *Service) EncryptionConfigured() bool {
+	if s.encryption == nil {
+		return false
+	}
+	_, ok := s.encryption.BackupEncryptionPassword()
+	return ok
+}
+
+func (s *Service) SaveEncryptionPassword(password string) error {
+	if s.encryption == nil {
+		return errors.New("backup encryption credential storage unavailable")
+	}
+	return s.encryption.SaveBackupEncryptionPassword(password)
+}
+
+func (s *Service) StartScheduler() {
+	s.schedulerMu.Lock()
+	if s.schedulerStop != nil {
+		s.schedulerMu.Unlock()
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	s.schedulerStop = cancel
+	s.schedulerRun.Add(1)
+	s.schedulerMu.Unlock()
+	go s.runScheduler(ctx)
+}
+
+func (s *Service) Close() error {
+	s.schedulerMu.Lock()
+	cancel := s.schedulerStop
+	s.schedulerStop = nil
+	s.schedulerMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	s.schedulerRun.Wait()
+	return nil
+}
+
+func (s *Service) runScheduler(ctx context.Context) {
+	defer s.schedulerRun.Done()
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		s.runScheduledBackup(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func (s *Service) runScheduledBackup(ctx context.Context) {
+	s.runMu.Lock()
+	defer s.runMu.Unlock()
+	s.runScheduledBackupLocked(ctx)
+}
+
+func (s *Service) runScheduledBackupLocked(ctx context.Context) {
+	if s.encryption == nil {
+		return
+	}
+	password, ok := s.encryption.BackupEncryptionPassword()
+	if !ok || password == "" {
+		return
+	}
+	tasks, err := s.repo.ListTasks(ctx)
+	if err != nil || len(tasks) == 0 {
+		return
+	}
+	task := tasks[0]
+	if !task.Enabled || len(task.TargetIDs) == 0 {
+		return
+	}
+	snapshots, err := s.repo.ListSnapshots(ctx)
+	if err != nil {
+		return
+	}
+	enabled := make(map[string]bool, len(task.TargetIDs))
+	for _, id := range task.TargetIDs {
+		target, err := s.repo.GetTarget(ctx, id)
+		enabled[id] = err == nil && target.Enabled
+	}
+	due := scheduledTargetIDs(task, snapshots, enabled, time.Now())
+	if len(due) == 0 {
+		return
+	}
+	_, _ = s.createWithTargetsLocked(ctx, task.ID, due, password)
+}
+
+func scheduledTargetIDs(task Task, snapshots []Snapshot, enabled map[string]bool, now time.Time) []string {
+	lastAttempt := make(map[string]time.Time)
+	for _, snapshot := range snapshots {
+		for _, result := range snapshot.Targets {
+			// A pending result means this target was part of a run that was
+			// interrupted before its final status was persisted. Count its run
+			// creation time so the scheduler does not restart it every minute.
+			if snapshot.CreatedAt.After(lastAttempt[result.TargetID]) {
+				lastAttempt[result.TargetID] = snapshot.CreatedAt
+			}
+		}
+	}
+	interval := time.Duration(task.IntervalHours) * time.Hour
+	if interval <= 0 {
+		interval = 6 * time.Hour
+	}
+	due := make([]string, 0, len(task.TargetIDs))
+	for _, id := range task.TargetIDs {
+		if !enabled[id] {
+			continue
+		}
+		targetInterval := interval
+		if hours := task.TargetIntervalHours[id]; hours > 0 {
+			targetInterval = time.Duration(hours) * time.Hour
+		}
+		last := lastAttempt[id]
+		if last.IsZero() || !now.Before(last.Add(targetInterval)) {
+			due = append(due, id)
+		}
+	}
+	return due
+}
 
 func (s *Service) CleanupOrphanTargetCredentials(ctx context.Context) (cleanupErr error) {
 	started := time.Now()
@@ -668,7 +808,13 @@ func (s *Service) Targets(ctx context.Context) ([]Target, error) {
 	}
 	return targets, nil
 }
-func (s *Service) Tasks(ctx context.Context) ([]Task, error) { return s.repo.ListTasks(ctx) }
+func (s *Service) Tasks(ctx context.Context) ([]Task, error) {
+	tasks, err := s.repo.ListTasks(ctx)
+	if err != nil || len(tasks) == 0 {
+		return tasks, err
+	}
+	return tasks[:1], nil
+}
 func (s *Service) Snapshots(ctx context.Context) ([]Snapshot, error) {
 	snapshots, err := s.repo.ListSnapshots(ctx)
 	if err != nil {
@@ -1066,8 +1212,32 @@ func validateRemotePath(value string) error {
 	return nil
 }
 func (s *Service) SaveTask(ctx context.Context, task Task) error {
-	if task.ID == "" || task.Name == "" || len(task.TargetIDs) == 0 {
+	if task.ID == "" || task.Name == "" || len(task.TargetIDs) == 0 || task.IntervalHours < 1 || task.IntervalHours > 720 || task.Retention < 1 || task.Retention > 1000 {
 		return errors.New("invalid backup task")
+	}
+	existing, err := s.repo.ListTasks(ctx)
+	if err != nil {
+		return err
+	}
+	for _, current := range existing {
+		if current.ID != task.ID {
+			return errors.New("only one backup plan is supported")
+		}
+	}
+	if task.TargetIntervalHours == nil {
+		task.TargetIntervalHours = map[string]int{}
+	}
+	for id, hours := range task.TargetIntervalHours {
+		if hours < 1 || hours > 720 {
+			return errors.New("invalid target backup interval")
+		}
+		found := false
+		for _, targetID := range task.TargetIDs {
+			found = found || targetID == id
+		}
+		if !found {
+			return errors.New("backup interval target is not selected")
+		}
 	}
 	return s.repo.SaveTask(ctx, task)
 }
@@ -1082,17 +1252,47 @@ func (s *Service) DeleteTarget(ctx context.Context, id string) error {
 	}
 	return nil
 }
-func (s *Service) DeleteTask(ctx context.Context, id string) error { return s.repo.DeleteTask(ctx, id) }
+func (s *Service) DeleteTask(context.Context, string) error {
+	return errors.New("the backup plan cannot be deleted")
+}
 
 func (s *Service) Create(ctx context.Context, taskID, password string) (Snapshot, error) {
+	return s.createWithTargets(ctx, taskID, nil, password)
+}
+
+func (s *Service) CreateForTargets(ctx context.Context, taskID string, targetIDs []string, password string) (Snapshot, error) {
+	return s.createWithTargets(ctx, taskID, targetIDs, password)
+}
+
+func (s *Service) createWithTargets(ctx context.Context, taskID string, targetIDs []string, password string) (Snapshot, error) {
 	s.runMu.Lock()
 	defer s.runMu.Unlock()
+	return s.createWithTargetsLocked(ctx, taskID, targetIDs, password)
+}
+
+func (s *Service) createWithTargetsLocked(ctx context.Context, taskID string, targetIDs []string, password string) (Snapshot, error) {
+	if password == "" && s.encryption != nil {
+		password, _ = s.encryption.BackupEncryptionPassword()
+	}
 	if err := ctx.Err(); err != nil {
 		return Snapshot{}, backupOperationError{phase: "prepare", cause: err}
 	}
 	task, err := s.repo.GetTask(ctx, taskID)
 	if err != nil {
 		return Snapshot{}, backupOperationError{phase: "task_read", cause: err}
+	}
+	if targetIDs != nil {
+		allowed := make(map[string]bool, len(targetIDs))
+		for _, id := range targetIDs {
+			allowed[id] = true
+		}
+		filtered := make([]string, 0, len(targetIDs))
+		for _, id := range task.TargetIDs {
+			if allowed[id] {
+				filtered = append(filtered, id)
+			}
+		}
+		task.TargetIDs = filtered
 	}
 	return s.create(ctx, task, password)
 }
@@ -1298,7 +1498,6 @@ func (s *Service) create(ctx context.Context, task Task, password string) (_ Sna
 		}
 		runIndex := targetRunIndex(runs, target.ID)
 		e = uploadPackage(ctx, store, name, retryPath)
-		closeStore(store)
 		if e != nil {
 			slog.Warn("backup target upload failed", "duration_ms", time.Since(targetStarted).Milliseconds(), "target_type", safeTargetType(target.Type), "phase", "upload", "error_type", fmt.Sprintf("%T", e))
 		} else {
@@ -1318,6 +1517,7 @@ func (s *Service) create(ctx context.Context, task Task, password string) (_ Sna
 					}
 				}
 				_ = s.persistTargetRuns(ctx, id, runs)
+				closeStore(store)
 				break
 			}
 			runs[runIndex].Status = "failed"
@@ -1326,8 +1526,15 @@ func (s *Service) create(ctx context.Context, task Task, password string) (_ Sna
 			runs[runIndex].Status = "succeeded"
 		}
 		if err := s.persistTargetRuns(ctx, id, runs); err != nil {
+			closeStore(store)
 			return Snapshot{}, err
 		}
+		if e == nil {
+			if cleanupErr := pruneTargetSnapshots(ctx, store, s.repo, target.ID, task.Retention); cleanupErr != nil {
+				slog.Warn("backup retention cleanup failed", "target_type", safeTargetType(target.Type), "error_type", fmt.Sprintf("%T", cleanupErr))
+			}
+		}
+		closeStore(store)
 	}
 	status := targetRunsStatus(runs)
 	snap.Status, snap.Targets = status, runs
@@ -1351,6 +1558,65 @@ func (s *Service) create(ctx context.Context, task Task, password string) (_ Sna
 		return snap, backupTargetRunError{status: status}
 	}
 	return snap, nil
+}
+
+func pruneTargetSnapshots(ctx context.Context, store ObjectStore, repo Repository, targetID string, retention int) error {
+	if retention < 1 {
+		retention = 10
+	}
+	snapshots, err := repo.ListSnapshots(ctx)
+	if err != nil {
+		return err
+	}
+	eligible := make([]Snapshot, 0, len(snapshots))
+	for _, snapshot := range snapshots {
+		for _, target := range snapshot.Targets {
+			if target.TargetID == targetID && target.Status == "succeeded" {
+				eligible = append(eligible, snapshot)
+				break
+			}
+		}
+	}
+	sort.Slice(eligible, func(i, j int) bool { return eligible[i].CreatedAt.After(eligible[j].CreatedAt) })
+	keep := make(map[string]bool, retention)
+	for i, snapshot := range eligible {
+		if i >= retention {
+			continue
+		}
+		keep[snapshot.ID] = true
+	}
+	objects, err := store.List(ctx, "tangentry/v1/snapshots")
+	if err != nil {
+		return err
+	}
+	for _, object := range objects {
+		base := path.Base(object)
+		if !strings.HasSuffix(base, ".tgb") {
+			continue
+		}
+		id := strings.TrimSuffix(base, ".tgb")
+		if !validSnapshotID(id) || object != "tangentry/v1/snapshots/"+id+".tgb" || keep[id] {
+			continue
+		}
+		tracked := false
+		for _, snapshot := range snapshots {
+			if snapshot.ID == id {
+				for _, target := range snapshot.Targets {
+					if target.TargetID == targetID && target.Status == "succeeded" {
+						tracked = true
+						break
+					}
+				}
+				break
+			}
+		}
+		if tracked {
+			if err := store.Delete(ctx, object); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 type backupTargetRunError struct{ status string }

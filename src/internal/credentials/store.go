@@ -61,6 +61,8 @@ type Store struct {
 	backupTargets                map[string]string
 	backupTargetSecrets          map[string]string
 	legacyBackupTargetPasswords  map[string]string
+	backupEncryptionPassword     string
+	backupEncryptionSecret       string
 }
 
 func Open(directory, header, file string) (*Store, error) {
@@ -88,6 +90,9 @@ func open(directory, header, file string, key []byte) (*Store, error) {
 	raw, err := os.ReadFile(filepath.Join(directory, "cookies.json"))
 	if errors.Is(err, os.ErrNotExist) {
 		if err := s.loadBackupTargetPasswords(); err != nil {
+			return nil, err
+		}
+		if err := s.loadBackupEncryptionPassword(); err != nil {
 			return nil, err
 		}
 		return s, nil
@@ -167,7 +172,126 @@ func open(directory, header, file string, key []byte) (*Store, error) {
 	if err := s.loadBackupTargetPasswords(); err != nil {
 		return nil, err
 	}
+	if err := s.loadBackupEncryptionPassword(); err != nil {
+		return nil, err
+	}
 	return s, nil
+}
+
+type backupEncryptionCredential struct {
+	Password string `json:"password,omitempty"`
+	Secret   string `json:"secret,omitempty"`
+}
+
+func (s *Store) loadBackupEncryptionPassword() error {
+	path := filepath.Join(s.directory, "backup-encryption.json")
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil || len(raw) > 16<<10 {
+		return ErrStorage
+	}
+	var credential backupEncryptionCredential
+	if json.Unmarshal(raw, &credential) != nil || credential.Password != "" && credential.Secret != "" {
+		return ErrStorage
+	}
+	if credential.Secret != "" {
+		if len(s.secretKey) == 0 {
+			s.backupEncryptionSecret = credential.Secret
+		} else {
+			var private entry
+			if !decryptPrivate(s.secretKey, credential.Secret, &private) || private.Jar == "" {
+				s.backupEncryptionSecret = credential.Secret
+			} else {
+				s.backupEncryptionPassword = private.Jar
+			}
+		}
+	} else if credential.Password != "" {
+		if len(s.secretKey) == 0 {
+			s.backupEncryptionPassword = credential.Password
+		} else {
+			secret, err := encryptPrivate(s.secretKey, entry{Jar: credential.Password})
+			if err != nil {
+				return ErrStorage
+			}
+			s.backupEncryptionPassword = credential.Password
+			return s.persistBackupEncryptionCredential(backupEncryptionCredential{Secret: secret})
+		}
+	}
+	if os.Chmod(path, 0600) != nil {
+		return ErrStorage
+	}
+	return nil
+}
+
+func (s *Store) BackupEncryptionPassword() (string, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.backupEncryptionPassword != "" {
+		return s.backupEncryptionPassword, true
+	}
+	return "", false
+}
+
+func (s *Store) BackupEncryptionConfigured() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.backupEncryptionPassword != "" || s.backupEncryptionSecret != ""
+}
+
+func (s *Store) SaveBackupEncryptionPassword(password string) error {
+	if len(password) < 8 || len(password) > 4096 {
+		return ErrStorage
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	credential := backupEncryptionCredential{Password: password}
+	if len(s.secretKey) > 0 {
+		secret, err := encryptPrivate(s.secretKey, entry{Jar: password})
+		if err != nil {
+			return ErrStorage
+		}
+		credential = backupEncryptionCredential{Secret: secret}
+	}
+	if err := s.persistBackupEncryptionCredential(credential); err != nil {
+		return err
+	}
+	s.backupEncryptionPassword = password
+	s.backupEncryptionSecret = ""
+	return nil
+}
+
+func (s *Store) persistBackupEncryptionCredential(credential backupEncryptionCredential) error {
+	raw, err := json.Marshal(credential)
+	if err != nil {
+		return ErrStorage
+	}
+	f, err := os.CreateTemp(s.directory, ".backup-encryption-*")
+	if err != nil {
+		return ErrStorage
+	}
+	name := f.Name()
+	defer os.Remove(name)
+	if err := f.Chmod(0600); err != nil {
+		f.Close()
+		return ErrStorage
+	}
+	if _, err := f.Write(raw); err != nil {
+		f.Close()
+		return ErrStorage
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return ErrStorage
+	}
+	if err := f.Close(); err != nil {
+		return ErrStorage
+	}
+	if err := os.Rename(name, filepath.Join(s.directory, "backup-encryption.json")); err != nil {
+		return ErrStorage
+	}
+	return nil
 }
 
 type backupTargetCredential struct {

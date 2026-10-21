@@ -10,6 +10,7 @@ import (
 	articleadapter "tangentry/internal/adapters/articles"
 	"tangentry/internal/ai"
 	"tangentry/internal/articles"
+	"tangentry/internal/backup"
 	"tangentry/internal/config"
 	"tangentry/internal/content"
 	"tangentry/internal/discovery"
@@ -240,6 +241,7 @@ func summaryNoteOutline(nodes []ai.SummaryOutline, depth int) []string {
 // startBackgroundServices starts only work that must outlive the constructor.
 // Keep this after all feature construction succeeds so a failed wiring path
 // never leaves a refresh goroutine behind.
-func startBackgroundServices(features *apiBundle) {
+func startBackgroundServices(features *apiBundle, backupService *backup.Service) {
 	features.sources.StartRefresh()
+	backupService.StartScheduler()
 }
