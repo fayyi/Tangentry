@@ -13,7 +13,7 @@ const progressOptions: { value: ProgressFilter; label: string }[] = [
 export function ProgressOverviewControls({ overview, search, onSearch }: { overview: ReturnType<typeof useProgressOverview>; search: string; onSearch: (value: string) => void }) {
   return <section className="progress-overview" aria-label="收藏播放进度">
     <div className="progress-overview-controls">
-      <div className="progress-filter-options" role="radiogroup" aria-label="按播放进度筛选">{progressOptions.map(option => <label key={option.value}><input type="radio" name="collection-progress" value={option.value} checked={overview.filter === option.value} disabled={!overview.available} onChange={() => overview.setFilter(option.value)} /><span>{option.label}</span></label>)}</div>
+      <label className="progress-filter-select"><span className="visually-hidden">按播放进度筛选</span><select aria-label="按播放进度筛选" value={overview.filter} disabled={!overview.available} onChange={event => overview.setFilter(event.target.value as ProgressFilter)}>{progressOptions.map(option => <option key={option.value} value={option.value}>{option.label}进度</option>)}</select></label>
       <label className="progress-collection-search"><Search size={15} aria-hidden="true" /><input type="search" aria-label="搜索当前列表" placeholder="标题或作者" value={search} onChange={event => onSearch(event.target.value)} /></label>
       <button className="icon-button" aria-label="刷新收藏播放进度" title="刷新收藏播放进度" disabled={overview.loading} onClick={() => void overview.reload()}><RefreshCw size={15} className={overview.loading ? 'spin' : undefined} /></button>
       {overview.loading && <span className="visually-hidden" role="status">正在读取进度…</span>}

@@ -47,6 +47,7 @@
 .immersive-reader .reading-columns.reading-notebook-v2[data-notebook-panel=notes] > .reading-notes { display: block; }
 .immersive-reader .reading-columns.reading-notebook-v2[data-theater=true] > .reading-ai,
 .immersive-reader .reading-columns.reading-notebook-v2[data-theater=true] > .reading-notes { display: none; }
+.immersive-reader .reading-columns.reading-notebook-v2[data-theater=true] > .reader-primary { grid-column: 1 / -1; width: 100%; max-width: none; }
 .immersive-reader .reading-columns.reading-notebook-v2 > .reading-notes .notes-workspace { max-height: none; }
 
 .reading-ai { min-width: 0; padding: 0 0 16px 18px; border-left: 1px solid var(--line); }
@@ -73,6 +74,8 @@
 .experience-reading .video-workspace .reading-columns.reading-notebook-v2[data-theater=true],
 .experience-reading .audio-workspace .reading-columns.reading-notebook-v2[data-theater=true],
 .immersive-reader .reading-columns.reading-notebook-v2[data-theater=true] { grid-template-columns: minmax(0, 1fr); }
+.experience-reading .video-workspace .reading-columns.reading-notebook-v2[data-theater=true] > .reader-primary,
+.experience-reading .audio-workspace .reading-columns.reading-notebook-v2[data-theater=true] > .reader-primary { grid-column: 1 / -1; width: 100%; max-width: none; }
 .experience-reading .video-workspace .reading-columns.reading-notebook-v2 > .reading-notebook-navigation,
 .experience-reading .audio-workspace .reading-columns.reading-notebook-v2 > .reading-notebook-navigation { grid-column: 1 / -1; grid-row: 1; display: flex; }
 .experience-reading .video-workspace .reading-columns.reading-notebook-v2 > .reader-primary,

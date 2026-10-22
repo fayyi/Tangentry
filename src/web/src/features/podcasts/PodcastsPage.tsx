@@ -1,5 +1,6 @@
 import { Bookmark, Headphones, LoaderCircle, Plus, RefreshCw, Rss, Settings, Sparkles } from 'lucide-react'
 import type { ReactNode } from 'react'
+import { useState } from 'react'
 import type { ContentItem } from '../../shared/api/types'
 import { CardCollection } from '../../shared/ui/CardCollection'
 import { ModernGalleryCard } from '../../shared/ui/ModernGalleryCard'
@@ -27,9 +28,9 @@ function Episodes({ items, shared, status }: { items: ContentItem[]; shared: Sha
   </CardCollection>
 }
 
-export function PodcastsPage({ history, library, episodes, gallery, onSubscriptions, onSettings, onAdd, ...shared }: Shared & {
+export function PodcastsPage({ history, library, episodes, gallery, onSubscriptions, onSubscribePodcast, onSettings, onAdd, ...shared }: Shared & {
   history: HistoryEntry[]; library: ContentItem[]; episodes: ReturnType<typeof usePodcastEpisodes>; gallery: ReturnType<typeof useGallery>
-  onSubscriptions: () => void; onSettings: () => void; onAdd: () => void
+  onSubscriptions: () => void; onSubscribePodcast: () => void; onSettings: () => void; onAdd: () => void
 }) {
   const listened = history.filter(entry => entry.item.kind === 'audio').map(entry => entry.item)
   const progress = useProgressOverview(listened.map(item => item.id), true)
@@ -39,34 +40,38 @@ export function PodcastsPage({ history, library, episodes, gallery, onSubscripti
   const discovery = gallery.sources.xiaoyuzhou
   const recommendations = (discovery.feed?.items ?? []).filter(item => item.kind === 'audio').slice(0, 12)
   const recommendationsEnabled = Boolean(gallery.enabled?.xiaoyuzhou)
-  const summary = [
-    !episodes.loaded ? '正在读取订阅更新' : episodes.entries.length ? `${episodes.entries.length} 条订阅更新` : '暂无订阅更新',
-    `${saved.length} 集收藏`,
-    resume.length ? `${resume.length} 集未听完` : '',
-  ].filter(Boolean).join(' · ')
+  const recentListened = listened.slice(0, 6)
+  const [section, setSection] = useState<'continue' | 'updates' | 'discover' | 'saved'>('updates')
   return <div className="podcasts-page">
-    <PageHeader title="播客" summary={summary} actions={<>
-      <button type="button" className="button button-secondary" onClick={onSubscriptions}><Rss size={15}/>管理节目订阅</button>
-      <button type="button" className="button button-primary" onClick={onAdd}><Plus size={15}/>添加单集</button>
+    <PageHeader title="播客" summary={!episodes.loaded ? '正在读取订阅更新…' : episodes.entries.length ? `${episodes.entries.length} 集新更新` : `${resume.length} 集待听 · ${saved.length} 集收藏`} actions={<>
+      <button type="button" className="button button-secondary" onClick={onSubscriptions}><Rss size={15}/>管理订阅</button>
+      <button type="button" className="button button-primary" onClick={onAdd}><Plus size={15}/>添加播客</button>
     </>}/>
-    {recent.length > 0 && <Section id="podcasts-resume" title={resume.length ? '继续收听' : '最近收听'} icon={<Headphones size={16} aria-hidden="true"/>}>
-      <Episodes items={recent} shared={shared} status={item => supportsProgress(item.id) ? <CardProgress progress={progress.get(item.id)} supported/> : undefined}/>
+    <nav className="podcast-page-nav" aria-label="播客内容">
+      <button type="button" aria-current={section === 'updates' ? 'page' : undefined} onClick={() => setSection('updates')}>订阅更新<span>{episodes.loaded ? episodes.entries.length : '…'}</span></button>
+      <button type="button" aria-current={section === 'continue' ? 'page' : undefined} onClick={() => setSection('continue')}>继续收听<span>{resume.length || recentListened.length}</span></button>
+      <button type="button" aria-current={section === 'discover' ? 'page' : undefined} onClick={() => setSection('discover')}>小宇宙推荐<span>{recommendations.length || '—'}</span></button>
+      <button type="button" aria-current={section === 'saved' ? 'page' : undefined} onClick={() => setSection('saved')}>收藏<span>{saved.length}</span></button>
+    </nav>
+    {section === 'continue' && <Section id="podcasts-resume" title={resume.length ? '继续收听' : '最近收听'} icon={<Headphones size={16} aria-hidden="true"/>} count={resume.length || recentListened.length}>
+      {recent.length ? <Episodes items={recent} shared={shared} status={item => supportsProgress(item.id) ? <CardProgress progress={progress.get(item.id)} supported/> : undefined}/>
+        : <div className="podcast-empty"><div><strong>还没有收听记录</strong><p>开始播放任意节目后，未听完的内容会自动留在这里。</p></div><button type="button" className="button button-secondary" onClick={() => setSection('discover')}><Sparkles size={15}/>发现节目</button></div>}
     </Section>}
-    <Section id="podcasts-updates" title="订阅节目更新" icon={<Rss size={16} aria-hidden="true"/>} count={episodes.entries.length} action={<button type="button" className="icon-button" aria-label="刷新订阅单集" title="刷新订阅单集" disabled={episodes.loading} onClick={() => void episodes.reload()}>{episodes.loading ? <LoaderCircle size={16} className="spin"/> : <RefreshCw size={16}/>}</button>}>
+    {section === 'updates' && <Section id="podcasts-updates" title="订阅节目更新" icon={<Rss size={16} aria-hidden="true"/>} count={episodes.entries.length} action={<button type="button" className="icon-button" aria-label="刷新订阅单集" title="刷新订阅单集" disabled={episodes.loading} onClick={() => void episodes.reload()}>{episodes.loading ? <LoaderCircle size={16} className="spin"/> : <RefreshCw size={16}/>}</button>}>
       {episodes.error && <div className="error-panel" role="alert"><p>{episodes.error}</p><button type="button" className="button button-secondary" onClick={() => void episodes.reload()}>重新读取</button></div>}
       {episodes.entries.length > 0 ? <Episodes items={episodes.entries.map(entry => entry.item)} shared={shared}/>
         : !episodes.loaded ? <SkeletonGallery count={3}/>
-        : !episodes.error && <div className="podcast-empty"><p><strong>还没有订阅的节目单集</strong>订阅 RSS 播客后，更新时获取的单集会出现在这里。</p><button type="button" className="button button-secondary" onClick={onSubscriptions}>订阅播客</button></div>}
-    </Section>
-    <Section id="podcasts-discover" title="小宇宙推荐" icon={<Sparkles size={16} aria-hidden="true"/>} count={recommendations.length} action={recommendationsEnabled && <button type="button" className="icon-button" aria-label="刷新小宇宙推荐" title="刷新小宇宙推荐" disabled={discovery.loading} onClick={() => gallery.refresh(['xiaoyuzhou'])}>{discovery.loading ? <LoaderCircle size={16} className="spin"/> : <RefreshCw size={16}/>}</button>}>
-      {!recommendationsEnabled ? <div className="podcast-empty"><p><strong>小宇宙推荐未开启</strong>在设置中登录小宇宙并开启推荐，就能在这里挑选单集。</p><button type="button" className="button button-secondary" onClick={onSettings}><Settings size={15}/>前往设置</button></div>
+        : !episodes.error && <div className="podcast-empty"><div><strong>订阅节目，更新自动汇集在这里</strong><p>添加播客 RSS 后，新单集会直接进入订阅更新。</p></div><button type="button" className="button button-secondary" onClick={onSubscribePodcast}><Plus size={15}/>订阅播客</button></div>}
+    </Section>}
+    {section === 'discover' && <Section id="podcasts-discover" title="小宇宙推荐" icon={<Sparkles size={16} aria-hidden="true"/>} count={recommendations.length} action={recommendationsEnabled && <button type="button" className="icon-button" aria-label="刷新小宇宙推荐" title="刷新小宇宙推荐" disabled={discovery.loading} onClick={() => gallery.refresh(['xiaoyuzhou'])}>{discovery.loading ? <LoaderCircle size={16} className="spin"/> : <RefreshCw size={16}/>}</button>}>
+      {!recommendationsEnabled ? <div className="podcast-empty"><div><strong>连接小宇宙，浏览个性推荐</strong><p>登录并开启推荐后，可直接从这里发现新单集。</p></div><button type="button" className="button button-secondary" onClick={onSettings}><Settings size={15}/>连接小宇宙</button></div>
         : discovery.error && !recommendations.length ? <div className="error-panel" role="alert"><p>{discovery.error}</p><button type="button" className="button button-secondary" disabled={discovery.loading} onClick={() => void gallery.retry('xiaoyuzhou')}>重试</button></div>
         : recommendations.length ? <Episodes items={recommendations} shared={shared}/>
         : discovery.loading || !discovery.known ? <SkeletonGallery count={3}/>
         : <p className="field-hint">小宇宙暂时没有新的推荐。</p>}
-    </Section>
-    <Section id="podcasts-saved" title="收藏的单集" icon={<Bookmark size={16} aria-hidden="true"/>} count={saved.length}>
+    </Section>}
+    {section === 'saved' && <Section id="podcasts-saved" title="收藏的单集" icon={<Bookmark size={16} aria-hidden="true"/>} count={saved.length}>
       {saved.length ? <Episodes items={saved} shared={shared}/> : <p className="field-hint">在任意单集上点击收藏，它会留在这里随时继续。</p>}
-    </Section>
+    </Section>}
   </div>
 }

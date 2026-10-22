@@ -84,15 +84,20 @@ export function ExperienceShell({ view, onNavigate, onNavigateSavedView, savedVi
   }, [menuOpen])
   const go = (next: View) => { setMenuOpen(false); onNavigate(next) }
   const badge = (next: View) => next === 'library' && savedCount > 0 ? savedCount : next === 'downloads' && activeDownloads > 0 ? activeDownloads : 0
+  const customSavedViews = savedViews.filter(savedView => !savedView.builtin)
+  const reorderCustomSavedViews = (ids: string[]) => {
+    let index = 0
+    onReorderSavedViews(savedViews.map(savedView => savedView.builtin ? savedView.id : ids[index++]))
+  }
   const navItems = (mobile = false) => <nav className={mobile ? 'experience-mobile-links' : 'desktop-nav experience-links'} aria-label={mobile ? '移动导航' : '主导航'}>
     {groups.map(group => <div className="experience-nav-group" key={group.label}>
       <span className="experience-nav-label" aria-hidden="true">{group.label}</span>
       {group.items.map(({ view: next, label, Icon }) => <button key={next} type="button" className={view === next ? 'active' : ''} aria-label={label} title={label} aria-current={view === next ? 'page' : undefined} onClick={() => go(next)}>
         <Icon size={18} strokeWidth={1.8} aria-hidden="true"/><span>{label}</span>{badge(next) > 0 && <small className={next === 'downloads' ? 'is-live' : undefined} aria-hidden="true">{badge(next)}</small>}
       </button>)}
-      {group.label === '资料库' && <div className="saved-view-nav-list" role="group" aria-label="保存视图">{savedViews.map((savedView,index)=><div className="saved-view-nav-row" key={savedView.id}>
+      {group.label === '资料库' && customSavedViews.length > 0 && <div className="saved-view-nav-list" role="group" aria-label="自定义订阅视图">{customSavedViews.map((savedView,index)=><div className="saved-view-nav-row" key={savedView.id}>
         {(() => { const ViewIcon = savedViewIcons[savedView.icon as keyof typeof savedViewIcons] ?? Filter; return <button type="button" className={view === 'subscriptions' && new URLSearchParams(location.search).get('view') === savedView.id ? 'active' : ''} aria-label={`${savedView.name}，${savedView.count} 条`} title={savedView.name} onClick={()=>{setMenuOpen(false);onNavigateSavedView(savedView.id)}}><span className={`saved-view-mark ${savedView.color}`}><ViewIcon size={13}/></span><span>{savedView.name}</span><small>{savedView.count}</small></button> })()}
-        {!collapsed && <span className="saved-view-order"><button type="button" aria-label={`上移 ${savedView.name}`} title="上移" disabled={index===0} onClick={()=>{const ids=savedViews.map(item=>item.id);[ids[index-1],ids[index]]=[ids[index],ids[index-1]];onReorderSavedViews(ids)}}><ChevronUp size={12}/></button><button type="button" aria-label={`下移 ${savedView.name}`} title="下移" disabled={index===savedViews.length-1} onClick={()=>{const ids=savedViews.map(item=>item.id);[ids[index],ids[index+1]]=[ids[index+1],ids[index]];onReorderSavedViews(ids)}}><ChevronDown size={12}/></button></span>}
+        {!collapsed && <span className="saved-view-order"><button type="button" aria-label={`上移 ${savedView.name}`} title="上移" disabled={index===0} onClick={()=>{const ids=customSavedViews.map(item=>item.id);[ids[index-1],ids[index]]=[ids[index],ids[index-1]];reorderCustomSavedViews(ids)}}><ChevronUp size={12}/></button><button type="button" aria-label={`下移 ${savedView.name}`} title="下移" disabled={index===customSavedViews.length-1} onClick={()=>{const ids=customSavedViews.map(item=>item.id);[ids[index],ids[index+1]]=[ids[index+1],ids[index]];reorderCustomSavedViews(ids)}}><ChevronDown size={12}/></button></span>}
       </div>)}</div>}
     </div>)}
     <div className="experience-nav-group experience-nav-utility">

@@ -1,6 +1,11 @@
 /* ---------- 订阅 ---------- */
 .experience[data-view='subscriptions'] .content-container { max-width: 1520px; }
 .subscription-page-header { margin-bottom: 14px; }
+.subscription-page-header .subscription-views { display: none; }
+.subscription-page-tabs { display: flex; align-items: center; gap: 6px; margin: 0 0 18px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.subscription-page-tabs button { display: inline-flex; align-items: center; gap: 7px; min-height: 34px; padding: 5px 11px; border-radius: var(--radius-sm); color: var(--muted); font-size: 13px; }
+.subscription-page-tabs button[aria-current='page'] { background: var(--selected); color: var(--ink); font-weight: 600; }
+.subscription-page-tabs button span { min-width: 20px; padding: 1px 5px; border-radius: var(--radius-full); background: var(--surface); color: var(--faint); text-align: center; font-size: 10.5px; font-variant-numeric: tabular-nums; }
 .subscription-health-center { display: flex; flex-direction: column; gap: 18px; }
 .subscription-health-intro, .subscription-health-section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .subscription-health-intro { padding-bottom: 14px; border-bottom: 1px solid var(--line); }
@@ -174,11 +179,27 @@
 
 /* History inbox: one search line, then filters as a strip. */
 .subscription-inbox { min-width: 0; }
-.inbox-filters { display: flex; flex-direction: column; gap: 10px; padding: 14px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--card); }
+.inbox-presets { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.inbox-presets > span { margin-right: 4px; color: var(--faint); font-size: 12px; }
+.inbox-presets button { display: inline-flex; align-items: center; gap: 7px; min-height: 32px; padding: 4px 9px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--card); color: var(--muted); font-size: 12px; }
+.inbox-presets button[aria-pressed='true'] { border-color: var(--line-strong); background: var(--selected); color: var(--ink); font-weight: 600; }
+.inbox-presets button small { color: var(--faint); font-variant-numeric: tabular-nums; }
+.inbox-filters { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--card); }
 .inbox-search-row { display: flex; align-items: center; gap: 8px; }
 .inbox-search { flex: 1; }
 .inbox-filter-strip { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.inbox-filter-strip.inbox-primary-filters { gap: 8px 10px; }
+.inbox-primary-filters > .subscription-field select { min-width: 140px; min-height: 34px; }
+.inbox-advanced { position: relative; }
+.inbox-advanced > summary { display: inline-flex; align-items: center; gap: 5px; min-height: 34px; padding: 0 7px; border-radius: var(--radius-sm); color: var(--muted); font-size: 12px; }
+.inbox-advanced[open] > summary svg { transform: rotate(180deg); }
+.inbox-advanced-fields { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 10px 12px; padding: 12px 0 2px; border-top: 1px solid var(--line); }
+.inbox-advanced-fields .subscription-field { flex: 0 1 170px; }
+.inbox-advanced-fields .subscription-field input, .inbox-advanced-fields .subscription-field select { min-height: 34px; padding: 0 9px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--card); color: var(--ink); }
 .inbox-view-actions { display: flex; align-items: center; gap: 10px; color: var(--faint); font-size: 12px; }
+.inbox-view-name-form { display: inline-flex; align-items: center; gap: 6px; }
+.inbox-view-name-form input { width: min(220px, 44vw); min-height: 34px; padding: 0 9px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--card); color: var(--ink); }
+.inbox-view-actions > small { color: var(--danger); }
 .saved-view-settings { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
 .saved-view-settings .subscription-field { flex: 0 1 150px; }
 .saved-view-settings .subscription-field input, .inbox-filter-strip .subscription-field input { min-height: 34px; padding: 0 9px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--card); color: var(--ink); }
@@ -204,8 +225,8 @@
 @media (max-width: 760px) {
   .subscription-page-header .page-heading-actions { width: 100%; }
   .subscription-page-header .page-heading-copy p { display: none; }
-  .subscription-page-header .subscription-views { flex: 1; }
-  .subscription-page-header .subscription-views button { flex: 1; }
+  .subscription-page-tabs { gap: 2px; overflow-x: auto; scrollbar-width: none; }
+  .subscription-page-tabs button { flex: 1 0 auto; justify-content: center; padding-inline: 9px; font-size: 12px; }
   .subscription-page-header :is(.subscription-more > summary, .subscription-add-toggle) { width: 44px; padding: 0; }
   .subscription-page-header :is(.subscription-more > summary, .subscription-add-toggle) span, .subscription-page-header .subscription-more > summary { font-size: 0; gap: 0; }
   .subscription-page-header .subscription-add-toggle span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
@@ -225,7 +246,15 @@
   .inbox-search { min-width: 0; }
   .inbox-filter-strip { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
   .inbox-filter-strip > * { flex-shrink: 0; }
+  .inbox-filter-strip.inbox-primary-filters { flex-wrap: wrap; overflow: visible; }
+  .inbox-primary-filters > .subscription-field select { min-width: 0; max-width: 180px; }
+  .inbox-advanced { flex-basis: 100%; }
+  .inbox-advanced-fields { align-items: stretch; }
+  .inbox-advanced-fields .subscription-field { flex: 1 1 42%; }
   .saved-view-settings { align-items: stretch; }
   .saved-view-settings .subscription-field { flex: 1 1 42%; }
   .inbox-view-actions { align-items: flex-start; flex-direction: column; }
+  .inbox-view-name-form { width: 100%; }
+  .inbox-view-name-form label { flex: 1; min-width: 0; }
+  .inbox-view-name-form input { width: 100%; }
 }
