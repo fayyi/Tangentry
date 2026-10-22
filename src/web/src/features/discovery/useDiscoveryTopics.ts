@@ -18,6 +18,7 @@ export function useDiscoveryTopics(active: boolean) {
   const create = useCallback(async (name: string) => {
     const clean = name.trim()
     if (!clean) return false
+    setError('')
     try {
       const result = await request<DiscoveryTopicRule>('/discovery/topics', { method: 'POST', body: JSON.stringify({ name: clean, keywords: [clean] }) })
       setTopics(current => [...current.filter(topic => topic.id !== result.id), result]); loaded.current = true
@@ -27,13 +28,15 @@ export function useDiscoveryTopics(active: boolean) {
   const update = useCallback(async (topic: DiscoveryTopicRule, name: string) => {
     const clean = name.trim()
     if (!clean) return false
+    setError('')
     try {
-      const result = await request<DiscoveryTopicRule>(`/discovery/topics/${encodeURIComponent(topic.id)}`, { method: 'PUT', body: JSON.stringify({ name: clean, keywords: [clean], revision: topic.revision }) })
+      const result = await request<DiscoveryTopicRule>(`/discovery/topics/${encodeURIComponent(topic.id)}`, { method: 'PATCH', body: JSON.stringify({ name: clean, keywords: [clean], revision: topic.revision }) })
       setTopics(current => current.map(value => value.id === result.id ? result : value)); loaded.current = true
       return true
     } catch (cause) { setError(cause instanceof Error ? cause.message : '主题保存失败。'); return false }
   }, [])
   const remove = useCallback(async (topic: DiscoveryTopicRule) => {
+    setError('')
     try {
       await request<void>(`/discovery/topics/${encodeURIComponent(topic.id)}?revision=${topic.revision}`, { method: 'DELETE' })
       setTopics(current => current.filter(value => value.id !== topic.id))

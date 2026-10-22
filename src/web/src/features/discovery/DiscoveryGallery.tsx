@@ -1,5 +1,5 @@
 import { AlertCircle, Edit3, LoaderCircle, LogIn, Plus, RefreshCw, TvMinimal, X } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import type { ContentItem, DiscoveryTopicRule } from '../../shared/api/types'
 import { ModernGalleryCard } from '../../shared/ui/ModernGalleryCard'
 import { CardCollection } from '../../shared/ui/CardCollection'
@@ -19,6 +19,49 @@ import { canPollPlatformVerification } from './discoveryVerification'
 
 const labels: Record<GallerySource | 'huggingface', string> = { subscriptions: '订阅更新', bilibili: 'B站推荐', youtube: 'YouTube 推荐', xiaohongshu: '小红书推荐', linuxdo: 'Linux.do 话题', xiaoyuzhou: '小宇宙发现', douyin: '抖音推荐', huggingface: 'HF 每日论文' }
 
+function DiscoveryTopicDialog({ topic, error, onSave, onClose }: {
+  topic: DiscoveryTopicRule | null
+  error: string
+  onSave: (name: string) => Promise<boolean>
+  onClose: () => void
+}) {
+  const dialog = useRef<HTMLDialogElement>(null)
+  const input = useRef<HTMLInputElement>(null)
+  const [name, setName] = useState(topic?.name ?? '')
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    const element = dialog.current
+    if (!element) return
+    if (!element.open) element.showModal()
+    input.current?.focus()
+  }, [])
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (saving || !name.trim()) return
+    setSaving(true)
+    try { if (await onSave(name.trim())) onClose() }
+    finally { setSaving(false) }
+  }
+
+  return <dialog ref={dialog} className="discovery-topic-dialog" aria-labelledby="discovery-topic-dialog-title" onClose={onClose}>
+    <form onSubmit={event => void submit(event)}>
+      <div className="discovery-topic-dialog-heading">
+        <h2 id="discovery-topic-dialog-title">{topic ? '编辑主题' : '新增主题'}</h2>
+        <button type="button" className="icon-button" aria-label="关闭" title="关闭" onClick={onClose}><X size={18} /></button>
+      </div>
+      <label className="discovery-topic-dialog-field" htmlFor="discovery-topic-name">主题名称</label>
+      <input ref={input} id="discovery-topic-name" value={name} maxLength={60} autoComplete="off" onChange={event => setName(event.target.value)} />
+      {error && <p className="discovery-topic-dialog-error" role="alert">{error}</p>}
+      <div className="discovery-topic-dialog-actions">
+        <button type="button" className="button button-secondary" disabled={saving} onClick={onClose}>取消</button>
+        <button type="submit" className="button button-primary" disabled={saving || !name.trim()}>{saving && <LoaderCircle size={15} className="spin" />}{saving ? '保存中' : '保存主题'}</button>
+      </div>
+    </form>
+  </dialog>
+}
+
 export function DiscoveryGallery({ active, kind, onKind, query, onClearQuery, onQueryChange, notice, noticeError, gallery, savedIDs, pending, savingUnavailable, onSave, onRead, onDownload, onCreator, onSearch, onSubscriptions, onSettings, onBilibili, onRouteChange }: {
   active: boolean
   kind: string; onKind: (kind: string) => void; origin: string; onOrigin: (origin: string) => void; notice: string; noticeError: boolean
@@ -37,6 +80,7 @@ export function DiscoveryGallery({ active, kind, onKind, query, onClearQuery, on
   const [topic, setTopicState] = useState(() => readDiscoveryFilterState().topic)
   const [webViewPlatform, setWebViewPlatform] = useState<PlatformWebView | ''>('')
   const [webViewError, setWebViewError] = useState('')
+  const [topicEditor, setTopicEditor] = useState<{ topic: DiscoveryTopicRule | null } | null>(null)
   const [feedbackHidden, setFeedbackHidden] = useState(() => new Set<string>())
   const [undoFeedback, setUndoFeedback] = useState<{ id: string; itemID: string; message: string } | null>(null)
   const [feedbackError, setFeedbackError] = useState('')
@@ -119,12 +163,10 @@ export function DiscoveryGallery({ active, kind, onKind, query, onClearQuery, on
     } catch (cause) { setWebViewError(cause instanceof Error ? cause.message : '无法打开应用内登录窗口。'); setWebViewPlatform('') }
   }
 
-  const manageTopic = (existing?: DiscoveryTopicRule) => {
-    const value = window.prompt(existing ? '编辑主题' : '新增主题', existing?.name ?? '')?.trim()
-    if (!value) return
-    if (existing) void topicState.update(existing, value)
-    else void topicState.create(value)
-  }
+  const manageTopic = (existing?: DiscoveryTopicRule) => setTopicEditor({ topic: existing ?? null })
+  const saveTopic = (name: string) => topicEditor?.topic
+    ? topicState.update(topicEditor.topic, name)
+    : topicState.create(name)
   const openRecommendation = (item: ContentItem) => {
     if (['bilibili', 'youtube', 'xiaohongshu', 'linuxdo', 'xiaoyuzhou', 'douyin', 'huggingface'].includes(item.platform)) void request(`/recommendations/${item.platform}/marks`, { method: 'PUT', keepalive: true, body: JSON.stringify({ contentId: item.id, opened: true }) }).catch(() => {})
     onRead(item)
@@ -165,6 +207,8 @@ export function DiscoveryGallery({ active, kind, onKind, query, onClearQuery, on
         <div className="discovery-topics" role="group" aria-label="主题筛选"><button type="button" aria-pressed={!topic} onClick={() => setTopic('')}>全部主题</button>{topicState.topics.map(value => <span className="discovery-topic-chip" key={value.id}><button type="button" aria-pressed={topic === value.id} onClick={() => setTopic(value.id)}>{value.name}</button><button type="button" className="discovery-topic-action" aria-label={`编辑主题 ${value.name}`} title="编辑主题" onClick={() => manageTopic(value)}><Edit3 size={12} /></button><button type="button" className="discovery-topic-action" aria-label={`删除主题 ${value.name}`} title="删除主题" onClick={() => void topicState.remove(value)}><X size={12} /></button></span>)}<button type="button" className="discovery-topic-add" aria-label="新增主题" title="新增主题" onClick={() => manageTopic()}><Plus size={15} /></button></div>
       </div>
     </div>
+    {topicEditor && <DiscoveryTopicDialog topic={topicEditor.topic} error={topicState.error} onSave={saveTopic} onClose={() => setTopicEditor(null)} />}
+    {topicState.error && !topicEditor && <p className="inline-feedback" role="alert">{topicState.error}<button type="button" className="text-button" onClick={() => void topicState.reload()}>重试</button></p>}
     {batchState.optionsStale && <p className="discovery-new-content" role="status">有新内容，点击刷新<button type="button" className="text-button" onClick={batchState.retry}>刷新</button></p>}
     {undoFeedback && <p className="inline-feedback collection-save-feedback" role="status">{undoFeedback.message}<button type="button" className="text-button" onClick={() => void undoFeedbackAction()}>撤销</button></p>}
     {feedbackError && <p className="inline-feedback" role="alert">{feedbackError}</p>}

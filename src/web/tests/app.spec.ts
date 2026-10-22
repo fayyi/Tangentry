@@ -36,6 +36,37 @@ async function seekRealPlayback(page: Page) {
   await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.currentTime)).toBeCloseTo(1.25, 2)
 }
 
+test('discovery topic names keep their text width beside separate topic actions', async ({ page, request }) => {
+  await page.route('**/api/discovery/bilibili?**', route => route.fulfill({ json: { items: [fixture], page: 1, total: 1, hasMore: false, sourceTitle: fixture.author, query: fixture.platformId } }))
+  await page.goto('/')
+  const topics = page.getByRole('group', { name: '主题筛选' })
+  await topics.getByRole('button', { name: '新增主题' }).click()
+  const dialog = page.getByRole('dialog', { name: '新增主题' })
+  await expect(dialog).toBeVisible()
+  await page.waitForTimeout(50)
+  await expect(dialog).toBeVisible()
+  await dialog.getByLabel('主题名称').fill('AI')
+  await dialog.getByRole('button', { name: '保存主题' }).click()
+  await expect(dialog).toBeHidden()
+
+  const topic = topics.getByRole('button', { name: 'AI', exact: true })
+  await expect(topic).toBeVisible()
+  const size = await topic.evaluate(node => ({ width: node.getBoundingClientRect().width, height: node.getBoundingClientRect().height }))
+  expect(size.width).toBeGreaterThan(size.height)
+  expect(size.height).toBe(26)
+  await expect(topics.getByRole('button', { name: '编辑主题 AI' })).toBeVisible()
+  await expect(topics.getByRole('button', { name: '删除主题 AI' })).toBeVisible()
+
+  await topics.getByRole('button', { name: '编辑主题 AI' }).click()
+  const editDialog = page.getByRole('dialog', { name: '编辑主题' })
+  await expect(editDialog.getByLabel('主题名称')).toHaveValue('AI')
+  await editDialog.getByLabel('主题名称').fill('人工智能')
+  await editDialog.getByRole('button', { name: '保存主题' }).click()
+  await expect(topics.getByRole('button', { name: '人工智能', exact: true })).toBeVisible()
+  await expect(topics.getByRole('button', { name: '编辑主题 人工智能' })).toBeVisible()
+  expect((await request.get('/api/discovery/topics')).ok()).toBe(true)
+})
+
 test('reading notes save, edit, persist and delete with subtitle time without collecting or downloading', async ({ page, request }) => {
   await page.route('**/api/discovery/bilibili?**', route => route.fulfill({ json: { items: [fixture], page: 1, total: 1, hasMore: false, sourceTitle: fixture.author, query: fixture.platformId } }))
   const beforeJobs = (await (await request.get('/api/downloads')).json()).jobs
