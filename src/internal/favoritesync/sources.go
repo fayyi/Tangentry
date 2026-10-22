@@ -9,10 +9,10 @@ import (
 )
 
 func (s *Service) Create(ctx context.Context, input Input) (Source, error) {
-	input.Policy = normalizedPolicy(input.Policy)
-	if input.Policy == (Policy{}) {
+	if emptyPolicy(input.Policy) {
 		input.Policy = DefaultPolicy()
 	}
+	input.Policy = normalizedPolicy(input.Policy)
 	id, err := ParseFolder(input.Query)
 	if err != nil || !validPolicy(input.Policy) {
 		return Source{}, ErrInvalid
@@ -24,7 +24,7 @@ func (s *Service) Create(ctx context.Context, input Input) (Source, error) {
 	defer release()
 	existing, err := s.repo.GetFavoriteSource(ctx, id)
 	if err == nil {
-		return existing, nil
+		return NormalizeSource(existing), nil
 	}
 	if !errors.Is(err, ErrNotFound) {
 		return Source{}, err
@@ -44,11 +44,18 @@ func (s *Service) Create(ctx context.Context, input Input) (Source, error) {
 	return source, nil
 }
 
+func emptyPolicy(p Policy) bool {
+	return !p.Enabled && !p.AutoDownload && p.IntervalMinutes == 0 && p.MaxPerRun == 0 && p.MaxHeight == 0 &&
+		emptyDownloadOptions(p.Download) && !p.DownloadSubtitles && p.DirectoryName == "" &&
+		p.TitleInclude == "" && p.TitleExclude == "" && p.AuthorInclude == ""
+}
+
 func (s *Service) Get(ctx context.Context, id string) (Source, error) {
 	if !folderID.MatchString(id) {
 		return Source{}, ErrInvalid
 	}
 	source, err := s.repo.GetFavoriteSource(ctx, id)
+	source = NormalizeSource(source)
 	s.mu.Lock()
 	source.Active = s.activeID == id
 	s.mu.Unlock()
@@ -68,6 +75,10 @@ func (s *Service) Configure(ctx context.Context, id string, p Policy) (Source, e
 	source, err := s.repo.GetFavoriteSource(ctx, id)
 	if err != nil {
 		return Source{}, err
+	}
+	source = NormalizeSource(source)
+	if p.DirectoryName == "" && source.Title != "收藏夹 "+source.FolderID {
+		p.DirectoryName = folderDirectoryName(source.Title, source.FolderID)
 	}
 	source.Policy = p
 	source.Pending = matchingPending(p, source.Items, source.Pending)
@@ -106,6 +117,7 @@ func (s *Service) Start(ctx context.Context, id string) (Source, error) {
 		release()
 		return Source{}, err
 	}
+	source = NormalizeSource(source)
 	source.LastAttemptAt = time.Now().Unix()
 	source.Message = "正在读取收藏夹…"
 	source.Active = false

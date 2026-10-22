@@ -21,6 +21,9 @@ type Options struct {
 	AudioFormatID      string   `json:"audioFormatId,omitempty"`
 	SubtitleLanguages  []string `json:"subtitleLanguages,omitempty"`
 	AutomaticSubtitles bool     `json:"automaticSubtitles,omitempty"`
+	DownloadDanmaku    bool     `json:"downloadDanmaku,omitempty"`
+	DownloadThumbnail  bool     `json:"downloadThumbnail,omitempty"`
+	DownloadInfoJSON   bool     `json:"downloadInfoJSON,omitempty"`
 	Compress           bool     `json:"compress,omitempty"`
 }
 
@@ -70,7 +73,7 @@ type MediaRunner interface {
 var formatIDPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,100}$`)
 var subtitleLanguagePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,48}$`)
 
-func (o *Options) normalize() error {
+func (o *Options) Normalize() error {
 	if o.Mode == "" {
 		o.Mode = "video"
 	}
@@ -101,6 +104,9 @@ func (o *Options) normalize() error {
 	o.SubtitleLanguages = slices.Clone(o.SubtitleLanguages)
 	slices.Sort(o.SubtitleLanguages)
 	o.SubtitleLanguages = slices.Compact(o.SubtitleLanguages)
+	if slices.Contains(o.SubtitleLanguages, "all") {
+		o.SubtitleLanguages = []string{"all"}
+	}
 	if o.Mode == "audio" {
 		o.VideoOnly, o.Compress, o.VideoFormatID = false, false, ""
 	}
@@ -110,14 +116,18 @@ func (o *Options) normalize() error {
 	return nil
 }
 
-func sameOptions(a, b Options) bool {
-	_ = a.normalize()
-	_ = b.normalize()
+func SameOptions(a, b Options) bool {
+	_ = a.Normalize()
+	_ = b.Normalize()
 	return a.Mode == b.Mode && a.Container == b.Container && a.VideoOnly == b.VideoOnly &&
 		a.AudioFormat == b.AudioFormat && a.VideoFormatID == b.VideoFormatID && a.AudioFormatID == b.AudioFormatID &&
-		a.AutomaticSubtitles == b.AutomaticSubtitles && a.Compress == b.Compress &&
+		a.AutomaticSubtitles == b.AutomaticSubtitles && a.DownloadDanmaku == b.DownloadDanmaku && a.DownloadThumbnail == b.DownloadThumbnail && a.DownloadInfoJSON == b.DownloadInfoJSON && a.Compress == b.Compress &&
 		slices.Equal(a.SubtitleLanguages, b.SubtitleLanguages)
 }
+
+func (o *Options) normalize() error { return o.Normalize() }
+
+func sameOptions(a, b Options) bool { return SameOptions(a, b) }
 
 // Preserve known platform identities, and signed query parameters on other sites.
 func NormalizeURL(raw string) (string, error) {

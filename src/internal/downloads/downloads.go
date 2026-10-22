@@ -22,26 +22,30 @@ var (
 
 type Job struct {
 	Options
-	ID           string   `json:"id"`
-	URL          string   `json:"url"`
-	Title        string   `json:"title"`
-	MaxHeight    int      `json:"maxHeight"`
-	State        string   `json:"state"`
-	Message      string   `json:"message,omitempty"`
-	FileName     string   `json:"fileName,omitempty"`
-	Files        []string `json:"files,omitempty"`
-	FileSize     int64    `json:"fileSize,omitempty"`
-	OriginalSize int64    `json:"originalSize,omitempty"`
-	Compressed   bool     `json:"compressed,omitempty"`
-	CreatedAt    int64    `json:"createdAt"`
-	UpdatedAt    int64    `json:"updatedAt"`
+	ID              string   `json:"id"`
+	URL             string   `json:"url"`
+	Title           string   `json:"title"`
+	Subdirectory    string   `json:"subdirectory,omitempty"`
+	OutputDirectory string   `json:"outputDirectory,omitempty"`
+	MaxHeight       int      `json:"maxHeight"`
+	State           string   `json:"state"`
+	Message         string   `json:"message,omitempty"`
+	FileName        string   `json:"fileName,omitempty"`
+	Files           []string `json:"files,omitempty"`
+	FileSize        int64    `json:"fileSize,omitempty"`
+	OriginalSize    int64    `json:"originalSize,omitempty"`
+	Compressed      bool     `json:"compressed,omitempty"`
+	CreatedAt       int64    `json:"createdAt"`
+	UpdatedAt       int64    `json:"updatedAt"`
 }
 
 type Request struct {
 	Options
-	URL       string `json:"url"`
-	Title     string `json:"title,omitempty"`
-	MaxHeight int    `json:"maxHeight"`
+	URL             string `json:"url"`
+	Title           string `json:"title,omitempty"`
+	MaxHeight       int    `json:"maxHeight"`
+	Subdirectory    string `json:"subdirectory,omitempty"`
+	OutputDirectory string `json:"outputDirectory,omitempty"`
 }
 
 type Repository interface {

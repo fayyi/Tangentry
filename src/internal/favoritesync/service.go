@@ -44,6 +44,9 @@ func (s *Service) Close() {
 
 func (s *Service) List(ctx context.Context) ([]Source, error) {
 	sources, err := s.repo.ListFavoriteSources(ctx)
+	for i := range sources {
+		sources[i] = NormalizeSource(sources[i])
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for i := range sources {

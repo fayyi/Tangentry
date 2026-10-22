@@ -180,6 +180,9 @@ export interface DownloadOptions {
   audioFormatId?: string
   subtitleLanguages?: string[]
   automaticSubtitles?: boolean
+  downloadDanmaku?: boolean
+  downloadThumbnail?: boolean
+  downloadInfoJSON?: boolean
   compress?: boolean
 }
 
@@ -211,6 +214,8 @@ export interface DownloadJob extends DownloadOptions {
   id: string
   url: string
   title: string
+  subdirectory?: string
+  outputDirectory?: string
   maxHeight: number
   state: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
   message?: string

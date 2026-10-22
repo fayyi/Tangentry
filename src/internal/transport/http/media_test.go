@@ -246,6 +246,43 @@ func TestMediaUsesCompletedFileBoundaryAndHTTPRanges(t *testing.T) {
 	}
 }
 
+func TestNestedDownloadArtifactRouteServesFilesUnderSeason(t *testing.T) {
+	root := t.TempDir()
+	store, err := sqlite.Open(filepath.Join(root, "nested-artifact.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	service, err := downloads.NewService(store, inactiveMediaRunner{}, filepath.Join(root, "media"), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Close()
+	job := downloads.Job{
+		ID: "nested-artifact", URL: "https://www.bilibili.com/video/BV17x411w7KC/",
+		State: "completed", FileName: "Season 1/Video - S01E01.mp4",
+		Files: []string{"Season 1/Video - S01E01.mp4", "Season 1/Video - S01E01.zh-Hans.srt"},
+	}
+	if err := store.SaveDownload(context.Background(), job); err != nil {
+		t.Fatal(err)
+	}
+	directory := filepath.Join(root, "media", job.ID, "Season 1")
+	if err := os.MkdirAll(directory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	const subtitle = "1\n00:00:00,000 --> 00:00:01,000\n测试字幕\n"
+	if err := os.WriteFile(filepath.Join(directory, "Video - S01E01.zh-Hans.srt"), []byte(subtitle), 0600); err != nil {
+		t.Fatal(err)
+	}
+	h := New(nil, nil, nil, Options{Downloads: service})
+	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/api/downloads/"+job.ID+"/files/Season%201%2FVideo%20-%20S01E01.zh-Hans.srt", nil)
+	response := httptest.NewRecorder()
+	h.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || response.Body.String() != subtitle {
+		t.Fatalf("nested artifact response: %d %q", response.Code, response.Body.String())
+	}
+}
+
 func TestDownloadHistoryDeleteHTTPContract(t *testing.T) {
 	root := t.TempDir()
 	store, err := sqlite.Open(filepath.Join(root, "delete-http.db"))

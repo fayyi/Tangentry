@@ -3,6 +3,7 @@ package favoritesync
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -51,7 +52,7 @@ func TestFilterValidationDoesNotChangeSavedPolicy(t *testing.T) {
 			t.Fatalf("invalid filter accepted: %v", err)
 		}
 		after, _ := s.Get(ctx, "12345")
-		if after.Policy != before.Policy {
+		if !reflect.DeepEqual(after.Policy, before.Policy) {
 			t.Fatal("failed validation replaced saved policy")
 		}
 	}

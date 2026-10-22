@@ -304,7 +304,7 @@ func (d *fixtureDownloads) Start(ctx context.Context, r downloads.Request) (down
 		return downloads.Job{}, d.error
 	}
 	d.started++
-	j := downloads.Job{ID: fmt.Sprint(d.started), URL: r.URL, Title: r.Title, State: "queued", CreatedAt: int64(d.started), MaxHeight: r.MaxHeight}
+	j := downloads.Job{Options: r.Options, ID: fmt.Sprint(d.started), URL: r.URL, Title: r.Title, Subdirectory: r.Subdirectory, OutputDirectory: r.OutputDirectory, State: "queued", CreatedAt: int64(d.started), MaxHeight: r.MaxHeight}
 	d.jobs = append(d.jobs, j)
 	return j, ctx.Err()
 }
@@ -319,6 +319,23 @@ func (d *fixtureDownloads) CompletedPath(ctx context.Context, url string) (strin
 	}
 	if d.filePath != "" {
 		return d.filePath, nil
+	}
+	return "", downloads.ErrNotFound
+}
+
+func (d *fixtureDownloads) CompletedPathFor(ctx context.Context, rawURL string, height int, options downloads.Options, directory string) (string, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, job := range d.jobs {
+		if job.URL != rawURL || job.State != "completed" || job.MaxHeight != height || !downloads.SameOptions(job.Options, options) || job.Subdirectory != directory {
+			continue
+		}
+		if d.fileError != nil {
+			return "", d.fileError
+		}
+		if d.filePath != "" {
+			return d.filePath, nil
+		}
 	}
 	return "", downloads.ErrNotFound
 }
@@ -341,9 +358,9 @@ func TestCompletedRecordsRequireExistingFilesBeforeSkippingAdmission(t *testing.
 			remote.pages[0].Items = []content.Item{item}
 			remote.pages[0].Entries = 1
 			remote.pages[0].Folder.Count = 1
-			d.jobs = []downloads.Job{{ID: "old-completed", URL: item.URL, State: "completed"}}
-			d.filePath, d.fileError = scenario.path, scenario.err
 			p := DefaultPolicy()
+			d.jobs = []downloads.Job{{Options: p.Download, ID: "old-completed", URL: item.URL, Subdirectory: "B站收藏夹/" + folderDirectoryName("测试收藏夹", "12345"), MaxHeight: p.MaxHeight, State: "completed"}}
+			d.filePath, d.fileError = scenario.path, scenario.err
 			p.AutoDownload = true
 			if _, err := s.Create(context.Background(), Input{Query: "12345", Policy: p}); err != nil {
 				t.Fatal(err)
@@ -353,7 +370,7 @@ func TestCompletedRecordsRequireExistingFilesBeforeSkippingAdmission(t *testing.
 				t.Fatalf("started=%d pending=%d", d.started, len(source.Pending))
 			}
 			// A later scan must also verify files for a previously tracked transfer.
-			d.jobs = []downloads.Job{{ID: "old-completed", URL: item.URL, State: "completed"}}
+			d.jobs = []downloads.Job{{Options: p.Download, ID: "old-completed", URL: item.URL, Subdirectory: "B站收藏夹/" + folderDirectoryName("测试收藏夹", "12345"), MaxHeight: p.MaxHeight, State: "completed"}}
 			d.started = 0
 			source.Pending = nil
 			source.Transfers = map[string]Transfer{item.ID: {JobID: "old-completed", Attempts: 1}}
@@ -367,16 +384,77 @@ func TestCompletedRecordsRequireExistingFilesBeforeSkippingAdmission(t *testing.
 		})
 	}
 }
+
+func TestFavoriteDownloadsUseReadableIsolatedHierarchyAndSafeNames(t *testing.T) {
+	s, _, _, d := newFixture(t)
+	ctx := context.Background()
+	policy := DefaultPolicy()
+	policy.AutoDownload = true
+	policy.DirectoryName = "自定义 收藏"
+	policy.MaxHeight = 720
+	policy.Download = downloads.Options{Container: "mkv", SubtitleLanguages: []string{"zh-Hans", "en"}, AutomaticSubtitles: true, DownloadDanmaku: true, DownloadThumbnail: true, DownloadInfoJSON: true}
+	if _, err := s.Create(ctx, Input{Query: "12345", Policy: policy}); err != nil {
+		t.Fatal(err)
+	}
+	item := video(0)
+	item.Title = `标题/不能:做\路径`
+	item.PlatformID = "BV1234567890"
+	item.ID = "bilibili:" + item.PlatformID
+	item.URL = "https://www.bilibili.com/video/" + item.PlatformID + "/"
+	source, err := s.Get(ctx, "12345")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source.Items = []content.Item{item}
+	source.Pending = []string{item.ID}
+	s.pump(ctx, &source)
+	if d.started != 1 {
+		t.Fatalf("admitted %d jobs", d.started)
+	}
+	job := d.jobs[0]
+	wantDirectory := "B站收藏夹/自定义 收藏"
+	wantOutput := "标题_不能_做_路径 [BV1234567890]"
+	if job.Subdirectory != wantDirectory || job.OutputDirectory != wantOutput || job.MaxHeight != 720 {
+		t.Fatalf("download hierarchy/quality = %q / %q / %d", job.Subdirectory, job.OutputDirectory, job.MaxHeight)
+	}
+	if job.Options.Container != "mkv" || !job.Options.AutomaticSubtitles || !job.Options.DownloadDanmaku || !job.Options.DownloadThumbnail || !job.Options.DownloadInfoJSON || strings.Join(job.Options.SubtitleLanguages, ",") != "en,zh-Hans" {
+		t.Fatalf("folder policy did not reach download job: %+v", job.Options)
+	}
+	if got := videoDirectoryName(content.Item{PlatformID: "BVfallback", Title: "///"}); got != "B站视频 [BVfallback]" {
+		t.Fatalf("unsafe title fallback = %q", got)
+	}
+}
+
+func TestFavoriteDirectoryNameCanBeResetToDefault(t *testing.T) {
+	s, _, _, _ := newFixture(t)
+	ctx := context.Background()
+	policy := DefaultPolicy()
+	policy.DirectoryName = "别名"
+	if _, err := s.Create(ctx, Input{Query: "12345", Policy: policy}); err != nil {
+		t.Fatal(err)
+	}
+	if source := syncOnce(t, s, "12345"); source.Title != "测试收藏夹" {
+		t.Fatalf("fixture title = %q", source.Title)
+	}
+	policy.DirectoryName = ""
+	updated, err := s.Configure(ctx, "12345", policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Policy.DirectoryName != "测试收藏夹 (12345)" {
+		t.Fatalf("reset directory = %q", updated.Policy.DirectoryName)
+	}
+}
 func TestSharedCompletedDownloadRemainsTrackedWhenItsFileDisappears(t *testing.T) {
 	s, _, remote, d := newFixture(t)
 	item := video(0)
 	remote.pages[0].Items = []content.Item{item}
 	remote.pages[0].Entries = 1
 	remote.pages[0].Folder.Count = 1
-	d.jobs = []downloads.Job{{ID: "manual-completed", URL: item.URL, State: "completed"}}
-	d.filePath = "/fixture/existing.mp4"
 	p := DefaultPolicy()
 	p.AutoDownload = true
+	d.jobs = []downloads.Job{{Options: p.Download, ID: "manual-completed", URL: item.URL, Subdirectory: "B站收藏夹/" + folderDirectoryName("测试收藏夹", "12345"), MaxHeight: p.MaxHeight, State: "completed"}}
+	d.filePath = "/fixture/existing.mp4"
 	if _, err := s.Create(context.Background(), Input{Query: "12345", Policy: p}); err != nil {
 		t.Fatal(err)
 	}
@@ -630,8 +708,8 @@ func TestScheduleAndCrossFolderDownloads(t *testing.T) {
 	}
 	s.Create(ctx, Input{Query: "23456", Policy: p})
 	syncOnce(t, s, "23456")
-	if d.started != 2 {
-		t.Fatal("cross folder duplicate", d.started)
+	if d.started != 4 {
+		t.Fatal("each folder should receive an isolated download", d.started)
 	}
 	p.Enabled = false
 	s.Configure(ctx, "12345", p)
@@ -645,7 +723,7 @@ func TestScheduleAndCrossFolderDownloads(t *testing.T) {
 	if err := s.Remove(ctx, "12345"); err != nil {
 		t.Fatal(err)
 	}
-	if d.started != 2 || len(d.jobs) != 2 {
+	if d.started != 4 || len(d.jobs) != 4 {
 		t.Fatal("removal affected downloads")
 	}
 }
@@ -669,8 +747,8 @@ func TestCrossFolderCancellationDoesNotAdmitAnotherDownload(t *testing.T) {
 		t.Fatal(err)
 	}
 	second := syncOnce(t, s, "23456")
-	if d.started != 1 || len(second.Pending) != 0 || second.Transfers[video(0).ID].JobID != "1" {
-		t.Fatal("cancellation not shared", second, d.started)
+	if d.started != 2 || len(second.Pending) != 0 || second.Transfers[video(0).ID].JobID != "2" {
+		t.Fatal("folder-scoped transfer not admitted", second, d.started)
 	}
 	// A newer explicit queued job may still be shared rather than cancelled.
 	job, err := d.Start(ctx, downloads.Request{URL: video(0).URL, Title: "explicit fixture retry", MaxHeight: 1080})
@@ -681,8 +759,8 @@ func TestCrossFolderCancellationDoesNotAdmitAnotherDownload(t *testing.T) {
 		t.Fatal(err)
 	}
 	third := syncOnce(t, s, "34567")
-	if d.started != 2 || third.Transfers[video(0).ID].JobID != job.ID {
-		t.Fatal("explicit retry not shared", third, d.started)
+	if d.started != 3 || third.Transfers[video(0).ID].JobID != job.ID {
+		t.Fatal("active manual download not adopted", third, d.started)
 	}
 }
 

@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -21,6 +20,14 @@ func (s *Service) Start(ctx context.Context, request Request) (Job, error) {
 	}
 	if request.MaxHeight < 0 || request.MaxHeight > 16384 || request.Options.normalize() != nil {
 		return Job{}, ErrInvalid
+	}
+	request.Subdirectory, err = NormalizeSubdirectory(request.Subdirectory)
+	if err != nil {
+		return Job{}, err
+	}
+	request.OutputDirectory, err = normalizeOutputDirectory(request.OutputDirectory)
+	if err != nil {
+		return Job{}, err
 	}
 	// Douyin can be downloaded directly from the authenticated in-app page,
 	// so yt-dlp/FFmpeg readiness must not prevent the job from entering the
@@ -57,7 +64,7 @@ func (s *Service) Start(ctx context.Context, request Request) (Job, error) {
 		return Job{}, err
 	}
 	for _, job := range jobs {
-		if sameURL(job.URL, canonical) && job.MaxHeight == request.MaxHeight && sameOptions(job.Options, request.Options) && (job.State == "queued" || job.State == "running") {
+		if sameURL(job.URL, canonical) && job.MaxHeight == request.MaxHeight && sameOptions(job.Options, request.Options) && job.Subdirectory == request.Subdirectory && (job.State == "queued" || job.State == "running") {
 			return job, nil
 		}
 	}
@@ -72,7 +79,23 @@ func (s *Service) Start(ctx context.Context, request Request) (Job, error) {
 		}
 	}
 	now := time.Now().Unix()
-	job := Job{Options: request.Options, ID: rand.Text(), URL: canonical, Title: strings.TrimSpace(request.Title), MaxHeight: request.MaxHeight, State: "queued", CreatedAt: now, UpdatedAt: now}
+	job := Job{Options: request.Options, ID: rand.Text(), URL: canonical, Title: strings.TrimSpace(request.Title), Subdirectory: request.Subdirectory, OutputDirectory: request.OutputDirectory, MaxHeight: request.MaxHeight, State: "queued", CreatedAt: now, UpdatedAt: now}
+	if job.OutputDirectory != "" {
+		retryable, occupied := false, false
+		for _, existing := range jobs {
+			if existing.Subdirectory == job.Subdirectory && existing.OutputDirectory == job.OutputDirectory && s.jobDirectoryUnlocked(existing.ID) == s.directory {
+				sameRequest := sameURL(existing.URL, canonical) && existing.MaxHeight == job.MaxHeight && sameOptions(existing.Options, job.Options)
+				if sameRequest && (existing.State == "failed" || existing.State == "interrupted" || existing.State == "cancelled") {
+					retryable = true
+				} else {
+					occupied = true
+				}
+			}
+		}
+		if !retryable || occupied {
+			job.OutputDirectory = s.availableOutputDirectory(job.OutputDirectory, job.Subdirectory, jobs)
+		}
+	}
 	s.locations.Jobs[job.ID] = s.directory
 	if err := s.saveDirectories(); err != nil {
 		delete(s.locations.Jobs, job.ID)
@@ -120,6 +143,20 @@ func (s *Service) Delete(ctx context.Context, id string, removeFiles bool) error
 		return ErrActive
 	}
 	directory := s.jobDirectoryUnlocked(id)
+	var outputDirectory string
+	if removeFiles {
+		outputDirectory, err = safeJobOutputDirectory(directory, job)
+		if err != nil {
+			return err
+		}
+		jobs, err := s.repo.ListDownloads(ctx)
+		if err != nil {
+			return err
+		}
+		if s.outputPathReferenced(outputDirectory, jobs, map[string]bool{id: true}) {
+			outputDirectory = ""
+		}
+	}
 	if err := s.repo.DeleteDownload(ctx, id); err != nil {
 		return err
 	}
@@ -127,8 +164,8 @@ func (s *Service) Delete(ctx context.Context, id string, removeFiles bool) error
 	if err := s.saveDirectories(); err != nil {
 		return err
 	}
-	if removeFiles {
-		if err := os.RemoveAll(filepath.Join(directory, id)); err != nil {
+	if removeFiles && outputDirectory != "" {
+		if err := os.RemoveAll(outputDirectory); err != nil {
 			return err
 		}
 	}
@@ -151,17 +188,35 @@ func (s *Service) Clear(ctx context.Context, removeFiles bool) error {
 		ids = append(ids, job.ID)
 		terminal = append(terminal, job)
 	}
-	if err := s.repo.DeleteDownloads(ctx, ids); err != nil {
-		return err
-	}
+	paths := make(map[string]string, len(terminal))
 	if removeFiles {
+		removed := make(map[string]bool, len(terminal))
+		for _, job := range terminal {
+			removed[job.ID] = true
+		}
 		for _, job := range terminal {
 			directory := s.locations.Jobs[job.ID]
 			if directory == "" {
 				directory = s.originalDirectory
 			}
-			if err := os.RemoveAll(filepath.Join(directory, job.ID)); err != nil {
+			path, err := safeJobOutputDirectory(directory, job)
+			if err != nil {
 				return err
+			}
+			if !s.outputPathReferenced(path, jobs, removed) {
+				paths[job.ID] = path
+			}
+		}
+	}
+	if err := s.repo.DeleteDownloads(ctx, ids); err != nil {
+		return err
+	}
+	if removeFiles {
+		for _, job := range terminal {
+			if path := paths[job.ID]; path != "" {
+				if err := os.RemoveAll(path); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -169,4 +224,19 @@ func (s *Service) Clear(ctx context.Context, removeFiles bool) error {
 		delete(s.locations.Jobs, id)
 	}
 	return s.saveDirectories()
+}
+
+// Called with mu held. Retrying a failed job can share its readable directory.
+func (s *Service) outputPathReferenced(path string, jobs []Job, ignoredIDs map[string]bool) bool {
+	for _, candidate := range jobs {
+		if ignoredIDs[candidate.ID] {
+			continue
+		}
+		root := s.jobDirectoryUnlocked(candidate.ID)
+		other, err := safeJobOutputDirectory(root, candidate)
+		if err == nil && other == path {
+			return true
+		}
+	}
+	return false
 }

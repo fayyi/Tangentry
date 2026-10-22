@@ -8,7 +8,7 @@ func (h *Handler) registerMediaRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/downloads/{id}", h.media.downloadDelete)
 	mux.HandleFunc("POST /api/downloads", h.media.downloadStart)
 	mux.HandleFunc("POST /api/downloads/info", h.media.downloadInfo)
-	mux.HandleFunc("GET /api/downloads/{id}/files/{name}", h.media.downloadArtifact)
+	mux.HandleFunc("GET /api/downloads/{id}/files/{name...}", h.media.downloadArtifact)
 	mux.HandleFunc("POST /api/downloads/{id}/cancel", h.media.downloadCancel)
 	mux.HandleFunc("GET /api/downloads/{id}/file", h.media.downloadFile)
 	mux.HandleFunc("GET /api/downloads/{id}/media", h.media.downloadMedia)

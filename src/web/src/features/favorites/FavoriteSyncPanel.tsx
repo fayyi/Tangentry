@@ -5,30 +5,54 @@ import { CardCollection } from '../../shared/ui/CardCollection'
 import { ModernGalleryCard } from '../../shared/ui/ModernGalleryCard'
 import { useFavoriteSync } from './useFavoriteSync'
 import type { FavoritePolicy, FavoriteSource } from './useFavoriteSync'
+import { parseSubtitleLanguages, sourcePolicyDraft, subtitleLanguageText, syncPolicyDraft } from './policyDraft'
 import './favorites.css'
 
 type FavoriteState = ReturnType<typeof useFavoriteSync>
 export type LibrarySource = 'local' | 'setup' | 'folder'
 
 function PolicyEditor({ source, disabled, onSave }: { source: FavoriteSource; disabled: boolean; onSave: (policy: FavoritePolicy) => Promise<boolean> }) {
-  const [draft, setDraft] = useState(source.policy)
+  const [draft, setDraft] = useState<FavoritePolicy>(() => sourcePolicyDraft(source.policy))
+  const [subtitleText, setSubtitleText] = useState(() => subtitleLanguageText(source.policy.download))
   const [notice, setNotice] = useState('')
-  const { enabled, autoDownload, intervalMinutes, maxPerRun, maxHeight, titleInclude = '', titleExclude = '', authorInclude = '' } = source.policy
-  useEffect(() => { setDraft({ enabled, autoDownload, intervalMinutes, maxPerRun, maxHeight, titleInclude, titleExclude, authorInclude }) }, [enabled, autoDownload, intervalMinutes, maxPerRun, maxHeight, titleInclude, titleExclude, authorInclude])
-  return <form className="favorite-policy" aria-label="收藏同步设置" onSubmit={event => { event.preventDefault(); void onSave(draft).then(ok => { if (ok) setNotice('同步设置已保存。') }) }}>
+  const [dirty, setDirty] = useState(false)
+  const updateDraft = (update: (value: FavoritePolicy) => FavoritePolicy) => { setDraft(update); setDirty(true); setNotice('') }
+  useEffect(() => {
+    if (dirty) return
+    setDraft(current => syncPolicyDraft(current, source.policy, dirty))
+    setSubtitleText(subtitleLanguageText(source.policy.download))
+  }, [dirty, source.policy])
+  return <form className="favorite-policy" aria-label="收藏同步设置" onSubmit={event => { event.preventDefault(); void onSave(draft).then(ok => { if (ok) { setDirty(false); setNotice('同步设置已保存。') } }) }}>
     <div className="favorite-switches">
-      <label><input type="checkbox" checked={draft.enabled} disabled={disabled} onChange={event => { setDraft(value => ({ ...value, enabled: event.target.checked })); setNotice('') }} /><span><strong>定时同步这个收藏夹</strong><small>按间隔读取 B站收藏，新收藏会出现在这里</small></span></label>
-      <label><input type="checkbox" checked={draft.autoDownload} disabled={disabled} onChange={event => { setDraft(value => ({ ...value, autoDownload: event.target.checked })); setNotice('') }} /><span><strong>自动下载新增视频</strong><small>关闭时只同步收藏列表，不占用磁盘</small></span></label>
+      <label><input type="checkbox" checked={draft.enabled} disabled={disabled} onChange={event => updateDraft(value => ({ ...value, enabled: event.target.checked }))} /><span><strong>定时同步这个收藏夹</strong><small>按间隔读取 B站收藏，新收藏会出现在这里</small></span></label>
+      <label><input type="checkbox" checked={draft.autoDownload} disabled={disabled} onChange={event => updateDraft(value => ({ ...value, autoDownload: event.target.checked }))} /><span><strong>自动下载新增视频</strong><small>关闭时只同步收藏列表，不占用磁盘</small></span></label>
     </div>
-    <div className="favorite-policy-fields"><label>同步间隔<select aria-label="收藏同步间隔" disabled={disabled} value={draft.intervalMinutes} onChange={event => setDraft(value => ({ ...value, intervalMinutes: Number(event.target.value) }))}>{[15, 60, 360, 1440].map(value => <option key={value} value={value}>{value < 60 ? `${value} 分钟` : `${value / 60} 小时`}</option>)}</select></label>
-      <label>每轮最多下载<select aria-label="每轮最多下载" disabled={disabled} value={draft.maxPerRun} onChange={event => setDraft(value => ({ ...value, maxPerRun: Number(event.target.value) }))}>{[1, 3, 5].map(value => <option key={value} value={value}>{value} 个视频</option>)}</select></label><label>最高画质<select aria-label="收藏下载最高画质" disabled={disabled} value={draft.maxHeight} onChange={event => setDraft(value => ({ ...value, maxHeight: Number(event.target.value) }))}><option value={720}>720p</option><option value={1080}>1080p</option></select></label>
+    <div className="favorite-policy-fields"><label>同步间隔<select aria-label="收藏同步间隔" disabled={disabled} value={draft.intervalMinutes} onChange={event => updateDraft(value => ({ ...value, intervalMinutes: Number(event.target.value) }))}>{[15, 60, 360, 1440].map(value => <option key={value} value={value}>{value < 60 ? `${value} 分钟` : `${value / 60} 小时`}</option>)}</select></label>
+      <label>每轮最多下载<select aria-label="每轮最多下载" disabled={disabled} value={draft.maxPerRun} onChange={event => updateDraft(value => ({ ...value, maxPerRun: Number(event.target.value) }))}>{[1, 3, 5].map(value => <option key={value} value={value}>{value} 个视频</option>)}</select></label>
+      <label>最高画质<select aria-label="收藏下载最高画质" disabled={disabled} value={draft.maxHeight} onChange={event => updateDraft(value => ({ ...value, maxHeight: Number(event.target.value) }))}><option value={0}>原画</option>{[480, 720, 1080, 1440, 2160].map(value => <option key={value} value={value}>{value}p</option>)}</select></label>
+      <label>封装格式<select aria-label="收藏视频封装格式" disabled={disabled} value={draft.download.container} onChange={event => updateDraft(value => ({ ...value, download: { ...value.download, container: event.target.value as 'mp4' | 'mkv' } }))}><option value="mp4">MP4</option><option value="mkv">MKV</option></select></label>
     </div>
+    <div className="favorite-download-toggles" role="group" aria-label="收藏视频处理选项">
+      <label><input type="checkbox" checked={!!draft.download.compress} disabled={disabled} onChange={event => updateDraft(value => ({ ...value, download: { ...value.download, compress: event.target.checked } }))}/><span>节省空间</span></label>
+      <label><input type="checkbox" checked={!draft.download.videoOnly} disabled={disabled} onChange={event => updateDraft(value => ({ ...value, download: { ...value.download, videoOnly: !event.target.checked } }))}/><span>保留音频</span></label>
+      <label><input type="checkbox" checked={draft.downloadSubtitles} disabled={disabled} onChange={event => { setSubtitleText(''); updateDraft(value => ({ ...value, downloadSubtitles: event.target.checked, download: { ...value.download, subtitleLanguages: event.target.checked ? ['all'] : [], automaticSubtitles: event.target.checked && value.download.automaticSubtitles } })) }}/><span>下载字幕</span></label>
+      <label><input type="checkbox" checked={!!draft.download.automaticSubtitles} disabled={disabled || !draft.downloadSubtitles} onChange={event => updateDraft(value => ({ ...value, download: { ...value.download, automaticSubtitles: event.target.checked } }))}/><span>包含自动字幕</span></label>
+      <label><input type="checkbox" checked={!!draft.download.downloadDanmaku} disabled={disabled} onChange={event => updateDraft(value => ({ ...value, download: { ...value.download, downloadDanmaku: event.target.checked } }))}/><span>下载弹幕</span></label>
+      <label><input type="checkbox" checked={!!draft.download.downloadThumbnail} disabled={disabled} onChange={event => updateDraft(value => ({ ...value, download: { ...value.download, downloadThumbnail: event.target.checked } }))}/><span>下载封面</span></label>
+      <label><input type="checkbox" checked={!!draft.download.downloadInfoJSON} disabled={disabled} onChange={event => updateDraft(value => ({ ...value, download: { ...value.download, downloadInfoJSON: event.target.checked } }))}/><span>保存视频信息</span></label>
+    </div>
+    <label className="favorite-directory-name">下载文件夹名称<input value={draft.directoryName ?? ''} maxLength={80} disabled={disabled} placeholder={`${source.title} (${source.folderId})`} onChange={event => updateDraft(value => ({ ...value, directoryName: event.target.value }))} /><small>保存后只影响新下载；旧视频和字幕保留在原目录。</small></label>
+    {draft.downloadSubtitles && <label className="favorite-subtitle-languages">字幕语言<input value={subtitleText} disabled={disabled} placeholder="留空时下载所有人工字幕" onChange={event => {
+      const text = event.target.value
+      setSubtitleText(text)
+      updateDraft(value => ({ ...value, download: { ...value.download, subtitleLanguages: parseSubtitleLanguages(text) } }))
+    }}/><small>用逗号分隔，例如 zh-Hans, en；开启自动字幕后也会读取对应的自动字幕。</small></label>}
     <div className="favorite-download-filters" role="group" aria-label="自动下载规则">
-      <label>标题包含<input value={draft.titleInclude ?? ''} maxLength={300} disabled={disabled} placeholder="例如：教程，访谈" onChange={event => { setDraft(value => ({ ...value, titleInclude: event.target.value })); setNotice('') }} /></label>
-      <label>标题排除<input value={draft.titleExclude ?? ''} maxLength={300} disabled={disabled} placeholder="例如：预告，直播回放" onChange={event => { setDraft(value => ({ ...value, titleExclude: event.target.value })); setNotice('') }} /></label>
-      <label>作者包含<input value={draft.authorInclude ?? ''} maxLength={300} disabled={disabled} placeholder="留空不限作者" onChange={event => { setDraft(value => ({ ...value, authorInclude: event.target.value })); setNotice('') }} /></label>
+      <label>标题包含<input value={draft.titleInclude ?? ''} maxLength={300} disabled={disabled} placeholder="例如：教程，访谈" onChange={event => updateDraft(value => ({ ...value, titleInclude: event.target.value }))} /></label>
+      <label>标题排除<input value={draft.titleExclude ?? ''} maxLength={300} disabled={disabled} placeholder="例如：预告，直播回放" onChange={event => updateDraft(value => ({ ...value, titleExclude: event.target.value }))} /></label>
+      <label>作者包含<input value={draft.authorInclude ?? ''} maxLength={300} disabled={disabled} placeholder="留空不限作者" onChange={event => updateDraft(value => ({ ...value, authorInclude: event.target.value }))} /></label>
     </div>
-    <p className="field-hint">下载数量、画质和关键词只在开启自动下载时生效。多个关键词用逗号分隔；标题与作者条件需同时满足，排除优先。首次同步也按限额下载，之后只下载新增视频；移除远端条目会保留本机文件和笔记。</p>
+    <p className="field-hint">目录为「下载位置 / B站收藏夹 / 收藏夹名称 / 视频标题 [BV号]」，视频、字幕、弹幕、封面和视频信息放在同一目录。下载数量、格式、画质、附属内容和关键词只在开启自动下载时生效。多个关键词用逗号分隔；标题与作者条件需同时满足，排除优先。移除远端条目会保留本机文件和笔记。</p>
     <div className="favorite-policy-actions"><button className="button button-primary" disabled={disabled}>保存同步设置</button>{notice && <p className="inline-feedback" role="status"><Check size={14}/>{notice}</p>}</div>
   </form>
 }

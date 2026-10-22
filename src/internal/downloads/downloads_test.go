@@ -200,6 +200,234 @@ func TestChangingDirectoryPreservesRunningJobAndPersistsNewDestination(t *testin
 	}
 }
 
+func TestReadableOutputDirectoriesAreUniqueRestoredAndIndividuallyDeleted(t *testing.T) {
+	root := t.TempDir()
+	store, err := sqlite.Open(filepath.Join(root, "readable.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	mediaRoot := filepath.Join(root, "media")
+	runner := gatedRunner{make(chan struct{}, 2), make(chan struct{})}
+	service, err := downloads.NewService(store, runner, mediaRoot, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	request := downloads.Request{URL: "https://www.bilibili.com/video/BV17x411w7KC", Title: "Video", Subdirectory: "B站收藏夹/测试 (12345)", OutputDirectory: "同名视频 [BVfixture]"}
+	first, err := service.Start(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-runner.started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("worker did not start")
+	}
+	request.URL = "https://www.bilibili.com/video/BV1xx411c7mD"
+	second, err := service.Start(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.OutputDirectory != "同名视频 [BVfixture]" || second.OutputDirectory != "同名视频 [BVfixture] (2)" {
+		t.Fatalf("output directories collided: %q, %q", first.OutputDirectory, second.OutputDirectory)
+	}
+	close(runner.release)
+	waitState(t, store, first.ID, "completed")
+	waitState(t, store, second.ID, "completed")
+	service.Close()
+
+	service, err = downloads.NewService(store, runner, mediaRoot, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Close()
+	for _, job := range []downloads.Job{first, second} {
+		file, err := service.File(ctx, job.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := filepath.Join(mediaRoot, "B站收藏夹", "测试 (12345)", job.OutputDirectory, "video.mp4")
+		if file.Name() != want {
+			t.Fatalf("restored path = %q, want %q", file.Name(), want)
+		}
+		file.Close()
+	}
+	if err := service.Delete(ctx, first.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(mediaRoot, "B站收藏夹", "测试 (12345)")); err != nil {
+		t.Fatal("deleting one video removed its favorite parent", err)
+	}
+	if _, err := os.Stat(filepath.Join(mediaRoot, "B站收藏夹", "测试 (12345)", second.OutputDirectory, "video.mp4")); err != nil {
+		t.Fatal("deleting one video removed its sibling", err)
+	}
+}
+
+func TestDeletingRetryHistoryDoesNotRemoveSharedOutputDirectory(t *testing.T) {
+	root := t.TempDir()
+	store, err := sqlite.Open(filepath.Join(root, "shared-output.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	mediaRoot := filepath.Join(root, "media")
+	if err := os.MkdirAll(filepath.Join(mediaRoot, "B站收藏夹", "测试 (12345)", "视频 [BVfixture]"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mediaRoot, "B站收藏夹", "测试 (12345)", "视频 [BVfixture]", "video.mp4"), []byte("media"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runner := gatedRunner{make(chan struct{}, 1), make(chan struct{})}
+	service, err := downloads.NewService(store, runner, mediaRoot, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Close()
+	shared := downloads.Job{URL: "https://www.bilibili.com/video/BV17x411w7KC/", Subdirectory: "B站收藏夹/测试 (12345)", OutputDirectory: "视频 [BVfixture]", State: "queued"}
+	failed := shared
+	failed.ID, failed.State = "failed-attempt", "failed"
+	queued := shared
+	queued.ID = "queued-retry"
+	if err := store.SaveDownload(context.Background(), failed); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveDownload(context.Background(), queued); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Delete(context.Background(), failed.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(mediaRoot, shared.Subdirectory, shared.OutputDirectory, "video.mp4")); err != nil {
+		t.Fatal("deleting old retry removed a path still used by another job", err)
+	}
+}
+
+func TestReadableDirectoryIsReusedOnlyForAnEquivalentRetry(t *testing.T) {
+	root := t.TempDir()
+	store, err := sqlite.Open(filepath.Join(root, "retry-directory.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	mediaRoot := filepath.Join(root, "media")
+	runner := gatedRunner{make(chan struct{}, 1), make(chan struct{})}
+	service, err := downloads.NewService(store, runner, mediaRoot, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Close()
+	ctx := context.Background()
+	request := downloads.Request{
+		URL:             "https://www.bilibili.com/video/BV17x411w7KC/",
+		Title:           "Fixture",
+		MaxHeight:       1080,
+		Options:         downloads.Options{Container: "mp4", SubtitleLanguages: []string{"zh-Hans"}},
+		Subdirectory:    "B站收藏夹/Fixture (12345)",
+		OutputDirectory: "Fixture [BV17x411w7KC]",
+	}
+	failed := downloads.Job{
+		Options: request.Options, ID: "failed-attempt", URL: request.URL, Title: request.Title,
+		Subdirectory: request.Subdirectory, OutputDirectory: request.OutputDirectory,
+		MaxHeight: request.MaxHeight, State: "failed",
+	}
+	if err := store.SaveDownload(ctx, failed); err != nil {
+		t.Fatal(err)
+	}
+	retry, err := service.Start(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retry.OutputDirectory != failed.OutputDirectory {
+		t.Fatalf("equivalent retry changed directory: %q", retry.OutputDirectory)
+	}
+	if err := service.Cancel(ctx, retry.ID); err != nil {
+		t.Fatal(err)
+	}
+	request.MaxHeight = 720
+	changed, err := service.Start(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed.OutputDirectory == failed.OutputDirectory || changed.OutputDirectory != failed.OutputDirectory+" (2)" {
+		t.Fatalf("changed strategy reused directory: %q", changed.OutputDirectory)
+	}
+	if err := service.Cancel(ctx, changed.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	completed := failed
+	completed.ID, completed.State, completed.CreatedAt = "completed-attempt", "completed", 1
+	if err := store.SaveDownload(ctx, completed); err != nil {
+		t.Fatal(err)
+	}
+	request.MaxHeight = failed.MaxHeight
+	completedRetry, err := service.Start(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completedRetry.OutputDirectory == completed.OutputDirectory {
+		t.Fatalf("completed destination was reused: %q", completedRetry.OutputDirectory)
+	}
+	if err := service.Cancel(ctx, completedRetry.ID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSubdirectoryValidationRejectsTraversalAndPortablePathHazards(t *testing.T) {
+	for _, path := range []string{"../escape", "B站\\收藏夹", "B站/CON", "B站//夹", "B站/name.", "B站/带\n控制符", "/absolute"} {
+		if _, err := downloads.NormalizeSubdirectory(path); !errors.Is(err, downloads.ErrInvalid) {
+			t.Errorf("accepted unsafe subdirectory %q: %v", path, err)
+		}
+	}
+	if _, err := downloads.NormalizeSubdirectory("B站收藏夹/课程 (12345)"); err != nil {
+		t.Fatal("valid multilingual path rejected", err)
+	}
+}
+
+func TestFavoriteSubdirectorySymlinkCannotRedirectDownload(t *testing.T) {
+	if os.PathSeparator != '/' {
+		t.Skip("symlink fixture")
+	}
+	root := t.TempDir()
+	store, err := sqlite.Open(filepath.Join(root, "symlink.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	mediaRoot := filepath.Join(root, "media")
+	outside := filepath.Join(root, "outside")
+	if err := os.MkdirAll(mediaRoot, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(outside, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(mediaRoot, "B站收藏夹")); err != nil {
+		t.Fatal(err)
+	}
+	runner := gatedRunner{make(chan struct{}, 1), make(chan struct{})}
+	service, err := downloads.NewService(store, runner, mediaRoot, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Close()
+	job, err := service.Start(context.Background(), downloads.Request{URL: "https://www.bilibili.com/video/BV17x411w7KC", Subdirectory: "B站收藏夹/测试 (12345)", OutputDirectory: "测试视频 [BV17x411w7KC]"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitState(t, store, job.ID, "failed")
+	select {
+	case <-runner.started:
+		t.Fatal("runner wrote through a subdirectory symlink")
+	default:
+	}
+	entries, err := os.ReadDir(outside)
+	if err != nil || len(entries) != 0 {
+		t.Fatal("outside directory was modified", entries, err)
+	}
+}
+
 func TestCancelAndRestartPreserveHistoryWithoutAutomaticallyResuming(t *testing.T) {
 	root := t.TempDir()
 	dbPath := filepath.Join(root, "test.db")
