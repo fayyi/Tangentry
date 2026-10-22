@@ -25,15 +25,15 @@ type managedRelease struct {
 
 // Pinned releases are downloaded on first use instead of shipping in installers.
 // Checksums come from each project's published release digests.
-const pinnedYTDLPVersion = "2026.08.19"
+const pinnedYTDLPVersion = "2026.10.21"
 
 var ytdlpAssets = map[string]struct{ name, sha256 string }{
-	"darwin/arm64":  {"yt-dlp_macos", "0f192b7ec147ab6288885d6351d9ab67367640029b4377576ef46dd79cf7b202"},
-	"darwin/amd64":  {"yt-dlp_macos", "0f192b7ec147ab6288885d6351d9ab67367640029b4377576ef46dd79cf7b202"},
-	"windows/amd64": {"yt-dlp.exe", "66674953fe251b89f4d08c5f0e35e0728679bd67ab3d7d05c0562af101dd3e7a"},
-	"windows/arm64": {"yt-dlp_arm64.exe", "05b438997bafc3affdfda9d041353c9d73e04dc842207254b655b0887c4445b0"},
-	"linux/amd64":   {"yt-dlp_linux", "58162f9bfdc27458ea47bfcb311cf47028f17d8154a8bf7d689861d46399230a"},
-	"linux/arm64":   {"yt-dlp_linux_aarch64", "b16e4dab368a816cd05d477d698a605a6ae87ccee1c8ffd38fa21d7254141fcc"},
+	"darwin/arm64":  {"yt-dlp_macos", "7a6fe71d7d680f1fb0ac18d4949873d77db2859e90017c0f44bd94b23be4ee40"},
+	"darwin/amd64":  {"yt-dlp_macos", "7a6fe71d7d680f1fb0ac18d4949873d77db2859e90017c0f44bd94b23be4ee40"},
+	"windows/amd64": {"yt-dlp.exe", "33121d192d706e62f684a06f80918e3f3a8ba52ac3a65213b6951c39c7d9f555"},
+	"windows/arm64": {"yt-dlp_arm64.exe", "1380a9f105302764e6a5d383c2f07238ae242f0f4fbf3414aea00e56619a79b3"},
+	"linux/amd64":   {"yt-dlp_linux", "d8bd33fca9d5b23bd5b9952b3fca36db5c46331933fda9f598a3da14ce2c243f"},
+	"linux/arm64":   {"yt-dlp_linux_aarch64", "e137c2171b0b8ef648e6136e86aa70c65923e93e434f01c93901d64744b190aa"},
 }
 
 // Deno runs YouTube's JavaScript challenges for yt-dlp when the system has

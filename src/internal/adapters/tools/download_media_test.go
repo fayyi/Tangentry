@@ -45,7 +45,7 @@ func TestDownloadArgumentsUseTitleContainerAndLiteralChoices(t *testing.T) {
 		want    []string
 	}{
 		{downloads.Options{Container: "mkv", VideoFormatID: "137", AudioFormatID: "140", SubtitleLanguages: []string{"zh-Hans"}, AutomaticSubtitles: true}, []string{"137+140/137", "--remux-video mkv", "--merge-output-format mkv", "^zh-Hans$", "--write-auto-subs"}},
-		{downloads.Options{SubtitleLanguages: []string{"all"}, DownloadDanmaku: true, DownloadThumbnail: true, DownloadInfoJSON: true}, []string{"all,-live_chat", "--write-thumbnail", "--convert-thumbnails", "jpg", "--output thumbnail:%(playlist_index&Season 1/|)s%(title).100B [%(id)s]%(playlist_index& - S01E{:02d}|).%(ext)s", "--write-info-json"}},
+		{downloads.Options{SubtitleLanguages: []string{"all"}, DownloadDanmaku: true, DownloadThumbnail: true, DownloadInfoJSON: true}, []string{"all,-live_chat", "--write-thumbnail", "--convert-thumbnails", "jpg", "--output thumbnail:%(playlist_index&Season 1/|)s%(title).100B [%(id)s]%(playlist_index& - S01E{playlist_index:02d}|)s.%(ext)s", "--write-info-json"}},
 		{downloads.Options{SubtitleLanguages: []string{"zh-Hans"}, DownloadDanmaku: true}, []string{"^zh-Hans$", "danmaku"}},
 		{downloads.Options{DownloadDanmaku: true}, []string{"--sub-langs danmaku"}},
 		{downloads.Options{Mode: "audio", AudioFormat: "mp3"}, []string{"ba/b", "--extract-audio", "--audio-format mp3"}},
@@ -60,7 +60,7 @@ func TestDownloadArgumentsUseTitleContainerAndLiteralChoices(t *testing.T) {
 		text := strings.Join(args, " ")
 		wantOutput := "%(title).180B.%(ext)s"
 		if rawURL == "https://www.bilibili.com/video/BV17x411w7KC/" {
-			wantOutput = "%(playlist_index&Season 1/|)s%(title).100B [%(id)s]%(playlist_index& - S01E{:02d}|).%(ext)s"
+			wantOutput = "%(playlist_index&Season 1/|)s%(title).100B [%(id)s]%(playlist_index& - S01E{playlist_index:02d}|)s.%(ext)s"
 		}
 		if !strings.Contains(text, wantOutput) || strings.Contains(text, "--restrict-filenames") {
 			t.Fatal("title naming missing", text)
@@ -76,7 +76,7 @@ func TestDownloadArgumentsUseTitleContainerAndLiteralChoices(t *testing.T) {
 func TestBilibiliDownloadsAllPagesButOtherPlatformsStaySingleItem(t *testing.T) {
 	tk := &Toolkit{config: config.Config{FFmpegPath: "/test/ffmpeg"}}
 	bilibili := strings.Join(tk.mediaArguments("https://www.bilibili.com/video/BV17x411w7KC/", "/test/output", 0, downloads.Options{}), " ")
-	if strings.Contains(bilibili, "--no-playlist") || strings.Contains(bilibili, "--playlist-items 1") || !strings.Contains(bilibili, "Season 1/") || !strings.Contains(bilibili, "S01E{:02d}") {
+	if strings.Contains(bilibili, "--no-playlist") || strings.Contains(bilibili, "--playlist-items 1") || !strings.Contains(bilibili, "Season 1/") || !strings.Contains(bilibili, "S01E{playlist_index:02d}") || strings.Contains(bilibili, "{:02d}") {
 		t.Fatalf("Bilibili pages were limited to one entry: %s", bilibili)
 	}
 	other := strings.Join(tk.mediaArguments("https://www.youtube.com/watch?v=jNQXAC9IVRw", "/test/output", 0, downloads.Options{}), " ")

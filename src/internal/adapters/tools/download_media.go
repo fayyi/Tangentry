@@ -82,10 +82,10 @@ func (t *Toolkit) mediaArguments(rawURL, directory string, height int, options d
 	}
 	output := "%(title).180B.%(ext)s"
 	if platform == "bilibili" {
-		output = "%(playlist_index&Season 1/|)s%(title).100B [%(id)s]%(playlist_index& - S01E{:02d}|).%(ext)s"
+		output = "%(playlist_index&Season 1/|)s%(title).100B [%(id)s]%(playlist_index& - S01E{playlist_index:02d}|)s.%(ext)s"
 	}
 	if platform == "bilibili" && options.DownloadThumbnail {
-		args = append(args, "--output", "thumbnail:%(playlist_index&Season 1/|)s%(title).100B [%(id)s]%(playlist_index& - S01E{:02d}|).%(ext)s")
+		args = append(args, "--output", "thumbnail:%(playlist_index&Season 1/|)s%(title).100B [%(id)s]%(playlist_index& - S01E{playlist_index:02d}|)s.%(ext)s")
 	}
 	args = append(args, "--no-cache-dir", "--no-progress", "--no-warnings", "--socket-timeout", "20", "--retries", "1", "--fragment-retries", "1", "--concurrent-fragments", "1", "--no-overwrites", "--windows-filenames", "--ffmpeg-location", t.config.FFmpegPath, "--format", selector, "--paths", directory, "--output", output, "--print", "after_move:filepath")
 	if options.Mode == "audio" {
