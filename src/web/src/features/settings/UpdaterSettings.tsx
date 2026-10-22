@@ -70,7 +70,7 @@ export function UpdaterSettings() {
 
   const date = useMemo(() => status.date ? new Date(status.date).toLocaleString('zh-CN') : '', [status.date])
   if (capabilities.server) return <section className="settings-section updater-settings"><div className="settings-heading"><div><h2>关于与更新</h2><p className="field-hint">服务端版本通过 Docker 镜像更新，请拉取新镜像后重新创建容器。</p></div></div></section>
-  if (!isDesktop) return null
+  if (!isDesktop) return <section className="settings-section updater-settings" aria-labelledby="updater-title"><div className="settings-heading"><div><h2 id="updater-title">关于与更新</h2><p className="field-hint">当前运行在 Web 模式，版本更新由部署环境负责。</p></div></div></section>
 
   return <section className="settings-section updater-settings" aria-labelledby="updater-title">
     <div className="settings-heading"><div><h2 id="updater-title">关于与更新</h2><p className="field-hint">当前版本 {status.currentVersion || '开发版'}</p></div>
