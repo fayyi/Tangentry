@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -74,7 +75,19 @@ func (t *Toolkit) mediaArguments(rawURL, directory string, height int, options d
 	if options.Mode == "audio" {
 		selector = audio + "/b"
 	}
-	args := []string{"--ignore-config", "--no-plugin-dirs", "--no-playlist", "--playlist-items", "1", "--no-cache-dir", "--no-progress", "--no-warnings", "--socket-timeout", "20", "--retries", "1", "--fragment-retries", "1", "--concurrent-fragments", "1", "--no-overwrites", "--windows-filenames", "--ffmpeg-location", t.config.FFmpegPath, "--format", selector, "--paths", directory, "--output", "%(title).180B.%(ext)s", "--print", "after_move:filepath"}
+	args := []string{"--ignore-config", "--no-plugin-dirs"}
+	platform, _, _, _ := discovery.VideoURL(rawURL)
+	if platform != "bilibili" {
+		args = append(args, "--no-playlist", "--playlist-items", "1")
+	}
+	output := "%(title).180B.%(ext)s"
+	if platform == "bilibili" {
+		output = "%(playlist_index&Season 1/|)s%(title).100B [%(id)s]%(playlist_index& - S01E{:02d}|).%(ext)s"
+	}
+	if platform == "bilibili" && options.DownloadThumbnail {
+		args = append(args, "--output", "thumbnail:%(playlist_index&Season 1/|)s%(title).100B [%(id)s]%(playlist_index& - S01E{:02d}|).%(ext)s")
+	}
+	args = append(args, "--no-cache-dir", "--no-progress", "--no-warnings", "--socket-timeout", "20", "--retries", "1", "--fragment-retries", "1", "--concurrent-fragments", "1", "--no-overwrites", "--windows-filenames", "--ffmpeg-location", t.config.FFmpegPath, "--format", selector, "--paths", directory, "--output", output, "--print", "after_move:filepath")
 	if options.Mode == "audio" {
 		format := options.AudioFormat
 		if format == "" {
@@ -87,15 +100,38 @@ func (t *Toolkit) mediaArguments(rawURL, directory string, height int, options d
 			args = append(args, "--format-sort", "res,fps,vcodec:h264,acodec:aac")
 		}
 	}
-	if len(options.SubtitleLanguages) > 0 {
-		languages := make([]string, 0, len(options.SubtitleLanguages))
-		for _, language := range options.SubtitleLanguages {
-			languages = append(languages, "^"+regexp.QuoteMeta(language)+"$")
+	if len(options.SubtitleLanguages) > 0 || options.DownloadDanmaku {
+		languages := "all,-danmaku,-live_chat"
+		if options.DownloadDanmaku && len(options.SubtitleLanguages) == 0 {
+			languages = "danmaku"
+		} else if slices.Contains(options.SubtitleLanguages, "all") {
+			if options.DownloadDanmaku {
+				languages = "all,-live_chat"
+			}
+		} else {
+			selected := make([]string, 0, len(options.SubtitleLanguages)+1)
+			for _, language := range options.SubtitleLanguages {
+				selected = append(selected, "^"+regexp.QuoteMeta(language)+"$")
+			}
+			if options.DownloadDanmaku {
+				selected = append(selected, "danmaku")
+			}
+			languages = strings.Join(selected, ",")
 		}
-		args = append(args, "--write-subs", "--sub-langs", strings.Join(languages, ","), "--sub-format", "srt/vtt/best")
+		// Bilibili exposes AI tracks in its regular subtitle map, not automatic_captions.
+		if platform == "bilibili" && !options.AutomaticSubtitles {
+			languages += ",-ai[-_].*"
+		}
+		args = append(args, "--write-subs", "--sub-langs", languages, "--sub-format", "srt/vtt/best")
 		if options.AutomaticSubtitles {
 			args = append(args, "--write-auto-subs")
 		}
+	}
+	if options.DownloadThumbnail {
+		args = append(args, "--write-thumbnail", "--convert-thumbnails", "jpg")
+	}
+	if options.DownloadInfoJSON {
+		args = append(args, "--write-info-json")
 	}
 	return append(args, "--", rawURL)
 }
@@ -134,7 +170,7 @@ func (t *Toolkit) DownloadMedia(ctx context.Context, rawURL, directory string, h
 		}
 		return downloads.Result{}, err
 	}
-	stdout, stderr := &boundedBuffer{}, &boundedBuffer{}
+	stdout, stderr := &metadataBuffer{limit: 4 << 20}, &boundedBuffer{}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	if err := cmd.Run(); err != nil {
 		if ctx.Err() != nil {
@@ -146,26 +182,144 @@ func (t *Toolkit) DownloadMedia(ctx context.Context, rawURL, directory string, h
 		}
 		return downloads.Result{}, classify(stderr.String())
 	}
-	lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
-	abs, err := filepath.Abs(strings.TrimSpace(lines[len(lines)-1]))
+	if stdout.exceeded {
+		return downloads.Result{}, errors.New("下载生成的文件清单过大，请缩小收藏夹视频或分 P 数量后重试。")
+	}
 	root, rootErr := filepath.Abs(directory)
-	if err != nil || rootErr != nil || filepath.Dir(abs) != root {
+	if rootErr != nil {
 		return downloads.Result{}, errors.New("下载工具返回了无效的文件位置。")
 	}
-	info, err := os.Lstat(abs)
-	if err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
-		return downloads.Result{}, errors.New("下载未产生完整的媒体文件。")
+	type downloadedFile struct {
+		absolute string
+		relative string
 	}
-	if options.Mode != "audio" {
-		if platform, _, _, parseErr := discovery.VideoURL(rawURL); parseErr == nil && platform == "xiaohongshu" && info.Size() < 100<<10 {
-			return downloads.Result{}, errors.New("小红书视频文件过小，疑似触发风控。请稍后重试，或在工具设置配置小红书 Cookie。")
+	paths := make([]downloadedFile, 0, 1)
+	seen := make(map[string]bool)
+	for _, line := range strings.Split(stdout.String(), "\n") {
+		if name := strings.TrimSpace(line); name != "" {
+			abs, err := filepath.Abs(name)
+			relative, relativeErr := filepath.Rel(root, abs)
+			_, artifactErr := downloads.NormalizeArtifactPath(filepath.ToSlash(relative))
+			if err != nil || relativeErr != nil || artifactErr != nil || !filepath.IsLocal(relative) || seen[abs] {
+				return downloads.Result{}, errors.New("下载工具返回了无效的文件位置。")
+			}
+			if err := ensureSafeDownloadedPath(root, relative); err != nil {
+				return downloads.Result{}, errors.New("下载工具返回了无效的文件位置。")
+			}
+			info, err := os.Lstat(abs)
+			if err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
+				return downloads.Result{}, errors.New("下载未产生完整的媒体文件。")
+			}
+			seen[abs] = true
+			paths = append(paths, downloadedFile{absolute: abs, relative: filepath.ToSlash(relative)})
 		}
 	}
-	result := downloads.Result{FileName: filepath.Base(abs), FileSize: info.Size(), OriginalSize: info.Size()}
-	if options.Mode != "audio" && (options.VideoOnly || options.Compress) {
-		return t.optimizeVideo(ctx, abs, options, result)
+	if len(paths) == 0 {
+		return downloads.Result{}, errors.New("下载工具没有返回媒体文件位置。")
+	}
+	var result downloads.Result
+	for index, path := range paths {
+		info, err := os.Lstat(path.absolute)
+		if err != nil {
+			return result, errors.New("下载未产生完整的媒体文件。")
+		}
+		if options.Mode != "audio" {
+			if platform, _, _, parseErr := discovery.VideoURL(rawURL); parseErr == nil && platform == "xiaohongshu" && info.Size() < 100<<10 {
+				return result, errors.New("小红书视频文件过小，疑似触发风控。请稍后重试，或在工具设置配置小红书 Cookie。")
+			}
+		}
+		current := downloads.Result{FileName: path.relative, FileSize: info.Size(), OriginalSize: info.Size()}
+		if options.Mode != "audio" && (options.VideoOnly || options.Compress) {
+			current, err = t.optimizeVideo(ctx, path.absolute, options, current)
+			if err != nil {
+				return result, err
+			}
+		}
+		if index == 0 {
+			result.FileName = current.FileName
+		}
+		result.FileSize += current.FileSize
+		result.OriginalSize += current.OriginalSize
+		result.Compressed = result.Compressed || current.Compressed
+		if current.Message != "" {
+			result.Message = current.Message
+		}
+	}
+	if platform, _, _, parseErr := discovery.VideoURL(rawURL); parseErr == nil && platform == "bilibili" {
+		videoPaths := make([]string, 0, len(paths))
+		for _, path := range paths {
+			if isVideoArtifact(path.relative) {
+				videoPaths = append(videoPaths, path.relative)
+			}
+		}
+		if options.DownloadInfoJSON {
+			if err := generateBilibiliNFO(directory, rawURL, videoPaths); err != nil {
+				return result, errors.New("无法生成媒体库视频信息文件。")
+			}
+		}
+		if options.DownloadDanmaku {
+			generated, err := convertDanmakuXML(directory)
+			if err != nil {
+				return result, errors.New("无法将弹幕转换为 ASS 字幕。")
+			}
+			for _, name := range generated {
+				info, err := os.Stat(filepath.Join(directory, filepath.FromSlash(name)))
+				if err != nil || !info.Mode().IsRegular() {
+					return result, errors.New("弹幕文件生成后无法读取。")
+				}
+				result.FileSize += info.Size()
+				result.OriginalSize += info.Size()
+			}
+		}
 	}
 	return result, nil
+}
+
+func isVideoArtifact(name string) bool {
+	return slices.Contains([]string{".mp4", ".mkv", ".webm", ".mov", ".flv", ".ts", ".m4v", ".avi"}, strings.ToLower(filepath.Ext(name)))
+}
+
+func ensureSafeDownloadedPath(root, relative string) error {
+	clean, err := downloads.NormalizeArtifactPath(filepath.ToSlash(relative))
+	if err != nil {
+		return err
+	}
+	current := root
+	parts := strings.Split(filepath.FromSlash(clean), string(filepath.Separator))
+	for index, part := range parts {
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 || index < len(parts)-1 && !info.IsDir() {
+			return downloads.ErrInvalid
+		}
+	}
+	return nil
+}
+
+func safeGeneratedPath(root, relative string) (string, error) {
+	clean, err := downloads.NormalizeArtifactPath(filepath.ToSlash(relative))
+	if err != nil {
+		return "", err
+	}
+	current := root
+	parts := strings.Split(filepath.FromSlash(clean), string(filepath.Separator))
+	for index, part := range parts {
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if errors.Is(err, os.ErrNotExist) && index == len(parts)-1 {
+			return current, nil
+		}
+		if err != nil {
+			return "", err
+		}
+		if info.Mode()&os.ModeSymlink != 0 || index < len(parts)-1 && !info.IsDir() || index == len(parts)-1 && !info.Mode().IsRegular() {
+			return "", downloads.ErrInvalid
+		}
+	}
+	return current, nil
 }
 
 func (t *Toolkit) optimizeVideo(ctx context.Context, file string, options downloads.Options, result downloads.Result) (downloads.Result, error) {

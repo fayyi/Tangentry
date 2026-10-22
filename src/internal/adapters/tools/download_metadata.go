@@ -65,6 +65,7 @@ func parseDownloadMetadata(raw []byte, rawURL string) (downloads.MediaInfo, erro
 		info.ThumbnailURL = u.String()
 	}
 	seen := map[string]bool{}
+	platform, _, _, _ := discovery.VideoURL(rawURL)
 	for _, f := range data.Formats {
 		if f.DRM || !mediaFormatID.MatchString(f.ID) || seen[f.ID] || f.VideoCodec == "none" && f.AudioCodec == "none" {
 			continue
@@ -110,7 +111,8 @@ func parseDownloadMetadata(raw []byte, rawURL string) (downloads.MediaInfo, erro
 			if label == "" {
 				label = languageLabel(language)
 			}
-			info.Subtitles = append(info.Subtitles, downloads.Subtitle{Language: language, Label: label, Automatic: index == 1})
+			automatic := index == 1 || platform == "bilibili" && strings.HasPrefix(strings.ToLower(language), "ai-")
+			info.Subtitles = append(info.Subtitles, downloads.Subtitle{Language: language, Label: label, Automatic: automatic})
 		}
 	}
 	sort.Slice(info.Subtitles, func(i, j int) bool {

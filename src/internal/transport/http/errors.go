@@ -175,7 +175,7 @@ var errorResponses = []errorResponse{
 	{err: subscriptions.ErrNotFound, status: http.StatusNotFound, code: "subscription_not_found", message: "这个来源已经不存在，请重新加载来源。"},
 	{err: subscriptions.ErrBusy, status: http.StatusConflict, code: "subscription_busy", message: "来源正在更新或修改，请等待当前操作完成。"},
 	{err: subscriptions.ErrSnapshot, status: http.StatusBadGateway, code: "subscription_incomplete", message: "平台返回的投稿不完整，上次成功内容已保留。"},
-	{err: favoritesync.ErrInvalid, status: http.StatusBadRequest, code: "invalid_favorite_sync", message: "请选择有效的收藏夹，间隔至少 15 分钟，每轮下载 1–5 个视频，画质为 720p 或 1080p。"},
+	{err: favoritesync.ErrInvalid, status: http.StatusBadRequest, code: "invalid_favorite_sync", message: "请选择有效的收藏夹、下载格式、字幕设置和画质，并设置至少 15 分钟的同步间隔。"},
 	{err: favoritesync.ErrNotFound, status: http.StatusNotFound, code: "favorite_sync_not_found", message: "没有找到这份收藏同步配置。"},
 	{err: favoritesync.ErrBusy, status: http.StatusConflict, code: "favorite_sync_busy", message: "正在读取或同步收藏，请等待完成后再操作。"},
 	{err: favoritesync.ErrIncomplete, status: http.StatusBadGateway, code: "favorite_sync_incomplete", message: "平台返回的收藏夹不完整，或超过 4000 条。原有内容已保留，请稍后重试或选择较小的收藏夹。"},

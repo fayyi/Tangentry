@@ -5,7 +5,6 @@ import (
 	"errors"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"time"
 )
 
@@ -39,16 +38,24 @@ func (s *Service) run(id string) {
 	observer := s.observer
 	s.mu.Unlock()
 	s.notify(observer, job)
-	directory := s.jobDirectory(id)
+	directory, pathErr := s.jobOutputDirectory(job)
+	if pathErr != nil {
+		s.failPreparation(id, "下载目标目录无效。", cancel, observer)
+		return
+	}
+	if err := ensureJobOutputDirectory(s.jobDirectory(id), job.Subdirectory, jobOutputName(job)); err != nil {
+		s.failPreparation(id, "无法创建下载目录，请检查路径和磁盘权限。", cancel, observer)
+		return
+	}
 	keepFile := false
 	defer func() {
 		if !keepFile {
-			if err := os.RemoveAll(filepath.Join(directory, id)); err != nil {
+			if err := os.RemoveAll(directory); err != nil {
 				slog.Error("could not remove unfinished download", "id", id)
 			}
 		}
 	}()
-	outputDir := filepath.Join(directory, id)
+	outputDir := directory
 	var result Result
 	var runErr error
 	if runner, ok := s.runner.(MediaRunner); ok {
@@ -83,6 +90,23 @@ func (s *Service) run(id string) {
 	}
 }
 
+func (s *Service) failPreparation(id, message string, cancel context.CancelFunc, observer func(Job)) {
+	cancel()
+	s.mu.Lock()
+	delete(s.cancel, id)
+	job, err := s.repo.GetDownload(context.Background(), id)
+	if err == nil && job.State != "cancelled" {
+		job.State, job.Message, job.UpdatedAt = "failed", message, time.Now().Unix()
+		if saveErr := s.repo.SaveDownload(context.Background(), job); saveErr != nil {
+			s.failStorage(saveErr)
+		}
+	}
+	s.mu.Unlock()
+	if err == nil {
+		s.notify(observer, job)
+	}
+}
+
 func (s *Service) applyResult(job *Job, result Result, files []string, runErr error, ctxErr error, keepFile *bool) {
 	switch {
 	case s.ctx.Err() != nil:
@@ -91,7 +115,7 @@ func (s *Service) applyResult(job *Job, result Result, files []string, runErr er
 		job.State, job.Message = "failed", "下载超时，可以检查网络后重新下载。"
 	case runErr != nil:
 		job.State, job.Message = "failed", runErr.Error()
-	case !validFileName(result.FileName):
+	case !validArtifactPath(result.FileName):
 		job.State, job.Message = "failed", "下载工具没有提供有效的输出文件。"
 	default:
 		job.State, job.FileName, job.Message = "completed", result.FileName, result.Message

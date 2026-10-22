@@ -80,13 +80,13 @@ export function useDownloads() {
     }
   }
 
-  async function start(url: string, title = '', maxHeight = 1080, options: DownloadOptions = {}) {
+  async function start(url: string, title = '', maxHeight = 1080, options: DownloadOptions = {}, location: { subdirectory?: string; outputDirectory?: string } = {}) {
     if (starting.current) return false
     starting.current = true
     setSubmitting(true)
     setNotice('')
     try {
-      const job = await request<DownloadJob>('/downloads', { method: 'POST', body: JSON.stringify({ url, title, maxHeight, ...options }) })
+      const job = await request<DownloadJob>('/downloads', { method: 'POST', body: JSON.stringify({ url, title, maxHeight, ...options, ...location }) })
       ++revision.current
       setJobs(current => [job, ...current.filter(existing => existing.id !== job.id)])
       setNotice('已加入下载队列。')

@@ -34,6 +34,16 @@ func normalizedPolicy(p Policy) Policy {
 	p.TitleInclude = strings.TrimSpace(p.TitleInclude)
 	p.TitleExclude = strings.TrimSpace(p.TitleExclude)
 	p.AuthorInclude = strings.TrimSpace(p.AuthorInclude)
+	p.DirectoryName = strings.TrimSpace(p.DirectoryName)
+	p.Download = normalizeDownloadOptions(p.Download)
+	if p.DownloadSubtitles || len(p.Download.SubtitleLanguages) > 0 {
+		p.DownloadSubtitles = true
+		if len(p.Download.SubtitleLanguages) == 0 {
+			p.Download.SubtitleLanguages = []string{"all"}
+		}
+	} else {
+		p.Download.AutomaticSubtitles = false
+	}
 	return p
 }
 

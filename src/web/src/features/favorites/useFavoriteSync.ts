@@ -2,11 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { request } from '../../shared/api/client'
 import type { ContentItem } from '../../shared/api/types'
 
-export interface FavoritePolicy { enabled: boolean; autoDownload: boolean; intervalMinutes: number; maxPerRun: number; maxHeight: number; titleInclude?: string; titleExclude?: string; authorInclude?: string }
+export interface FavoritePolicy { enabled: boolean; autoDownload: boolean; intervalMinutes: number; maxPerRun: number; maxHeight: number; download: import('../../shared/api/types').DownloadOptions; downloadSubtitles: boolean; directoryName: string; titleInclude?: string; titleExclude?: string; authorInclude?: string }
 export interface FavoriteSource { folderId: string; title: string; policy: FavoritePolicy; lastAttemptAt: number; lastSuccessAt: number; message: string; active: boolean; itemCount: number; pendingCount: number; excluded: number }
 interface Detail { folderId: string; items: ContentItem[] }
 interface Folder { id: string; title: string; count: number }
-export const followPolicy = (autoDownload: boolean): FavoritePolicy => ({ enabled: true, autoDownload, intervalMinutes: 60, maxPerRun: 3, maxHeight: 1080 })
+export const followPolicy = (autoDownload: boolean): FavoritePolicy => ({ enabled: true, autoDownload, intervalMinutes: 60, maxPerRun: 3, maxHeight: 1080, download: { mode: 'video', container: 'mp4', compress: false, subtitleLanguages: [], automaticSubtitles: false }, downloadSubtitles: false, directoryName: '' })
 
 // Inactive pages keep the last state but stop reading and polling.
 export function useFavoriteSync(enabled = true) {

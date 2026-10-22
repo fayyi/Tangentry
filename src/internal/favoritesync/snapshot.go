@@ -115,6 +115,7 @@ func (s *Service) scan(ctx context.Context, previous Source) (Source, error) {
 
 func completeSnapshot(previous, result Source, expected Folder, seen map[string]bool) Source {
 	result.Title = expected.Title
+	result.Policy = normalizedPolicy(result.Policy)
 	result.LastSuccessAt = time.Now().Unix()
 	result.Message = fmt.Sprintf("已同步 %d 个视频", len(result.Items))
 	if result.Excluded > 0 {

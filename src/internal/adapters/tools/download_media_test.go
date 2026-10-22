@@ -45,19 +45,84 @@ func TestDownloadArgumentsUseTitleContainerAndLiteralChoices(t *testing.T) {
 		want    []string
 	}{
 		{downloads.Options{Container: "mkv", VideoFormatID: "137", AudioFormatID: "140", SubtitleLanguages: []string{"zh-Hans"}, AutomaticSubtitles: true}, []string{"137+140/137", "--remux-video mkv", "--merge-output-format mkv", "^zh-Hans$", "--write-auto-subs"}},
+		{downloads.Options{SubtitleLanguages: []string{"all"}, DownloadDanmaku: true, DownloadThumbnail: true, DownloadInfoJSON: true}, []string{"all,-live_chat", "--write-thumbnail", "--convert-thumbnails", "jpg", "--output thumbnail:%(playlist_index&Season 1/|)s%(title).100B [%(id)s]%(playlist_index& - S01E{:02d}|).%(ext)s", "--write-info-json"}},
+		{downloads.Options{SubtitleLanguages: []string{"zh-Hans"}, DownloadDanmaku: true}, []string{"^zh-Hans$", "danmaku"}},
+		{downloads.Options{DownloadDanmaku: true}, []string{"--sub-langs danmaku"}},
 		{downloads.Options{Mode: "audio", AudioFormat: "mp3"}, []string{"ba/b", "--extract-audio", "--audio-format mp3"}},
 		{downloads.Options{VideoOnly: true}, []string{"bv[height<=?720]/b[height<=?720]", "--remux-video mp4"}},
 	}
 	for _, tc := range cases {
-		args := tk.mediaArguments("https://example.com/media", "/test/output", 720, tc.options)
+		rawURL := "https://example.com/media"
+		if tc.options.DownloadThumbnail {
+			rawURL = "https://www.bilibili.com/video/BV17x411w7KC/"
+		}
+		args := tk.mediaArguments(rawURL, "/test/output", 720, tc.options)
 		text := strings.Join(args, " ")
-		if !strings.Contains(text, "%(title).180B.%(ext)s") || strings.Contains(text, "--restrict-filenames") {
+		wantOutput := "%(title).180B.%(ext)s"
+		if rawURL == "https://www.bilibili.com/video/BV17x411w7KC/" {
+			wantOutput = "%(playlist_index&Season 1/|)s%(title).100B [%(id)s]%(playlist_index& - S01E{:02d}|).%(ext)s"
+		}
+		if !strings.Contains(text, wantOutput) || strings.Contains(text, "--restrict-filenames") {
 			t.Fatal("title naming missing", text)
 		}
 		for _, want := range tc.want {
 			if !strings.Contains(text, want) {
 				t.Fatalf("missing %q in %s", want, text)
 			}
+		}
+	}
+}
+
+func TestBilibiliDownloadsAllPagesButOtherPlatformsStaySingleItem(t *testing.T) {
+	tk := &Toolkit{config: config.Config{FFmpegPath: "/test/ffmpeg"}}
+	bilibili := strings.Join(tk.mediaArguments("https://www.bilibili.com/video/BV17x411w7KC/", "/test/output", 0, downloads.Options{}), " ")
+	if strings.Contains(bilibili, "--no-playlist") || strings.Contains(bilibili, "--playlist-items 1") || !strings.Contains(bilibili, "Season 1/") || !strings.Contains(bilibili, "S01E{:02d}") {
+		t.Fatalf("Bilibili pages were limited to one entry: %s", bilibili)
+	}
+	other := strings.Join(tk.mediaArguments("https://www.youtube.com/watch?v=jNQXAC9IVRw", "/test/output", 0, downloads.Options{}), " ")
+	if !strings.Contains(other, "--no-playlist --playlist-items 1") || !strings.Contains(other, "%(title).180B.%(ext)s") {
+		t.Fatalf("non-Bilibili playlist behavior changed: %s", other)
+	}
+}
+
+func TestBilibiliAISubtitlesRespectAutomaticSwitch(t *testing.T) {
+	tk := &Toolkit{config: config.Config{FFmpegPath: "/test/ffmpeg"}}
+	for _, automatic := range []bool{false, true} {
+		args := tk.mediaArguments("https://www.bilibili.com/video/BV17x411w7KC/", "/test/output", 0, downloads.Options{SubtitleLanguages: []string{"all"}, AutomaticSubtitles: automatic})
+		text := strings.Join(args, " ")
+		if strings.Contains(text, "-ai[-_].*") == automatic || strings.Contains(text, "--write-auto-subs") != automatic {
+			t.Fatalf("automatic=%v arguments=%s", automatic, text)
+		}
+	}
+	info, err := parseDownloadMetadata([]byte(`{"title":"Bilibili fixture","formats":[{"format_id":"1","ext":"mp4"}],"subtitles":{"ai-zh":[{}],"zh-Hans":[{}]}}`), "https://www.bilibili.com/video/BV17x411w7KC/")
+	if err != nil || len(info.Subtitles) != 2 || info.Subtitles[0].Automatic || !info.Subtitles[1].Automatic || info.Subtitles[1].Language != "ai-zh" {
+		t.Fatalf("AI subtitle metadata = %+v, %v", info.Subtitles, err)
+	}
+}
+
+func TestBilibiliMultiPageDownloadValidatesEveryPrintedVideo(t *testing.T) {
+	if os.PathSeparator != '/' {
+		t.Skip("POSIX fake tool")
+	}
+	root := t.TempDir()
+	ytdlp := filepath.Join(root, "yt-dlp")
+	ffmpeg := filepath.Join(root, "ffmpeg")
+	script := "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo fixture; exit 0; fi\ndir=\nwhile [ $# -gt 0 ]; do if [ \"$1\" = \"--paths\" ]; then shift; dir=$1; fi; shift; done\nmkdir -p \"$dir/Season 1\"\nprintf page1 > \"$dir/Season 1/Page 1.mp4\"\nprintf page2 > \"$dir/Season 1/Page 2.mp4\"\nprintf '%s\\n%s\\n' \"$dir/Season 1/Page 1.mp4\" \"$dir/Season 1/Page 2.mp4\"\n"
+	if err := os.WriteFile(ytdlp, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ffmpeg, []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	tk := New(config.Config{YTDLPPath: ytdlp, FFmpegPath: ffmpeg})
+	directory := filepath.Join(root, "output")
+	result, err := tk.DownloadMedia(context.Background(), "https://www.bilibili.com/video/BV17x411w7KC/", directory, 0, downloads.Options{})
+	if err != nil || result.FileName != "Season 1/Page 1.mp4" || result.FileSize != 10 || result.OriginalSize != 10 {
+		t.Fatalf("multi-page result = %+v, %v", result, err)
+	}
+	for _, name := range []string{"Page 1.mp4", "Page 2.mp4"} {
+		if _, err := os.Stat(filepath.Join(directory, "Season 1", name)); err != nil {
+			t.Fatalf("page artifact %q missing: %v", name, err)
 		}
 	}
 }

@@ -25,11 +25,15 @@ func TestCancellationsAndRetryLimitPreserveIntent(t *testing.T) {
 	if d.started != 1 {
 		t.Fatal(first)
 	}
+	originalDirectory := d.jobs[0].OutputDirectory
 	for attempt := 1; attempt < 3; attempt++ {
 		d.mu.Lock()
 		d.jobs[len(d.jobs)-1].State = "failed"
 		d.mu.Unlock()
 		syncOnce(t, s, "12345")
+		if d.jobs[len(d.jobs)-1].OutputDirectory != originalDirectory {
+			t.Fatal("automatic retry changed its video folder", d.jobs[len(d.jobs)-1].OutputDirectory, originalDirectory)
+		}
 	}
 	d.mu.Lock()
 	d.jobs[len(d.jobs)-1].State = "failed"
@@ -84,31 +88,34 @@ func TestSharedFailedDownloadRetriesOnceAndCancellationPropagates(t *testing.T) 
 		}
 		syncOnce(t, s, id)
 	}
-	if d.started != 1 {
-		t.Fatal("initial task was not shared", d.started)
+	// The two folders intentionally have independent download paths. A
+	// transfer from another folder must not consume this folder's retry budget.
+	if d.started != 2 {
+		t.Fatal("folders should keep downloads in separate directories", d.started)
 	}
 	d.mu.Lock()
 	d.jobs[0].State = "failed"
+	d.jobs[1].State = "failed"
 	d.mu.Unlock()
 	first := syncOnce(t, s, "12345")
 	second := syncOnce(t, s, "23456")
 	itemID := video(0).ID
-	if d.started != 2 || first.Transfers[itemID].JobID != second.Transfers[itemID].JobID || len(second.Pending) != 0 {
-		t.Fatal("shared failure admitted duplicate retries", d.started, first, second)
+	if d.started != 4 || first.Transfers[itemID].JobID == second.Transfers[itemID].JobID || len(second.Pending) != 0 {
+		t.Fatal("folder retries crossed destination boundaries", d.started, first, second)
 	}
-	if first.Transfers[itemID].Attempts != 2 || second.Transfers[itemID].Attempts != 0 {
+	if first.Transfers[itemID].Attempts != 2 || second.Transfers[itemID].Attempts != 2 {
 		t.Fatal("sharing altered admission counts", first.Transfers, second.Transfers)
 	}
 	d.mu.Lock()
-	d.jobs[1].State = "cancelled"
+	d.jobs[3].State = "cancelled"
 	d.mu.Unlock()
 	for _, id := range []string{"12345", "23456"} {
 		result := syncOnce(t, s, id)
-		if len(result.Pending) != 0 || result.Transfers[itemID].JobID != "2" {
-			t.Fatal("shared cancellation was lost", result)
+		if len(result.Pending) != 0 {
+			t.Fatal("folder cancellation was lost", result)
 		}
 	}
-	if d.started != 2 {
+	if d.started != 4 {
 		t.Fatal("cancelled retry was restarted", d.started)
 	}
 	// Re-create the service over durable source records: cancellation remains
@@ -120,8 +127,8 @@ func TestSharedFailedDownloadRetriesOnceAndCancellationPropagates(t *testing.T) 
 	for _, id := range []string{"12345", "23456"} {
 		syncOnce(t, restarted, id)
 	}
-	if d.started != 2 {
-		t.Fatal("restart forgot shared cancellation", d.started)
+	if d.started != 4 {
+		t.Fatal("restart changed isolated transfer state", d.started)
 	}
 }
 
@@ -131,13 +138,13 @@ func TestFailedTransfersRetryInSnapshotOrderWithinRunLimit(t *testing.T) {
 		policy := DefaultPolicy()
 		policy.AutoDownload = true
 		policy.MaxPerRun = 1
-		source := Source{Policy: policy, Transfers: map[string]Transfer{}}
+		source := Source{FolderID: "12345", Title: "retry fixture", Policy: policy, Transfers: map[string]Transfer{}}
 		for i := 0; i < 6; i++ {
 			item := video(i)
 			source.Items = append(source.Items, item)
 			jobID := fmt.Sprintf("failed-%d", i)
 			source.Transfers[item.ID] = Transfer{JobID: jobID, Attempts: 1}
-			d.jobs = append(d.jobs, downloads.Job{ID: jobID, URL: item.URL, State: "failed"})
+			d.jobs = append(d.jobs, downloads.Job{Options: policy.Download, ID: jobID, URL: item.URL, Subdirectory: "B站收藏夹/retry fixture (12345)", MaxHeight: policy.MaxHeight, State: "failed"})
 		}
 		s.pump(context.Background(), &source)
 		if d.started != 1 || source.Transfers[video(0).ID].Attempts != 2 || len(source.Pending) != 5 {
@@ -178,7 +185,7 @@ func TestExistingFolderAdoptsExplicitRetryWithoutResettingAutomaticLimit(t *test
 			if d.started != 1 {
 				t.Fatal("automatic limit ignored", d.started)
 			}
-			explicit, err := d.Start(ctx, downloads.Request{URL: video(0).URL, Title: "manual retry", MaxHeight: 1080})
+			explicit, err := d.Start(ctx, downloads.Request{URL: video(0).URL, Title: "manual retry", MaxHeight: 1080, Options: policy.Download})
 			if err != nil {
 				t.Fatal(err)
 			}

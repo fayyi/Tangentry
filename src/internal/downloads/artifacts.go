@@ -3,6 +3,7 @@ package downloads
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -31,10 +32,24 @@ func (s *Service) Artifact(ctx context.Context, id, fileName string) (*os.File, 
 			return nil, ErrNotFound
 		}
 	}
-	if job.State != "completed" || !validFileName(fileName) {
+	if job.State != "completed" {
 		return nil, ErrNotFound
 	}
-	name := filepath.Join(s.jobDirectory(job.ID), job.ID, fileName)
+	fileName, err = NormalizeArtifactPath(fileName)
+	if err != nil {
+		return nil, ErrNotFound
+	}
+	directory, err := s.jobOutputDirectory(job)
+	if err != nil {
+		return nil, ErrNotFound
+	}
+	name, err := safeArtifactFilePath(directory, fileName)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) || errors.Is(err, ErrInvalid) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
 	info, err := os.Lstat(name)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, ErrNotFound
@@ -68,6 +83,21 @@ func (s *Service) NoteFrameFile(ctx context.Context, contentID, id string) (*os.
 // CompletedPath reuses the same file boundary as playback. It does not create
 // downloads, wait for unfinished jobs, or resolve platform URLs over the network.
 func (s *Service) CompletedPath(ctx context.Context, rawURL string) (string, error) {
+	return s.completedPath(ctx, rawURL, nil, nil, nil)
+}
+
+func (s *Service) CompletedPathFor(ctx context.Context, rawURL string, height int, options Options, subdirectory string) (string, error) {
+	if err := options.Normalize(); err != nil {
+		return "", err
+	}
+	subdirectory, err := NormalizeSubdirectory(subdirectory)
+	if err != nil {
+		return "", err
+	}
+	return s.completedPath(ctx, rawURL, &options, &height, &subdirectory)
+}
+
+func (s *Service) completedPath(ctx context.Context, rawURL string, options *Options, height *int, subdirectory *string) (string, error) {
 	canonical, err := NormalizeURL(rawURL)
 	if err != nil {
 		return "", ErrInvalid
@@ -77,7 +107,7 @@ func (s *Service) CompletedPath(ctx context.Context, rawURL string) (string, err
 		return "", err
 	}
 	for _, job := range jobs {
-		if !sameURL(job.URL, canonical) || job.State != "completed" || job.Mode == "audio" {
+		if !sameURL(job.URL, canonical) || job.State != "completed" || job.Mode == "audio" || options != nil && !sameOptions(job.Options, *options) || height != nil && job.MaxHeight != *height || subdirectory != nil && job.Subdirectory != *subdirectory {
 			continue
 		}
 		file, err := s.File(ctx, job.ID)
@@ -104,25 +134,49 @@ func (s *Service) CompletedPath(ctx context.Context, rawURL string) (string, err
 }
 
 func completedArtifacts(directory, primary string) ([]string, error) {
-	entries, err := os.ReadDir(directory)
-	if err != nil {
-		return nil, err
-	}
 	names := make([]string, 0)
-	for _, entry := range entries {
-		if !validFileName(entry.Name()) || entry.Type()&os.ModeSymlink != 0 || entry.IsDir() {
-			continue
+	primary, err := NormalizeArtifactPath(primary)
+	if err != nil {
+		return nil, ErrNotFound
+	}
+	err = filepath.WalkDir(directory, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
 		}
-		if entry.Name() != primary && !slices.Contains([]string{".srt", ".vtt", ".ass", ".lrc", ".ttml", ".srv1", ".srv2", ".srv3", ".json3"}, strings.ToLower(filepath.Ext(entry.Name()))) {
-			continue
+		if path == directory {
+			return nil
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		relative, err := filepath.Rel(directory, path)
+		if err != nil {
+			return err
+		}
+		name, err := NormalizeArtifactPath(filepath.ToSlash(relative))
+		if err != nil {
+			return nil
+		}
+		if name != primary && !slices.Contains([]string{".mp4", ".mkv", ".webm", ".mov", ".flv", ".ts", ".m4v", ".avi", ".srt", ".vtt", ".ass", ".lrc", ".ttml", ".srv1", ".srv2", ".srv3", ".json", ".json3", ".xml", ".jpg", ".jpeg", ".png", ".webp", ".nfo"}, strings.ToLower(filepath.Ext(name))) {
+			return nil
 		}
 		info, err := entry.Info()
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if info.Mode().IsRegular() && info.Size() > 0 {
-			names = append(names, entry.Name())
+			names = append(names, name)
 		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	if !slices.Contains(names, primary) {
 		return nil, ErrNotFound
@@ -130,6 +184,27 @@ func completedArtifacts(directory, primary string) ([]string, error) {
 	return names, nil
 }
 
-func validFileName(name string) bool {
-	return name != "" && name != "." && name != ".." && filepath.Base(name) == name && !strings.ContainsAny(name, `/\\`)
+func validArtifactPath(name string) bool {
+	_, err := NormalizeArtifactPath(name)
+	return err == nil
+}
+
+func safeArtifactFilePath(directory, name string) (string, error) {
+	name, err := NormalizeArtifactPath(name)
+	if err != nil {
+		return "", err
+	}
+	current := directory
+	parts := strings.Split(filepath.FromSlash(name), string(filepath.Separator))
+	for index, part := range parts {
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if err != nil {
+			return "", err
+		}
+		if info.Mode()&os.ModeSymlink != 0 || index < len(parts)-1 && !info.IsDir() {
+			return "", ErrInvalid
+		}
+	}
+	return current, nil
 }
