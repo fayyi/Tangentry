@@ -31,6 +31,24 @@ describe('API diagnostics errors', () => {
     }
   })
 
+  it('takes an expired server session to sign-in', async () => {
+    const assign = vi.fn()
+    vi.stubGlobal('window', { location: { assign } })
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(JSON.stringify({ code: 'unauthorized', message: '登录已失效' }), { status: 401 }))))
+
+    await expect(request('/library')).rejects.toMatchObject({ code: 'unauthorized', status: 401 })
+    expect(assign).toHaveBeenCalledWith('/login')
+  })
+
+  it('keeps platform authentication failures on the current page', async () => {
+    const assign = vi.fn()
+    vi.stubGlobal('window', { location: { assign } })
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(JSON.stringify({ code: 'login_required', message: '请登录平台' }), { status: 401 }))))
+
+    await expect(request('/platform')).rejects.toMatchObject({ code: 'login_required', status: 401 })
+    expect(assign).not.toHaveBeenCalled()
+  })
+
   it('retains typed failure payloads for backup results', async () => {
     const payload = { code: 'backup_run_failed', message: '上传失败', snapshot: { id: 'snapshot-1', status: 'failed' } }
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(JSON.stringify(payload), { status: 502 }))))

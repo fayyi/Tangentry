@@ -23,6 +23,9 @@ export async function requestResponse(path: string, options: RequestInit = {}, f
   }
   if (!response.ok) {
     const error = await response.json().catch(() => ({})) as { message?: string; code?: string; details?: unknown }
+    if (response.status === 401 && error.code === 'unauthorized' && typeof window !== 'undefined') {
+      window.location.assign('/login')
+    }
     throw new APIError(error.message ?? fallback.message, error.code ?? fallback.code, response.status, Array.isArray(error.details) ? error.details : [], error)
   }
   return response
