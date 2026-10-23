@@ -1,3 +1,4 @@
+import { Button } from '../../../components/ui'
 import { MoreVertical } from 'lucide-react'
 import { useState, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react'
 import type { ContentItem } from '../../api/types'
@@ -48,19 +49,19 @@ export function GalleryCardFrame({ item, origin, discoveryReason, className, onR
       title={discoveryReason || origin}
     >
       {onFeedback && <div className="discovery-feedback-menu" onClick={event => event.stopPropagation()}>
-        <button type="button" className="card-action-button" aria-label="调整发现偏好" title="调整发现偏好" aria-expanded={menuOpen} onClick={() => setMenuOpen(value => !value)}><MoreVertical size={17} /></button>
+        <Button variant="quiet" type="button" className="card-action-button" aria-label="调整发现偏好" title="调整发现偏好" aria-expanded={menuOpen} onClick={() => setMenuOpen(value => !value)}><MoreVertical size={17} /></Button>
         {menuOpen && <div className="discovery-feedback-popover" role="menu">
           <strong>调整发现偏好</strong>
           <span>想多看看</span>
-          <button type="button" role="menuitem" onClick={() => feedback('more', 'source', item.platform)}>同来源</button>
-          <button type="button" role="menuitem" onClick={() => feedback('more', 'creator', creator)}>同创作者</button>
-          {item.category && <button type="button" role="menuitem" onClick={() => feedback('more', 'topic', item.category!)}>同主题</button>}
+          <Button variant="quiet" type="button" role="menuitem" onClick={() => feedback('more', 'source', item.platform)}>同来源</Button>
+          <Button variant="quiet" type="button" role="menuitem" onClick={() => feedback('more', 'creator', creator)}>同创作者</Button>
+          {item.category && <Button variant="quiet" type="button" role="menuitem" onClick={() => feedback('more', 'topic', item.category!)}>同主题</Button>}
           <span>暂时少些（7 天）</span>
-          <button type="button" role="menuitem" onClick={() => feedback('less', 'source', item.platform)}>同来源</button>
-          <button type="button" role="menuitem" onClick={() => feedback('less', 'creator', creator)}>同创作者</button>
-          {item.category && <button type="button" role="menuitem" onClick={() => feedback('less', 'topic', item.category!)}>同主题</button>}
-          <button type="button" role="menuitem" onClick={() => feedback('hide', 'item', item.id)}>不感兴趣</button>
-          <button type="button" role="menuitem" onClick={() => feedback('block_creator', 'creator', creator)}>屏蔽此创作者</button>
+          <Button variant="quiet" type="button" role="menuitem" onClick={() => feedback('less', 'source', item.platform)}>同来源</Button>
+          <Button variant="quiet" type="button" role="menuitem" onClick={() => feedback('less', 'creator', creator)}>同创作者</Button>
+          {item.category && <Button variant="quiet" type="button" role="menuitem" onClick={() => feedback('less', 'topic', item.category!)}>同主题</Button>}
+          <Button variant="quiet" type="button" role="menuitem" onClick={() => feedback('hide', 'item', item.id)}>不感兴趣</Button>
+          <Button variant="quiet" type="button" role="menuitem" onClick={() => feedback('block_creator', 'creator', creator)}>屏蔽此创作者</Button>
         </div>}
       </div>}
       {children}

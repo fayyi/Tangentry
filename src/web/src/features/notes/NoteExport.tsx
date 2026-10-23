@@ -1,3 +1,4 @@
+import { Button } from '../../components/ui'
 import { Download, LoaderCircle, X } from 'lucide-react'
 import { useEffect, useId, useRef, useState } from 'react'
 import { APIError, requestResponse } from '../../shared/api/client'
@@ -40,8 +41,8 @@ export function NoteExport({ selection, label, disabled = false, compact = false
   const cancel = () => { controller.current?.abort(); controller.current = null; setPending(false); setError(''); setFeedback('已取消导出，原笔记和草稿保留。') }
   return <div className="note-export-controls" data-compact={compact || undefined}>
     <div className="note-export-actions">
-      <button type="button" className={compact ? 'icon-button' : 'button button-secondary'} disabled={disabled || pending} aria-label={label} title={label} aria-describedby={description} onClick={() => void run()}>{pending ? <LoaderCircle size={16} className="spin" aria-hidden="true"/> : <Download size={16} aria-hidden="true"/>}{!compact && label}</button>
-      {pending && <button type="button" className="button button-secondary" onClick={cancel}><X size={14} aria-hidden="true"/>取消导出</button>}
+      <Button variant={compact ? 'quiet' : 'secondary'} iconOnly={compact} type="button" className={compact ? 'icon-button' : 'button button-secondary'} disabled={disabled || pending} aria-label={label} title={label} aria-describedby={description} onClick={() => void run()}>{pending ? <LoaderCircle size={16} className="spin" aria-hidden="true"/> : <Download size={16} aria-hidden="true"/>}{!compact && label}</Button>
+      {pending && <Button variant="secondary" type="button" className="button button-secondary" onClick={cancel}><X size={14} aria-hidden="true"/>取消导出</Button>}
       <span id={description}>Markdown · 全部匹配的已保存笔记</span>
     </div>
     {pending && <p role="status">正在准备笔记导出…</p>}

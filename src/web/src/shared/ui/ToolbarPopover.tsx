@@ -1,3 +1,4 @@
+import { Button } from '../../components/ui'
 import { AlertCircle, Check, Info } from 'lucide-react'
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { shouldCloseToolbarPopoverForPointer, shouldCloseToolbarPopoverOnKey, shouldOpenToolbarPopoverOnFocus, toolbarPopoverCloseBehavior, type ToolbarPopoverCloseReason } from './toolbarPopoverState'
@@ -69,13 +70,13 @@ export function ToolbarPopover({ label, title, tone = 'neutral', icon, showLabel
     if (!next || !root.current?.contains(next)) close('blur')
   }}>
     {announcement && <span className="visually-hidden" role={liveRole} aria-live={liveRole === 'alert' ? 'assertive' : 'polite'}>{announcement}</span>}
-    <button ref={trigger} type="button" className={`toolbar-popover-trigger${showLabel ? ' toolbar-popover-trigger-labeled' : ''}`} aria-label={label} aria-haspopup="dialog" aria-expanded={open} aria-controls={id} title={title || label} onFocus={event => {
+    <Button variant="quiet" ref={trigger} type="button" className={`toolbar-popover-trigger${showLabel ? ' toolbar-popover-trigger-labeled' : ''}`} aria-label={label} aria-haspopup="dialog" aria-expanded={open} aria-controls={id} title={title || label} onFocus={event => {
       if (suppressFocusOpen.current) { suppressFocusOpen.current = false; return }
       if (shouldOpenToolbarPopoverOnFocus(event.currentTarget.matches(':focus-visible'))) setOpen(true)
     }} onClick={() => setOpen(true)}>
       {icon || defaultIcons[tone]}
       {showLabel && <span>{label}</span>}
-    </button>
+    </Button>
     {open && <div id={id} ref={panel} className="toolbar-popover-panel" role="dialog" aria-label={label} onClick={event => {
       const target = event.target as HTMLElement
       const action = target.closest('button:not(:disabled), a[href]')

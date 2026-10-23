@@ -1,3 +1,4 @@
+import { Button } from '../../components/ui'
 import { Download, RefreshCw, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { APIError, request } from '../../shared/api/client'
@@ -125,12 +126,12 @@ export function FullTextArticle({ item, notes, focus, onQuote, onOpenNotes, onUn
   return <section className="fulltext-reader" aria-label="文章正文来源">
       <div className="fulltext-toolbar">
       <div className="fulltext-sources" role="group" aria-label="选择正文来源">
-        <button className="button button-secondary" aria-pressed={source === 'feed'} onClick={() => chooseSource('feed')}>订阅文字</button>
-        {doc && <button className="button button-secondary" aria-pressed={source === 'original'} onClick={() => chooseSource('original')}>原站全文</button>}
+        <Button variant="secondary" className="button button-secondary" aria-pressed={source === 'feed'} onClick={() => chooseSource('feed')}>订阅文字</Button>
+        {doc && <Button variant="secondary" className="button button-secondary" aria-pressed={source === 'original'} onClick={() => chooseSource('original')}>原站全文</Button>}
       </div>
-      {known && !conflict && <button className="button button-secondary" disabled={Boolean(busy)} onClick={() => void fetchOriginal()}>{doc ? <RefreshCw size={14} aria-hidden="true"/> : <Download size={14} aria-hidden="true"/>}{doc ? '更新原站全文' : '获取原站全文'}</button>}
-      {(!known || conflict) && !busy && <button className="button button-secondary" onClick={() => void read()}><RefreshCw size={14} aria-hidden="true"/>读取本机版本</button>}
-      {busy === 'fetch' && <button className="button button-secondary" onClick={cancel}><X size={14} aria-hidden="true"/>取消获取</button>}
+      {known && !conflict && <Button variant="secondary" className="button button-secondary" disabled={Boolean(busy)} onClick={() => void fetchOriginal()}>{doc ? <RefreshCw size={14} aria-hidden="true"/> : <Download size={14} aria-hidden="true"/>}{doc ? '更新原站全文' : '获取原站全文'}</Button>}
+      {(!known || conflict) && !busy && <Button variant="secondary" className="button button-secondary" onClick={() => void read()}><RefreshCw size={14} aria-hidden="true"/>读取本机版本</Button>}
+      {busy === 'fetch' && <Button variant="secondary" className="button button-secondary" onClick={cancel}><X size={14} aria-hidden="true"/>取消获取</Button>}
       {summaryText && <ReaderActions><SummaryControl summary={summary} source={{ contentId: item.id, title: item.title, url: source === 'original' && doc ? doc.sourceUrl : item.url }} onLocateQuote={quote => article.current ? article.current.locateQuote(quote) : '原文还未就绪，请稍后重试。'} /></ReaderActions>}
     </div>
     {busy && <p className="fulltext-status" role="status">{busy === 'read' ? '正在读取本机全文…' : '正在获取原站正文…'}</p>}

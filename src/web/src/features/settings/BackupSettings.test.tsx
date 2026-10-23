@@ -21,7 +21,7 @@ test('backup settings show a focused backup workspace and the actual snapshot di
   const html = renderToString(<BackupSettings />)
   expect(html).toContain('创建备份')
   expect(html).toContain('立即备份')
-  expect(html).toContain('备份与恢复页面')
+  expect(html).toContain('创建备份与计划')
   expect(backupDestination({ id: 'dav', name: 'NAS', type: 'webdav', endpoint: 'https://nas.example/dav', remotePath: 'archive/Tangentry', enabled: true }))
     .toBe('https://nas.example/dav/archive/Tangentry/tangentry/v1/snapshots')
   expect(backupDestination({ id: 'local', name: 'Disk', type: 'local', path: '/tmp/backups', enabled: true }))

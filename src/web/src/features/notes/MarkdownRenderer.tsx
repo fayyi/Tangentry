@@ -1,3 +1,4 @@
+import { Input } from '../../components/ui'
 import { createContext, useContext, useEffect, useId, useRef, type ComponentProps } from 'react'
 import Markdown, { type Components, type ExtraProps } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -24,7 +25,7 @@ function TaskInput({ node, checked, ...props }: ComponentProps<'input'> & ExtraP
     restoreFocus.current = false
   }, [tasksDisabled])
   return <label className={editable ? 'markdown-task-control' : undefined}>
-    <input {...props} ref={input} aria-label={props['aria-label'] || '待办事项'} checked={Boolean(checked)} disabled={!editable || tasksDisabled} title={editable ? checked ? '标为未完成' : '标为完成' : undefined} onChange={event => {
+    <Input {...props} ref={input} aria-label={props['aria-label'] || '待办事项'} checked={Boolean(checked)} disabled={!editable || tasksDisabled} title={editable ? checked ? '标为未完成' : '标为完成' : undefined} onChange={event => {
       if (!editable || tasksDisabled) return
       restoreFocus.current = document.activeElement === input.current
       onTaskChange?.(offset as number, event.target.checked)

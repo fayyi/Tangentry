@@ -1,3 +1,4 @@
+import { Button } from '../../components/ui'
 import { Link2, RotateCw, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { ContentItem } from '../../shared/api/types'
@@ -30,9 +31,9 @@ export function XiaohongshuSourceForm({ id, onUpdated, onClose }: {
     }
   }
   return <form className="reader-source-form" aria-label="更新小红书分享链接" onSubmit={event => { event.preventDefault(); void update() }}>
-    <div className="reader-source-form-heading"><label htmlFor="xhs-source-link"><Link2 size={15}/>分享链接</label><button type="button" className="icon-button" title="关闭链接输入" aria-label="关闭链接输入" onClick={onClose}><X size={16}/></button></div>
+    <div className="reader-source-form-heading"><label htmlFor="xhs-source-link"><Link2 size={15}/>分享链接</label><Button variant="quiet" iconOnly type="button" className="icon-button" title="关闭链接输入" aria-label="关闭链接输入" onClick={onClose}><X size={16}/></Button></div>
     <textarea ref={input} id="xhs-source-link" value={link} disabled={busy} onChange={event => setLink(event.target.value)} rows={2} maxLength={2048} placeholder="粘贴这篇笔记的完整分享链接"/>
-    <div className="reader-source-form-actions"><button className="button button-secondary" disabled={busy || !link.trim()}><RotateCw size={14}/>{busy ? '正在读取' : '读取笔记'}</button><a className="button button-secondary" href="/tools#accounts">检查登录</a></div>
+    <div className="reader-source-form-actions"><Button variant="secondary" className="button button-secondary" disabled={busy || !link.trim()}><RotateCw size={14}/>{busy ? '正在读取' : '读取笔记'}</Button><a className="button button-secondary" href="/tools#accounts">检查登录</a></div>
     {error && <p className="error-text" role="alert">{error}</p>}
   </form>
 }

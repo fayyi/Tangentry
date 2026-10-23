@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 export type UIFont = 'system' | 'inter' | 'noto'
 export type ReadingFont = 'system' | 'wenkai' | 'noto'
@@ -86,8 +86,9 @@ export function applyFontSettings(value: FontSettings, root: HTMLElement = docum
 
 export function useFontSettings() {
   const [settings, setSettings] = useState(readFontSettings)
+  const settingsRef = useRef(settings)
 
-  useEffect(() => { applyFontSettings(settings) }, [settings])
+  useEffect(() => { settingsRef.current = settings; applyFontSettings(settings) }, [settings])
   useEffect(() => {
     const storage = (event: StorageEvent) => { if (event.key === fontSettingsKey || event.key === null) setSettings(readFontSettings()) }
     const local = (event: Event) => setSettings(validateFontSettings((event as CustomEvent<FontSettings>).detail))
@@ -100,11 +101,10 @@ export function useFontSettings() {
   }, [])
 
   const change = useCallback((patch: Partial<FontSettings>) => {
-    setSettings(current => {
-      const next = writeFontSettings({ ...current, ...patch })
-      window.dispatchEvent(new CustomEvent(fontSettingsChangedEvent, { detail: next }))
-      return next
-    })
+    const next = writeFontSettings({ ...settingsRef.current, ...patch })
+    settingsRef.current = next
+    setSettings(next)
+    window.dispatchEvent(new CustomEvent(fontSettingsChangedEvent, { detail: next }))
   }, [])
   const reset = useCallback(() => change(defaultFontSettings), [change])
   return { settings, change, reset }

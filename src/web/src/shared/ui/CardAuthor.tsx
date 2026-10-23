@@ -1,3 +1,4 @@
+import { Button } from '../../components/ui'
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import type { ContentItem } from '../api/types'
 import { publicationText } from './ContentCard'
@@ -42,7 +43,7 @@ export function AuthorLink({ item, onCreator, showAvatar = true, showPlatform = 
   const interactive = Boolean(onCreator && item.authorId && creatorViewSupported(item.platform))
   const content = <>{showAvatar && <AuthorAvatar item={item} />}<div className="author-info"><AuthorName item={item} showPlatform={showPlatform} discoveryType={discoveryType} discoveryReason={discoveryReason} />{children}</div></>
   if (!interactive) return content
-  return <button type="button" className="author-link" aria-label={`查看 ${author} 的最近内容`} title={`查看 ${author} 的最近内容`} onClick={() => onCreator?.(item)}>{content}</button>
+  return <Button variant="quiet" type="button" className="author-link" aria-label={`查看 ${author} 的最近内容`} title={`查看 ${author} 的最近内容`} onClick={() => onCreator?.(item)}>{content}</Button>
 }
 
 export function AuthorPublication({ item }: { item: ContentItem }) {

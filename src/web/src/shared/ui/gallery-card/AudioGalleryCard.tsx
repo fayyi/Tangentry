@@ -1,3 +1,4 @@
+import { Button } from '../../../components/ui'
 import { LoaderCircle, Pause, Play } from 'lucide-react'
 import type { GalleryCardContentProps } from './types'
 import { GalleryCardFrame } from './GalleryCardFrame'
@@ -26,7 +27,7 @@ export function AudioGalleryCard({ item, origin, discoveryReason, discoveryType,
         <AudioCardActions item={item} saved={saved} pending={pending} onSave={onSave} onDownload={onDownload} />
       </div>
       <div className="card-audio-controls">
-        <button
+        <Button variant="quiet"
           className="card-audio-play-btn"
           disabled={audioLoading || (!audioURL && item.platform !== 'xiaoyuzhou')}
           aria-busy={audioLoading}
@@ -35,7 +36,7 @@ export function AudioGalleryCard({ item, origin, discoveryReason, discoveryType,
           aria-label={`${playback.playing ? '暂停音频' : '播放音频'} ${item.title}`}
         >
           {audioLoading ? <LoaderCircle size={18} /> : playback.playing ? <Pause size={18} fill="currentColor" /> : <Play size={18} fill="currentColor" />}
-        </button>
+        </Button>
         <div className="card-audio-timeline">
           <input type="range" aria-label={'音频播放进度 ' + item.title}
             aria-valuetext={`${audioTime(audioPosition)} / ${audioTotal ? audioTime(audioTotal) : '--:--'}`}

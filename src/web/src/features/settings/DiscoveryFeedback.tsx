@@ -1,8 +1,10 @@
-import { Check, LoaderCircle, Trash2, UserRound, X } from 'lucide-react'
+import { Check, LoaderCircle, Trash2, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { request } from '../../shared/api/client'
 import { listOrEmpty } from '../../shared/api/list'
 import type { DiscoveryFeedback } from '../../shared/api/types'
+import { SettingsDangerZone } from './ui/SettingsDangerZone'
+import { SettingsTask } from './ui/SettingsActionPage'
 
 const labels: Record<string, string> = { more: '想多看看', less: '暂时少些（7 天）', hide: '不感兴趣', block_creator: '屏蔽此创作者' }
 const targetLabels: Record<string, string> = { item: '这张卡片', source: '同来源', creator: '同创作者', topic: '同主题' }
@@ -27,11 +29,10 @@ export function DiscoveryFeedback() {
     setBusy('all')
     try { await request('/discovery/feedback', { method: 'DELETE' }); setValues([]); setNotice('已清除全部发现反馈。') } catch { setNotice('清除失败，请重试。') } finally { setBusy('') }
   }
-  return <section className="settings-section" aria-labelledby="discovery-feedback-title">
-    <div className="settings-heading"><div><h2 id="discovery-feedback-title">发现偏好</h2><p className="field-hint">反馈只影响发现页的近期展示，不会根据观看记录建立长期兴趣画像。</p></div><UserRound size={19} aria-hidden="true" /></div>
+  return <SettingsTask title="发现反馈" description="反馈只影响发现页的近期展示，不会根据观看记录建立长期兴趣画像。" actions={<span className="settings-inline-status">{values.length ? `${values.length} 条` : '暂无记录'}</span>}>
     {notice && <p className="settings-feedback" role="status"><Check size={15} />{notice}</p>}
     {error && <p className="settings-feedback" role="alert">{error} <button type="button" className="text-button" disabled={loading} onClick={() => void reload()}>重新读取</button></p>}
     {loading ? <p className="field-hint"><LoaderCircle size={15} className="spin" />正在读取反馈…</p> : !error && values.length === 0 ? <p className="field-hint">还没有保存的发现反馈。</p> : !error && <div className="discovery-feedback-list">{values.map(value => <div className="setting-row" key={value.id}><div><strong>{labels[value.type] ?? value.type}</strong><p>{targetLabels[value.target] ?? value.target}：{value.value}{value.expiresAt ? ' · 7 天内有效' : ''}</p></div><button type="button" className="icon-button" aria-label={`撤销${labels[value.type] ?? '反馈'}`} title="撤销反馈" disabled={busy === value.id} onClick={() => void remove(value.id)}>{busy === value.id ? <LoaderCircle size={15} className="spin" /> : <X size={16} />}</button></div>)}</div>}
-    {values.length > 0 && <button type="button" className="text-button" disabled={busy === 'all'} onClick={() => void clear()}><Trash2 size={15} />清除所有反馈</button>}
-  </section>
+    {values.length > 0 && <SettingsDangerZone title="清除反馈"><button type="button" className="button button-secondary" disabled={busy === 'all'} onClick={() => void clear()}><Trash2 size={15} />清除所有反馈</button></SettingsDangerZone>}
+  </SettingsTask>
 }

@@ -1,3 +1,4 @@
+import { Button } from '../../components/ui'
 import { ImageOff, Play } from 'lucide-react'
 import { useState } from 'react'
 import type { ReactNode } from 'react'
@@ -51,7 +52,7 @@ export function ContentCard({ item, saved, pending, onRead, onSave, status, acti
   const Heading = headingLevel === 3 ? 'h3' : 'h2'
   const description = cardExcerpt(item)
   return <article className="content-card" data-testid="content-card">
-    <button className="card-open" data-content-id={item.id} onClick={() => onRead(item)} aria-label={`阅读 ${item.title}`}>
+    <Button variant="quiet" className="card-open" data-content-id={item.id} onClick={() => onRead(item)} aria-label={`阅读 ${item.title}`}>
       {item.thumbnailUrl && <Cover item={item} />}
       <div className="card-copy">
         <span className="card-source">{mediaLabel(item)}</span>
@@ -62,7 +63,7 @@ export function ContentCard({ item, saved, pending, onRead, onSave, status, acti
         {publicationText(item) && <span className="card-date">{publicationText(item)}</span>}
         {status}
       </div>
-    </button>
+    </Button>
     <div className="card-actions"><CardActions item={item} saved={saved} pending={pending} onSave={onSave} onDownload={onDownload}>{actions}</CardActions></div>
   </article>
 }

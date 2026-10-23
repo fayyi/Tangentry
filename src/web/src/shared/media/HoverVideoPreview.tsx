@@ -1,3 +1,4 @@
+import { Button } from '../../components/ui'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { request } from '../api/client'
 import type { ContentItem } from '../api/types'
@@ -76,11 +77,11 @@ export function HoverVideoPreview({ item, active }: { item: ContentItem; active:
     }}
     onVolumeChange={() => { if (video.current) setMuted(video.current.muted) }}
     onError={() => { setURL(''); if (item.platform === 'bilibili') setEmbedded(true) }}/>
-  return <span ref={host} style={{ position: 'absolute', inset: 0, pointerEvents: preview ? 'auto' : 'none', zIndex: preview ? 4 : undefined }}>{preview}{preview && !embedded && <button type="button" className="preview-sound" title={muted ? '开启预览声音' : '静音预览'} aria-label={muted ? '开启预览声音' : '静音预览'} onClick={event => {
+  return <span ref={host} style={{ position: 'absolute', inset: 0, pointerEvents: preview ? 'auto' : 'none', zIndex: preview ? 4 : undefined }}>{preview}{preview && !embedded && <Button variant="quiet" type="button" className="preview-sound" title={muted ? '开启预览声音' : '静音预览'} aria-label={muted ? '开启预览声音' : '静音预览'} onClick={event => {
     event.stopPropagation()
     const node = video.current
     if (!node) return
     node.muted = !node.muted; setMuted(node.muted)
     if (!node.muted && node.paused) void node.play().catch(() => {})
-  }}>{muted ? <VolumeX size={16}/> : <Volume2 size={16}/>}</button>}</span>
+  }}>{muted ? <VolumeX size={16}/> : <Volume2 size={16}/>}</Button>}</span>
 }

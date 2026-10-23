@@ -4,6 +4,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useCapabilities } from '../../shared/api/desktop'
 import '../notes/markdown.css'
+import { SettingsTask } from './ui/SettingsActionPage'
 
 export type UpdaterStatus = {
   enabled: boolean
@@ -69,13 +70,10 @@ export function UpdaterSettings() {
   }
 
   const date = useMemo(() => status.date ? new Date(status.date).toLocaleString('zh-CN') : '', [status.date])
-  if (capabilities.server) return <section className="settings-section updater-settings"><div className="settings-heading"><div><h2>关于与更新</h2><p className="field-hint">服务端版本通过 Docker 镜像更新，请拉取新镜像后重新创建容器。</p></div></div></section>
-  if (!isDesktop) return <section className="settings-section updater-settings" aria-labelledby="updater-title"><div className="settings-heading"><div><h2 id="updater-title">关于与更新</h2><p className="field-hint">当前运行在 Web 模式，版本更新由部署环境负责。</p></div></div></section>
+  if (capabilities.server) return <SettingsTask title="服务端版本" description="服务端版本通过 Docker 镜像更新，请拉取新镜像后重新创建容器。" actions={<span className="settings-inline-status">服务端模式</span>}><p className="field-hint">更新由部署环境负责。</p></SettingsTask>
+  if (!isDesktop) return <SettingsTask title="Web 版本" description="当前运行在 Web 模式，版本更新由部署环境负责。" actions={<span className="settings-inline-status">Web 模式</span>}><p className="field-hint">请在部署 Tangentry 的环境中更新版本。</p></SettingsTask>
 
-  return <section className="settings-section updater-settings" aria-labelledby="updater-title">
-    <div className="settings-heading"><div><h2 id="updater-title">关于与更新</h2><p className="field-hint">当前版本 {status.currentVersion || '开发版'}</p></div>
-      <button type="button" className="button button-secondary" disabled={pending || status.state === 'checking'} onClick={() => void run('Updater.Check', true)}>{status.state === 'checking' ? <LoaderCircle size={15} className="spin"/> : <Check size={15}/>}检查更新</button>
-    </div>
+  return <SettingsTask title="应用更新" description={`当前版本 ${status.currentVersion || '开发版'}`} actions={<button type="button" className="button button-secondary" disabled={pending || status.state === 'checking'} onClick={() => void run('Updater.Check', true)}>{status.state === 'checking' ? <LoaderCircle size={15} className="spin"/> : <Check size={15}/>}检查更新</button>}>
     <div className="setting-row"><div><strong>自动检查更新</strong><p>启动后检查一次，之后每 6 小时检查。</p></div><label className="card-switch"><input type="checkbox" checked={status.automaticChecks} disabled={pending} onChange={event => void run('Updater.SetAutomaticChecks', event.target.checked)}/><span>启用</span></label></div>
     {!status.enabled && <p className="field-hint" role="status">开发构建或不可写的安装位置不会自动更新。</p>}
     {message && <p className="error-panel" role="alert">{message}</p>}
@@ -85,5 +83,5 @@ export function UpdaterSettings() {
       {status.state === 'installed' || status.relaunchRequired ? <button type="button" className="button button-primary" disabled={pending} onClick={() => void run('Updater.Relaunch')}><RotateCcw size={15}/>重启以完成更新</button> : <div className="updater-actions"><button type="button" className="button button-primary" disabled={pending} onClick={() => void run('Updater.Install')}><Download size={15}/>{status.state === 'downloading' ? '正在下载…' : '下载并安装'}</button><button type="button" className="button button-secondary" disabled={pending} onClick={snoozeUpdaterNotice}>稍后</button><button type="button" className="text-button" disabled={pending} onClick={() => void run('Updater.Skip', status.version)}><SkipForward size={14}/>跳过此版本</button></div>}
     </div>}
     {status.lastCheck && <p className="field-hint updater-last-check">上次检查：{new Date(status.lastCheck).toLocaleString('zh-CN')}</p>}
-  </section>
+  </SettingsTask>
 }

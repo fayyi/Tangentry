@@ -1,3 +1,4 @@
+import { Button } from '../../components/ui'
 import { ArrowLeft, BookOpen, StickyNote, X } from 'lucide-react'
 import { Fragment, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode, type Ref } from 'react'
 import { createPortal } from 'react-dom'
@@ -172,7 +173,7 @@ export function ArticleReader({ ref: externalRef, contentId = '', text, blocks, 
     setCitation(null)
     onReturnedToReading?.()
   }
-  const returnControls = <><button type="button" onClick={returnToReading}><ArrowLeft size={15} aria-hidden="true"/>返回阅读位置</button><button type="button" aria-label="关闭阅读返回" title="关闭阅读返回" onClick={() => { setReturnPoint(null); setCitation(null); root.current?.focus({ preventScroll: true }) }}><X size={15} aria-hidden="true"/></button></>
+  const returnControls = <><Button variant="quiet" type="button" onClick={returnToReading}><ArrowLeft size={15} aria-hidden="true"/>返回阅读位置</Button><Button variant="quiet" type="button" aria-label="关闭阅读返回" title="关闭阅读返回" onClick={() => { setReturnPoint(null); setCitation(null); root.current?.focus({ preventScroll: true }) }}><X size={15} aria-hidden="true"/></Button></>
   const capture = () => {
     const node = root.current
     if (!node) return
@@ -223,10 +224,10 @@ export function ArticleReader({ ref: externalRef, contentId = '', text, blocks, 
   return <article className="article-reader" onMouseUp={event => { event.stopPropagation(); capture() }} onKeyUp={event => { event.stopPropagation(); capture() }}>
     {title && <h2>{title}</h2>}
     {contentId && summarySource && text.trim() && shouldRenderInlineSummary(feed, toolbarOwnsSummary) && <ReaderActions><SummaryControl summary={summary} source={{contentId,title:sourceTitle,url:sourceURL}} onLocateQuote={locateQuote}/></ReaderActions>}
-    <div className="article-reading-tools">{contentId && pieces.length > 0 && <TextTranslationControl translation={translation} label="翻译文章"/>}{readingPosition.available && <button type="button" className="text-button article-resume" onClick={() => {
+    <div className="article-reading-tools">{contentId && pieces.length > 0 && <TextTranslationControl translation={translation} label="翻译文章"/>}{readingPosition.available && <Button variant="quiet" type="button" className="text-button article-resume" onClick={() => {
       if (collapsible && !textExpanded) { setTextExpanded(true); requestAnimationFrame(readingPosition.restore) }
       else readingPosition.restore()
-    }} title="回到上次阅读的原文段落"><BookOpen size={14} aria-hidden="true"/>继续阅读</button>}</div>
+    }} title="回到上次阅读的原文段落"><BookOpen size={14} aria-hidden="true"/>继续阅读</Button>}</div>
     <ArticleReflowGuard root={root} contentId={contentId} text={annotationText} layout={translation.show ? translation.inspection?.result.texts : undefined} focusToken={focus?.token} beforeReflow={readingPosition.pause}>
       <div ref={root} tabIndex={-1} onFocusCapture={() => { if (collapsible) setTextExpanded(true) }} className={`article-text${blocks ? ' article-structured' : ''}${markdown ? ' article-markdown' : ''}${collapsible && !textExpanded ? ' article-text-collapsed' : ''}`} data-anchor-ready={Boolean(sourceHash)}>{markdown ? <MarkdownRenderer imageMode="inline" imageReferrer={sourceURL}>{text}</MarkdownRenderer> : blocks ? blocks.map((block, index) => {
       const text = block.text ?? ''
@@ -245,8 +246,8 @@ export function ArticleReader({ ref: externalRef, contentId = '', text, blocks, 
       return <Fragment key={index}>{renderSegments(start, offset)}{index % 2 === 0 && translation.show && translatedParagraphs[index / 2] && <p data-translation="true" data-source-start={start} data-source-end={offset} className="article-translated" lang="zh-Hans">{translatedParagraphs[index / 2]}</p>}</Fragment>
     })}</div>
     </ArticleReflowGuard>
-    {collapsible && textOverflow && <button type="button" className="text-button article-expand" aria-expanded={textExpanded} onClick={() => { readingPosition.pause(); setTextExpanded(value => !value) }}>{textExpanded ? '收起正文' : '展开全文'}</button>}
-    {selection && onQuote && createPortal(<div className="article-selection" style={{ top: selection.top, left: selection.left }}><button className="button button-secondary" onMouseDown={event => event.preventDefault()} onClick={() => { onQuote(selection.anchor.quote, selection.anchor); setSelection(null); window.getSelection()?.removeAllRanges() }}><StickyNote size={15} aria-hidden="true"/>引用 / 记笔记</button></div>, document.body)}
+    {collapsible && textOverflow && <Button variant="quiet" type="button" className="text-button article-expand" aria-expanded={textExpanded} onClick={() => { readingPosition.pause(); setTextExpanded(value => !value) }}>{textExpanded ? '收起正文' : '展开全文'}</Button>}
+    {selection && onQuote && createPortal(<div className="article-selection" style={{ top: selection.top, left: selection.left }}><Button variant="secondary" className="button button-secondary" onMouseDown={event => event.preventDefault()} onClick={() => { onQuote(selection.anchor.quote, selection.anchor); setSelection(null); window.getSelection()?.removeAllRanges() }}><StickyNote size={15} aria-hidden="true"/>引用 / 记笔记</Button></div>, document.body)}
     {feed && <p className="field-hint">显示订阅源提供的文字；摘要源可能不包含全文。</p>}
     {returnAvailable && <><div className="article-jump-return" data-mobile-target={Boolean(navigationTarget)} role="group" aria-label="返回正文阅读">{returnControls}</div>{navigationTarget && createPortal(<div className="article-return-mobile" role="group" aria-label="返回正文阅读">{returnControls}</div>, navigationTarget)}</>}
   </article>

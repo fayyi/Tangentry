@@ -1,3 +1,4 @@
+import { Button } from '../../components/ui'
 import { BookOpen, Maximize, Minimize, StickyNote, Sparkles } from 'lucide-react'
 import { Children, createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactElement, type ReactNode } from 'react'
 import { ReaderNavigation } from './ReaderActions'
@@ -44,10 +45,10 @@ export function ReadingNotebook({ enabled = true, ai, contentLabel = '内容', c
   return <NotebookContext.Provider value={notebookEnabled ? context : null}>
     <div className={`reading-columns${notebookEnabled ? ' reading-notebook-v2' : ''}${aiContent ? ' reading-has-ai' : ''}`} data-notebook-panel={panel} data-theater={theater}>
       {enabled && <ReaderNavigation><div className="reading-notebook-navigation" role="group" aria-label="阅读区域">
-        <button type="button" aria-pressed={panel === 'content'} onClick={showContent}><BookOpen size={16} aria-hidden="true" />{contentLabel}</button>
-        {hasNotes && <button type="button" aria-pressed={panel === 'notes'} onClick={showNotes}><StickyNote size={16} aria-hidden="true" />笔记</button>}
-        {aiContent && <button type="button" aria-pressed={panel === 'ai'} onClick={showAI}><Sparkles size={16} aria-hidden="true" />AI 辅助</button>}
-        <button type="button" className="reading-theater-toggle" aria-pressed={theater} onClick={() => setTheater(value => !value)}>{theater ? <Minimize size={16} aria-hidden="true" /> : <Maximize size={16} aria-hidden="true" />}<span>{theater ? '退出专注' : '专注模式'}</span></button>
+        <Button variant="quiet" type="button" aria-pressed={panel === 'content'} onClick={showContent}><BookOpen size={16} aria-hidden="true" />{contentLabel}</Button>
+        {hasNotes && <Button variant="quiet" type="button" aria-pressed={panel === 'notes'} onClick={showNotes}><StickyNote size={16} aria-hidden="true" />笔记</Button>}
+        {aiContent && <Button variant="quiet" type="button" aria-pressed={panel === 'ai'} onClick={showAI}><Sparkles size={16} aria-hidden="true" />AI 辅助</Button>}
+        <Button variant="quiet" type="button" className="reading-theater-toggle" aria-pressed={theater} onClick={() => setTheater(value => !value)}>{theater ? <Minimize size={16} aria-hidden="true" /> : <Maximize size={16} aria-hidden="true" />}<span>{theater ? '退出专注' : '专注模式'}</span></Button>
       </div></ReaderNavigation>}
       {primary}
       {aiContent && <aside className="reading-ai" aria-label="AI 大纲与对话"><div className="reading-ai-heading"><strong><Sparkles size={15} aria-hidden="true" />AI 辅助</strong></div>{aiContent}</aside>}

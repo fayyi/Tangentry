@@ -1,3 +1,4 @@
+import { Button, Input } from '../../components/ui'
 import { ArrowRight, FileUp, Link2, LoaderCircle } from 'lucide-react'
 import type { RefObject } from 'react'
 import type { ContentItem } from '../../shared/api/types'
@@ -30,13 +31,13 @@ export function SourceComposer({ source, onSource, draft, onDraft, loading, inpu
 }) {
   const selected = discoverySources[source]
   return <section className="source-composer" aria-label="内容来源">
-    <div className="source-options" role="group" aria-label="搜索来源">{Object.entries(discoverySources).map(([id, entry]) => <button key={id} type="button" aria-pressed={source === id} onClick={() => onSource(id as DiscoverySource)}>{entry.label}</button>)}</div>
-    <form onSubmit={event => { event.preventDefault(); onSubmit() }}><label className="source-input"><Link2 size={19} aria-hidden="true"/><input ref={input} aria-label={selected.inputLabel} placeholder={selected.placeholder} value={draft} onChange={event => {
+    <div className="source-options" role="group" aria-label="搜索来源">{Object.entries(discoverySources).map(([id, entry]) => <Button variant="quiet" key={id} type="button" aria-pressed={source === id} onClick={() => onSource(id as DiscoverySource)}>{entry.label}</Button>)}</div>
+    <form onSubmit={event => { event.preventDefault(); onSubmit() }}><label className="source-input"><Link2 size={19} aria-hidden="true"/><Input ref={input} aria-label={selected.inputLabel} placeholder={selected.placeholder} value={draft} onChange={event => {
       const next = event.target.value
       const detected = detectSource(next)
       if (detected && detected !== source) onSource(detected)
       onDraft(next)
-    }} required maxLength={2048}/></label><button type="submit" className="button button-primary" disabled={loading || !draft.trim()}>{loading ? <LoaderCircle size={16} className="spin"/> : <ArrowRight size={16}/>}<span>{loading ? '正在获取' : '获取内容'}</span></button></form>
+    }} required maxLength={2048}/></label><Button variant="primary" type="submit" className="button button-primary" disabled={loading || !draft.trim()}>{loading ? <LoaderCircle size={16} className="spin"/> : <ArrowRight size={16}/>}<span>{loading ? '正在获取' : '获取内容'}</span></Button></form>
     <div className="source-composer-footer"><span>{selected.description}</span>{source === 'pdf' && <span className="source-import"><FileUp size={15}/><PDFImport onImported={onImported}/></span>}</div>
   </section>
 }

@@ -1,3 +1,4 @@
+import { Button } from '../../components/ui'
 import { CornerUpLeft, Heart, LoaderCircle } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { Discussion, DiscussionPost, ReadingNote, TextAnchor } from '../../shared/api/types'
@@ -122,12 +123,12 @@ export function DiscussionReader({ discussion: initialDiscussion, sourceURL, vie
         <div className="discussion-post-byline"><strong>{post.name || post.username}</strong><span>@{post.username}</span>{index === 0 && <b>楼主</b>}</div>
         <time dateTime={post.createdAt ? new Date(post.createdAt * 1000).toISOString() : undefined} title={post.createdAt ? new Date(post.createdAt * 1000).toLocaleString('zh-CN') : undefined}>{relativeTime(post.createdAt)}</time><a href={`#post-${post.number}`} className="discussion-post-number">#{post.number}</a>
       </header>
-      {post.replyToNumber && post.replyToNumber > 0 && <button type="button" className="discussion-reply-link" onClick={() => jump(post.replyToNumber!)}><CornerUpLeft size={14} aria-hidden="true"/>回复 @{post.replyToUser || '用户'} #{post.replyToNumber}</button>}
+      {post.replyToNumber && post.replyToNumber > 0 && <Button variant="quiet" type="button" className="discussion-reply-link" onClick={() => jump(post.replyToNumber!)}><CornerUpLeft size={14} aria-hidden="true"/>回复 @{post.replyToUser || '用户'} #{post.replyToNumber}</Button>}
       <ArticleReader contentId={`${discussion.topicId}:post:${post.id}`} title="" text={postText(post)} blocks={post.blocks} feed={false} notes={notes} focus={focus} postNumber={post.number} postId={post.id} onQuote={(text, anchor) => onQuote?.(text, anchor ? { ...anchor, postNumber: post.number, postId: post.id } : anchor)} onOpenNotes={onOpenNotes} onUnresolved={onUnresolved} sourceURL={sourceURL}/>
       <footer className="discussion-post-footer"><span><Heart size={14} aria-hidden="true"/>{post.likeCount ?? 0}</span></footer>
     </article>)}
     {!repliesRequested && discussion.posts.length < discussion.totalPosts
-      ? <button type="button" className="button button-secondary discussion-load-replies" onClick={() => void loadMore()} disabled={loading}>加载回复（共 {Math.max(0, discussion.totalPosts - 1)} 条）</button>
+      ? <Button variant="secondary" type="button" className="button button-secondary discussion-load-replies" onClick={() => void loadMore()} disabled={loading}>加载回复（共 {Math.max(0, discussion.totalPosts - 1)} 条）</Button>
       : <div ref={sentinel} className="discussion-load-status">{loading ? <><LoaderCircle size={15} className="spin"/>正在加载后续楼层…</> : discussion.posts.length < discussion.totalPosts ? `已加载 ${discussion.posts.length} / 共 ${discussion.totalPosts} 楼` : '已显示全部楼层'}</div>}
   </section>
 }

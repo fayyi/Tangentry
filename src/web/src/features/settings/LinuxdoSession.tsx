@@ -1,3 +1,4 @@
+import { Button } from '../../components/ui'
 import { useEffect, useRef, useState } from 'react'
 import { ExternalLink, LoaderCircle } from 'lucide-react'
 import { request } from '../../shared/api/client'
@@ -28,7 +29,7 @@ export function LinuxdoSession({ configured, updatedAt }: { configured: boolean;
   }
   return <div className="linuxdo-session">
     <a className="text-button" href="https://linux.do/login" target="_blank" rel="noopener noreferrer"><ExternalLink size={14} aria-hidden="true"/>原站登录</a>
-    {configured && <button type="button" className="text-button" disabled={pending} onClick={() => void check()}>{pending && <LoaderCircle size={14} className="spin" aria-hidden="true"/>}{pending ? '正在检查' : '检查登录'}</button>}
+    {configured && <Button variant="quiet" type="button" className="text-button" disabled={pending} onClick={() => void check()}>{pending && <LoaderCircle size={14} className="spin" aria-hidden="true"/>}{pending ? '正在检查' : '检查登录'}</Button>}
     {notice && <span className="field-hint" role="status">{notice}</span>}
     {error && <span className="field-hint" role="alert">{error}</span>}
   </div>

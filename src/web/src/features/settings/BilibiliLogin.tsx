@@ -1,3 +1,4 @@
+import { Button } from '../../components/ui'
 import { useEffect, useState } from 'react'
 import { QrCode } from 'lucide-react'
 import { request } from '../../shared/api/client'
@@ -33,12 +34,12 @@ export function BilibiliLogin({ onSuccess }: { onSuccess: () => void }) {
     finally { setPending(false) }
   }
   return <div className="bilibili-login">
-    <button type="button" className="icon-button" aria-label="扫码登录 B站" title="扫码登录 B站" disabled={pending} onClick={() => void start()}><QrCode size={17}/></button>
+    <Button variant="quiet" iconOnly type="button" className="icon-button" aria-label="扫码登录 B站" title="扫码登录 B站" disabled={pending} onClick={() => void start()}><QrCode size={17}/></Button>
     {open && <div className="cookie-editor">
       {session?.image && <img src={session.image} width={224} height={224} alt="B站登录二维码" style={{ display: 'block', maxWidth: '100%', objectFit: 'contain' }}/ >}
       <p role="status">{pending ? '正在生成二维码…' : session?.status === 'success' ? '登录成功，已保存 Cookie。' : session?.status === 'scanned' ? '已扫描，请在B站 App 中确认。' : session?.status === 'expired' ? '二维码已过期，请重新生成。' : '使用B站 App 扫码确认登录。'}</p>
       {error && <p role="alert">{error}</p>}
-      <button type="button" className="text-button" onClick={() => { setOpen(false); setSession(null) }}>关闭</button>
+      <Button variant="quiet" type="button" className="text-button" onClick={() => { setOpen(false); setSession(null) }}>关闭</Button>
     </div>}
   </div>
 }

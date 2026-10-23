@@ -1,3 +1,4 @@
+import { Button } from '../../components/ui'
 import { useEffect, useRef, useState } from 'react'
 import { Trash2 } from 'lucide-react'
 import { APIError, request } from '../../shared/api/client'
@@ -83,15 +84,15 @@ export function QuickMemo() {
     {backupNotice && <p className="notes-hint" role="status">{backupNotice}</p>}
     {recoverable.length > 0 && <details className="note-recovery"><summary>可恢复随手记 · {recoverable.length}</summary>{recoverable.map(backup => {
       const value = readDraft(backup.raw)
-      return <div key={backup.key}><p>{value.body.slice(0, 100) || value.tags}</p><time>{new Date(backup.updatedAt).toLocaleString('zh-CN')}</time><div><button type="button" className="button button-secondary" disabled={hasDraft || pending} title={hasDraft ? '先保存或清空当前草稿' : '恢复此草稿'} onClick={() => { recovered.current = backup; rememberRecoveryOrigin(recoveryScope, backup); setDraft(value); setPreview(false); setError(''); setNotice('草稿已恢复，尚未保存为笔记。') }}>恢复随手记</button><button type="button" className="icon-button" disabled={pending} title="删除随手记备份" aria-label={`删除随手记备份 ${value.body.slice(0, 24) || value.tags}`} onClick={() => deleteBackup(backup)}><Trash2 size={14}/></button></div></div>
+      return <div key={backup.key}><p>{value.body.slice(0, 100) || value.tags}</p><time>{new Date(backup.updatedAt).toLocaleString('zh-CN')}</time><div><Button variant="secondary" type="button" className="button button-secondary" disabled={hasDraft || pending} title={hasDraft ? '先保存或清空当前草稿' : '恢复此草稿'} onClick={() => { recovered.current = backup; rememberRecoveryOrigin(recoveryScope, backup); setDraft(value); setPreview(false); setError(''); setNotice('草稿已恢复，尚未保存为笔记。') }}>恢复随手记</Button><Button variant="quiet" iconOnly type="button" className="icon-button" disabled={pending} title="删除随手记备份" aria-label={`删除随手记备份 ${value.body.slice(0, 24) || value.tags}`} onClick={() => deleteBackup(backup)}><Trash2 size={14}/></Button></div></div>
     })}</details>}
     {backupFailed && hasDraft && <p className="notes-error" role="status">无法备份草稿到此浏览器，请保存笔记后再关闭页面。</p>}
     <form className="note-editor" onSubmit={event => { event.preventDefault(); void save() }}>
       <MarkdownEditor id="quick-memo-body" label="随手记" ariaLabel="随手记正文" value={draft.body} onChange={body => { setDraft(current => ({ ...current, body })); setNotice(''); setError('') }} editorRef={editor} preview={preview} onPreviewChange={setPreview} pending={pending} rows={3} onSave={() => void save()} invalid={Boolean(error && (!draft.body.trim() || count > 8000))} describedBy="quick-memo-status" />
       <TagInput id="quick-memo-tags" value={draft.tags} onChange={tags => setDraft(current => ({ ...current, tags }))} disabled={pending} />
-      <div className="quick-memo-footer"><span className="note-counter">{count} / 8000</span>{hasDraft && <button type="button" className="button button-secondary" disabled={pending} onClick={() => { clearDraft(); setError(''); setNotice('') }}>清空随手记草稿</button>}<button type="submit" className="button button-primary" disabled={pending || !draft.body.trim()}>{pending ? '正在保存' : '保存随手记'}</button></div>
+      <div className="quick-memo-footer"><span className="note-counter">{count} / 8000</span>{hasDraft && <Button variant="secondary" type="button" className="button button-secondary" disabled={pending} onClick={() => { clearDraft(); setError(''); setNotice('') }}>清空随手记草稿</Button>}<Button variant="primary" type="submit" className="button button-primary" disabled={pending || !draft.body.trim()}>{pending ? '正在保存' : '保存随手记'}</Button></div>
       <p id="quick-memo-status" className={error ? 'notes-error' : 'notes-hint'} role={error ? 'alert' : notice ? 'status' : undefined}>{error ? `${error} 正文草稿保留，请重试。` : notice}</p>
-      {creationConflict && <button type="button" className="button button-secondary" disabled={pending} onClick={() => { setDraft(current => ({ ...current, createId: undefined })); setCreationConflict(false); setError(''); setNotice('草稿已保留，点击保存将另存一条笔记。') }}>另存草稿</button>}
+      {creationConflict && <Button variant="secondary" type="button" className="button button-secondary" disabled={pending} onClick={() => { setDraft(current => ({ ...current, createId: undefined })); setCreationConflict(false); setError(''); setNotice('草稿已保留，点击保存将另存一条笔记。') }}>另存草稿</Button>}
     </form>
   </section>
 }

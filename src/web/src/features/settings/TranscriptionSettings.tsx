@@ -1,9 +1,10 @@
-import { Check, Cloud, Cpu, RefreshCw, Save } from 'lucide-react'
+import { Cloud, Cpu, RefreshCw, Save } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { request } from '../../shared/api/client'
 import { listOrEmpty } from '../../shared/api/list'
 import { WhisperModels } from './WhisperModels'
 import { PathInput } from './PathInput'
+import { SettingsTask } from './ui/SettingsActionPage'
 
 type Backend = 'whisper.cpp' | 'faster-whisper' | 'qwen3-asr' | 'groq' | 'cloudflare' | 'siliconflow' | 'mai'
 const engineGroups: { label: string; hint: string; options: { value: Backend; label: string }[] }[] = [
@@ -76,7 +77,7 @@ export function TranscriptionSettings() {
     selectBackend(backend)
     setNotice('引擎已切换，保存后生效。')
   }
-  return <section className="settings-section" aria-labelledby="transcription-tools-title"><div className="settings-heading"><div><h2 id="transcription-tools-title">字幕转录</h2><p className="field-hint">{cloud ? '确认后上传，额度以服务商为准。' : '音频留在本机，已有字幕优先。'}</p></div><span className="settings-state" data-ready={!dirty && status?.ready} data-dirty={Boolean(dirty)}>{dirty ? '未保存更改' : status?.ready ? <><Check size={14}/>已就绪</> : '尚未就绪'}</span></div>
+  return <SettingsTask title={cloud ? '云端转录' : '本机转录'} description={cloud ? '确认后上传，额度以服务商为准。' : '音频留在本机，已有字幕优先。'} actions={<span className="settings-inline-status">{dirty ? '未保存更改' : status?.ready ? '已就绪' : '尚未就绪'}</span>}>
     {!status && (loading ? <p className="field-hint" role="status">正在读取转录设置…</p> : <button type="button" className="text-button" onClick={()=>setLoadRevision(value=>value+1)}><RefreshCw size={14}/>重试</button>)}
     <form className="transcription-config" onSubmit={event=>{event.preventDefault();void save()}}><fieldset disabled={!status || pending} style={{display:'contents'}}>
       <fieldset className="settings-form-section transcription-engines" aria-label="转录引擎"><legend>识别方式</legend>
@@ -138,5 +139,5 @@ export function TranscriptionSettings() {
     {!cloud && status &&
     <WhisperModels configurationPending={pending} backend={config.backend} selectedModel={config.model} selectedAligner={config.backend==='qwen3-asr'?config.qwenAligner:''} refreshKey={status.config.python} onInstalled={() => { void request<Status>('/transcription/settings').then(value => setStatus(normalizedStatus(value))).catch(() => setError('模型列表刷新失败，请重新打开工具设置。')) }} onChoose={(path,id) => { setConfig(value=>({...value,...(id==='qwen3-aligner-0.6b'?{qwenAligner:path}:{model:path})})); setNotice('模型已选择，保存后生效。') }}/>
     }
-  </section>
+  </SettingsTask>
 }

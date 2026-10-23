@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { APIError, request } from '../../shared/api/client'
 import type { BackupRestoreResult, BackupRunErrorResponse, BackupSnapshot, BackupTarget, BackupTargetType, BackupTask, BackupValidation } from '../../shared/api/types'
 import { PathInput } from './PathInput'
+import { SettingsTaskSwitcher } from './ui/SettingsTaskSwitcher'
 import { BackupRemoteFolderBrowser } from './BackupRemoteFolderBrowser'
 import { BACKUP_SCOPE_NOTICE, backupEmptyState, backupStatusPresentation, backupValidationPresentation, formatBackupDate, formatBackupSize, immediateBackupAvailability } from './backupPresentation'
 import { normalizeBackupSettingsData } from './backupFolderBrowser'
@@ -257,15 +258,11 @@ export function BackupSettings() {
   }
 
   return <div className="backup-settings">
-    <nav className="backup-tabs" aria-label="备份与恢复页面">
-      {([
-        ['backup', '备份', <Play size={15}/>],
-        ['history', '历史', <History size={15}/>],
-        ['restore', '恢复', <RotateCcw size={15}/>],
-        ['targets', '目标', <Settings2 size={15}/>],
-      ] as const).map(([id, label, Icon]) => <button type="button" key={id} className={panel === id ? 'active' : ''} aria-current={panel === id ? 'page' : undefined} onClick={() => setPanel(id)}>{Icon}{label}{id === 'history' && snapshots.length > 0 && <span>{snapshots.length}</span>}</button>)}
-      <button type="button" className="backup-refresh icon-button" aria-label="刷新备份状态" title="刷新备份状态" onClick={() => void reload()} disabled={loading}><RefreshCw size={16} className={loading ? 'spin' : undefined}/></button>
-    </nav>
+    <div className="backup-overview-strip" aria-label="备份状态摘要"><span><ShieldCheck size={16} aria-hidden="true"/>备份工作流</span><span>{targets.length ? `${targets.length} 个目标` : '尚未配置目标'}</span><span>{encryptionConfigured ? '加密已配置' : '需要设置加密密码'}</span><span>{snapshots.length ? `${snapshots.length} 个快照` : '暂无快照'}</span></div>
+    <div className="settings-backup-switch-row">
+      <SettingsTaskSwitcher value={panel} options={[{ value: 'backup', label: '立即备份', icon: <Play size={14}/> }, { value: 'targets', label: '备份目标', icon: <Settings2 size={14}/> }, { value: 'history', label: '快照历史', icon: <History size={14}/> }, { value: 'restore', label: '恢复数据', icon: <RotateCcw size={14}/> }]} onChange={setPanel} />
+      <button type="button" className="icon-button" aria-label="刷新备份状态" title="刷新备份状态" onClick={() => void reload()} disabled={loading}><RefreshCw size={16} className={loading ? 'spin' : undefined}/></button>
+    </div>
     {error && <p className="subtitle-error" role="alert">{error}</p>}
 
     {panel === 'backup' && <section className="backup-panel" aria-labelledby="backup-run-title">

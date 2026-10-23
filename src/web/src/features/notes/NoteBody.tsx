@@ -1,3 +1,4 @@
+import { Button } from '../../components/ui'
 import { ChevronDown, ChevronUp } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { MarkdownBody } from './MarkdownBody'
@@ -21,6 +22,6 @@ export function NoteBody({ id, body, active, bodyClassName = 'note-body', ...tas
     <div id={`note-content-${id}`} className="note-body-content" onFocusCapture={() => setExpanded(true)}>
       <div ref={content} className="note-body-measure"><MarkdownBody className={bodyClassName} {...tasks}>{body}</MarkdownBody></div>
     </div>
-    {overflow && !active && <button type="button" className="note-expand" aria-expanded={open} aria-controls={`note-content-${id}`} onClick={() => setExpanded(!expanded)}>{open ? <ChevronUp size={14}/> : <ChevronDown size={14}/>}{open ? '收起笔记' : '展开全文'}</button>}
+    {overflow && !active && <Button variant="quiet" type="button" className="note-expand" aria-expanded={open} aria-controls={`note-content-${id}`} onClick={() => setExpanded(!expanded)}>{open ? <ChevronUp size={14}/> : <ChevronDown size={14}/>}{open ? '收起笔记' : '展开全文'}</Button>}
   </div>
 }

@@ -1,3 +1,4 @@
+import { Button } from '../../components/ui'
 import { Eye, EyeOff, Languages, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
@@ -26,13 +27,13 @@ export function TextTranslationControl({ translation, label, iconOnly = false }:
   const busy = !complete && Boolean(inspection?.settings.translating || inspection?.active)
   if (translation.alreadyChinese) return null
   return <div className={`text-translation-control${iconOnly ? ' text-translation-icon' : ''}`}>
-    <button className={iconOnly ? 'icon-button' : 'text-button'} aria-label={action} disabled={!pending && !complete && (loading || (!inspection && !error) || busy && !error)}
+    <Button variant="quiet" iconOnly={iconOnly} className={iconOnly ? 'icon-button' : 'text-button'} aria-label={action} disabled={!pending && !complete && (loading || (!inspection && !error) || busy && !error)}
       title={error ? action : needsSettings ? '请在工具设置配置 AI 接口和模型' : busy && !pending ? 'AI 正在处理其他任务' : action}
       aria-pressed={complete ? translation.show : undefined}
       onClick={() => { if (pending) translation.cancel(); else if (complete) translation.setShow(!translation.show); else if (error || !inspection?.settings.ready) void translation.reload(); else void translation.translate() }}>
       {pending ? <X size={14}/> : <Languages size={14}/>}{!iconOnly && (pending ? `取消翻译 ${done}/${inspection?.result.total ?? 0}` : action)}
-    </button>
-    {done > 0 && !complete && <button className="icon-button translation-visibility" aria-label={visibilityAction} title={visibilityAction} aria-pressed={translation.show} onClick={() => translation.setShow(!translation.show)}>{translation.show ? <EyeOff size={14}/> : <Eye size={14}/>}</button>}
+    </Button>
+    {done > 0 && !complete && <Button variant="quiet" iconOnly className="icon-button translation-visibility" aria-label={visibilityAction} title={visibilityAction} aria-pressed={translation.show} onClick={() => translation.setShow(!translation.show)}>{translation.show ? <EyeOff size={14}/> : <Eye size={14}/>}</Button>}
     {needsSettings && <a href="/tools#translation">配置 AI</a>}
     {pending && iconOnly && <span role="status">{done}/{inspection?.result.total ?? 0}</span>}
     {!pending && notice && <span role="status">{notice}</span>}

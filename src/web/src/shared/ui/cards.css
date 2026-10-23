@@ -24,6 +24,12 @@
   :root :is(.modern-gallery, .mixed-gallery)[data-media='image'] { grid-template-columns: minmax(0, 1fr); }
 }
 
+/* Cover height stays independent of the number and width of gallery columns. */
+:root :is(.modern-card.card-video, .modern-card.card-article, .modern-card.card-pdf, .modern-card.card-image) .modern-card-thumbnail {
+  height: var(--card-cover-height, 160px); min-height: 0; max-height: none; aspect-ratio: auto; flex-shrink: 0;
+}
+:root .modern-card.card-image .modern-card-thumbnail img { height: 100%; max-height: none; object-fit: cover; }
+
 /* ---------- Gallery card surface ---------- */
 .modern-card {
   position: relative; display: flex; flex-direction: column; min-width: 0; overflow: hidden;

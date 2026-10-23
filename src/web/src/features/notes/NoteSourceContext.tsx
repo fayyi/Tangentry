@@ -1,3 +1,4 @@
+import { Button } from '../../components/ui'
 import { ArrowUpRight, LoaderCircle, RefreshCw, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
@@ -96,7 +97,7 @@ export function NoteSourceContext({ note, title, item, onClose, onRead }: {
   const fallback = snapshot?.item ?? item
   const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.stopPropagation(); onClose() } }
   return <aside className="note-source-context" aria-label="笔记来源上下文" onKeyDown={closeOnEscape}>
-    <div className="note-context-heading"><h2 ref={heading} tabIndex={-1}>来源上下文</h2><button className="icon-button" disabled={loading} title="重新读取本机来源" aria-label="重新读取本机来源" onClick={() => { cache.current.delete(key); setRevision(value => value + 1) }}><RefreshCw size={16}/></button><button className="icon-button" title="关闭来源上下文" aria-label="关闭来源上下文" onClick={onClose}><X size={18}/></button></div>
+    <div className="note-context-heading"><h2 ref={heading} tabIndex={-1}>来源上下文</h2><Button variant="quiet" iconOnly className="icon-button" disabled={loading} title="重新读取本机来源" aria-label="重新读取本机来源" onClick={() => { cache.current.delete(key); setRevision(value => value + 1) }}><RefreshCw size={16}/></Button><Button variant="quiet" iconOnly className="icon-button" title="关闭来源上下文" aria-label="关闭来源上下文" onClick={onClose}><X size={18}/></Button></div>
     <h3 className="note-context-title">{title}</h3>
     {(fallback?.author || note.source?.author) && <p className="note-context-meta">{fallback?.author || note.source?.author}</p>}
     <div className="note-context-body">
@@ -120,6 +121,6 @@ export function NoteSourceContext({ note, title, item, onClose, onRead }: {
       </section>}
       {!quote && position === null && !loading && <section aria-label="本机正文预览"><p className="note-context-meta">本机正文预览</p><p className="note-context-passage">{Array.from(text?.text || fallback?.description || fallback?.previewText || '').slice(0, 1400).join('') || '本机没有保存正文片段，可进入阅读页查看来源。'}</p></section>}
     </div>
-    <button type="button" className="button button-secondary note-context-read" onClick={() => onRead(note)}>回到来源阅读<ArrowUpRight size={15}/></button>
+    <Button variant="secondary" type="button" className="button button-secondary note-context-read" onClick={() => onRead(note)}>回到来源阅读<ArrowUpRight size={15}/></Button>
   </aside>
 }

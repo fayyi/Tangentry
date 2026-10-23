@@ -1,3 +1,4 @@
+import { Button } from '../../components/ui'
 import { LoaderCircle, MonitorPlay, RefreshCw } from 'lucide-react'
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { request } from '../../shared/api/client'
@@ -108,7 +109,7 @@ export const BilibiliStreamPlayer = forwardRef<PlaybackHandle, {
   }
   if (embedded) return <div className="bilibili-stream-player">
     <BilibiliEmbedPlayer ref={embed} id={id} title={title} start={resume.current} onReady={onReady} onPosition={onPosition} onProgress={onProgress} onPlaying={onPlaying} onSeekTarget={rememberTarget}/>
-    <div className="player-footer"><span className="field-hint">{error ? '已切换到 B站官方播放器' : 'B站官方播放器'}</span><button className="button button-secondary" onClick={() => { setEmbedded(false); setAttempt(value => value + 1) }}><RefreshCw size={14}/>重试同步播放</button><a className="button button-secondary" href={`https://www.bilibili.com/video/${id}/?t=${Math.floor(resume.current)}`} target="_blank" rel="noopener noreferrer">打开原视频</a></div>
+    <div className="player-footer"><span className="field-hint">{error ? '已切换到 B站官方播放器' : 'B站官方播放器'}</span><Button variant="secondary" className="button button-secondary" onClick={() => { setEmbedded(false); setAttempt(value => value + 1) }}><RefreshCw size={14}/>重试同步播放</Button><a className="button button-secondary" href={`https://www.bilibili.com/video/${id}/?t=${Math.floor(resume.current)}`} target="_blank" rel="noopener noreferrer">打开原视频</a></div>
   </div>
   return <div className="bilibili-stream-player">
     <div className="online-video-stage player-capture-stage">
@@ -124,6 +125,6 @@ export const BilibiliStreamPlayer = forwardRef<PlaybackHandle, {
         onError={() => { const node = video.current; if (node && node.readyState >= 1 && Number.isFinite(node.currentTime)) resume.current = node.currentTime; onPlaying?.(false); onReady?.(false); onPosition?.(null); setError('同步播放暂不可用'); setEmbedded(true) }}>{captionURL&&captions&&<track key={captionURL} kind="captions" src={captionURL} srcLang={captions.language==='ai-zh'?'zh':captions.language} label={captions.label} default/>}</video>
         : !error && <p role="status"><LoaderCircle size={18} className="spin"/>正在连接视频…</p>}
     </div>
-    <button className="icon-button online-player-switch" aria-label="使用 B站官方播放器" title="使用 B站官方播放器" onClick={() => { resume.current = getPosition() ?? resume.current; setEmbedded(true) }}><MonitorPlay size={16}/></button>
+    <Button variant="quiet" iconOnly className="icon-button online-player-switch" aria-label="使用 B站官方播放器" title="使用 B站官方播放器" onClick={() => { resume.current = getPosition() ?? resume.current; setEmbedded(true) }}><MonitorPlay size={16}/></Button>
   </div>
 })

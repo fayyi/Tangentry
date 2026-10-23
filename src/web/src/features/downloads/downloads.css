@@ -66,7 +66,8 @@
 .download-history-toolbar { flex-wrap: wrap; }
 .download-history-toolbar .download-task-filters { margin-left: auto; }
 .download-select-all, .download-row-select { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; white-space: nowrap; }
-.download-delete-dialog { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 20px; background: rgb(10 15 20 / .36); }
+.download-delete-dialog { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; width: 100%; height: 100%; max-width: none; max-height: none; margin: 0; padding: 20px; border: 0; border-radius: 0; background: rgb(10 15 20 / .36); box-shadow: none; }
+.download-delete-dialog::backdrop { background: transparent; backdrop-filter: none; }
 .download-delete-panel { width: min(440px, 100%); padding: 20px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--card); box-shadow: var(--shadow-lg); }
 .download-delete-panel h2 { margin: 0 0 8px; font-size: 17px; }
 .download-delete-panel p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.6; }

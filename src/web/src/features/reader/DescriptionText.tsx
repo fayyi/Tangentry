@@ -1,3 +1,4 @@
+import { Button } from '../../components/ui'
 import { Fragment } from 'react'
 import LinkifyIt from 'linkify-it'
 import { SourceText } from './SourceText'
@@ -17,6 +18,6 @@ export function DescriptionText({ text, onSeek }: { text: string; onSeek?: (seco
   return <>{timestamps.map(timestamp => {
     const before = text.slice(offset, timestamp.start)
     offset = timestamp.start + timestamp.text.length
-    return <Fragment key={timestamp.start}><SourceText text={before}/><button type="button" className="description-time" title={`播放至 ${timestamp.text}`} onClick={() => onSeek(timestamp.seconds)}>{timestamp.text}</button></Fragment>
+    return <Fragment key={timestamp.start}><SourceText text={before}/><Button variant="quiet" type="button" className="description-time" title={`播放至 ${timestamp.text}`} onClick={() => onSeek(timestamp.seconds)}>{timestamp.text}</Button></Fragment>
   })}<SourceText text={text.slice(offset)}/></>
 }

@@ -1,3 +1,4 @@
+import { Button } from '../../../components/ui'
 import { Image as ImageIcon } from 'lucide-react'
 import { GalleryCardFrame } from './GalleryCardFrame'
 import { GalleryCardTitle } from './GalleryCardText'
@@ -11,14 +12,14 @@ export function ImageGalleryCard({ item, origin, discoveryReason, discoveryType,
   const { failed: coverFailed, setFailed: setCoverFailed } = useCardCover(item.thumbnailUrl)
   return (
     <GalleryCardFrame item={item} origin={origin} discoveryReason={discoveryReason} className="card-image" onRead={onRead} status={status} onFeedback={discovery ? onFeedback : undefined}>
-      <button className="modern-card-thumbnail" onClick={() => onRead(item)} aria-label={`查看图集 ${item.title}`}>
+      <Button variant="quiet" className="modern-card-thumbnail" onClick={() => onRead(item)} aria-label={`查看图集 ${item.title}`}>
         {item.thumbnailUrl && !coverFailed ? (
           <img src={sourceImageURL(item, item.thumbnailUrl)} alt="" loading="lazy" referrerPolicy="no-referrer" onError={event => retryThroughProxy(event, item, item.thumbnailUrl) || setCoverFailed(true)} />
         ) : (
           <div className="thumbnail-placeholder"><ImageIcon size={48} /></div>
         )}
         {item.images && item.images.length > 1 && <span className="card-image-count"><ImageIcon size={14} />{item.images.length} 张</span>}
-      </button>
+      </Button>
       <div className="modern-card-content">
         <GalleryCardTitle item={item} onRead={onRead} />
         {excerpt}

@@ -1,3 +1,4 @@
+import { Button } from '../../components/ui'
 import { useEffect, useState } from 'react'
 import { request } from '../../shared/api/client'
 import type { Feed } from '../../shared/api/types'
@@ -23,6 +24,6 @@ export function FeedDocumentReader({ url, annotations }: { url: string; annotati
       .catch(cause => { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'PDF 暂时无法读取。') })
     return () => controller.abort()
   }, [url, attempt])
-  if (error) return <div className="error-panel" role="alert"><p>{error}</p><button className="button button-secondary" onClick={() => setAttempt(value => value + 1)}>重新读取 PDF</button></div>
+  if (error) return <div className="error-panel" role="alert"><p>{error}</p><Button variant="secondary" className="button button-secondary" onClick={() => setAttempt(value => value + 1)}>重新读取 PDF</Button></div>
   return documentId ? <PDFReader id={documentId} {...annotations} /> : <p role="status" className="field-hint">正在获取订阅中的 PDF…</p>
 }

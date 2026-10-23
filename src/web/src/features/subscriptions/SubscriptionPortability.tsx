@@ -1,3 +1,4 @@
+import { Button } from '../../components/ui'
 import { Download, Upload } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { requestResponse } from '../../shared/api/client'
@@ -38,8 +39,8 @@ export function SubscriptionPortability() {
   return <div className="subscription-portability">
     <div className="subscription-portability-copy"><strong>带走你的来源</strong><span>用 OPML 在 Tangentry 与其他阅读器之间迁移 RSS、播客和频道。</span></div>
     <div className="subscription-portability-actions">
-      <button className="button button-secondary" disabled={busy} onClick={() => void exportOPML()}><Download size={15} aria-hidden="true" />导出 OPML</button>
-      <button className="button button-secondary" disabled={busy} onClick={() => input.current?.click()}><Upload size={15} aria-hidden="true" />导入 OPML</button>
+      <Button variant="secondary" className="button button-secondary" disabled={busy} onClick={() => void exportOPML()}><Download size={15} aria-hidden="true" />导出 OPML</Button>
+      <Button variant="secondary" className="button button-secondary" disabled={busy} onClick={() => input.current?.click()}><Upload size={15} aria-hidden="true" />导入 OPML</Button>
       <input ref={input} type="file" hidden accept=".opml,.xml,application/xml,text/xml" aria-label="选择 OPML 文件" onChange={event => { const file = event.target.files?.[0]; if (file) void importOPML(file) }} />
     </div>
     {feedback && <p className="subscription-portability-result" role={error ? 'alert' : 'status'}>{feedback}</p>}

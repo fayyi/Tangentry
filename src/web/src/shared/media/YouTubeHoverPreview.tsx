@@ -1,3 +1,4 @@
+import { Button } from '../../components/ui'
 import { useEffect, useRef, useState } from 'react'
 import { Volume2, VolumeX } from 'lucide-react'
 import { loadYouTubeAPI, type YouTubePlayer } from './youtubeIframeAPI'
@@ -55,6 +56,6 @@ export function YouTubeHoverPreview({ id }: { id: string }) {
   }
   return <span style={{ position: 'absolute', inset: 0 }}>
     <span ref={container}/>
-    {ready && <button type="button" className="preview-sound" title={muted ? '开启预览声音' : '静音预览'} aria-label={muted ? '开启预览声音' : '静音预览'} onClick={event => { event.stopPropagation(); toggleSound() }}>{muted ? <VolumeX size={16}/> : <Volume2 size={16}/>}</button>}
+    {ready && <Button variant="quiet" type="button" className="preview-sound" title={muted ? '开启预览声音' : '静音预览'} aria-label={muted ? '开启预览声音' : '静音预览'} onClick={event => { event.stopPropagation(); toggleSound() }}>{muted ? <VolumeX size={16}/> : <Volume2 size={16}/>}</Button>}
   </span>
 }

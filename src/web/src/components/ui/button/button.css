@@ -1,0 +1,41 @@
+:where(.ui-button) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 8px 14px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.3;
+  cursor: pointer;
+  transition: background-color 140ms var(--ease-out), border-color 140ms var(--ease-out);
+}
+:where(.ui-button-primary, .ui-button-accent) { background: var(--action); color: var(--inverse); }
+:where(.ui-button-secondary) { background: var(--card); color: var(--ink); border-color: var(--line-strong); box-shadow: var(--shadow-sm); }
+:where(.ui-button-quiet) { background: transparent; color: inherit; border: 0; padding: 0; min-height: 0; border-radius: var(--radius-sm); }
+:where(.ui-button-danger) { background: var(--danger); color: var(--canvas); }
+:where(.ui-button-sm:not(.ui-button-quiet)) { min-height: 32px; padding: 6px 12px; font-size: 12px; }
+:where(.ui-button-lg:not(.ui-button-quiet)) { min-height: 44px; padding: 10px 20px; font-size: 14px; }
+:where(.ui-button-icon) { width: 36px; height: 36px; min-height: 36px; padding: 0; flex-shrink: 0; }
+:where(.ui-button:disabled) { opacity: .45; cursor: not-allowed; }
+:where(.ui-button:focus-visible) { outline: 2px solid var(--accent); outline-offset: 3px; }
+@media (hover: hover) and (pointer: fine) {
+  :where(.ui-button-primary, .ui-button-accent):not(:disabled):hover { background: var(--action-hover); }
+  :where(.ui-button-secondary):not(:disabled):hover { background: var(--surface); border-color: var(--control-line); }
+  :where(.ui-button-quiet):not(:disabled):hover { background: var(--hover); }
+  :where(.ui-button-danger):not(:disabled):hover { filter: brightness(.92); }
+}
+.ui-button-glyph { display: inline-flex; flex-shrink: 0; }
+.ui-button-loader { width: 14px; height: 14px; flex-shrink: 0; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: ui-button-spin .6s linear infinite; }
+@keyframes ui-button-spin { to { transform: rotate(360deg); } }
+@media (pointer: coarse) {
+  :where(.ui-button:not(.ui-button-quiet), .ui-button-icon) { min-height: 44px; }
+  :where(.ui-button-icon) { width: 44px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ui-button { transition: none; }
+  .ui-button-loader { animation: none; }
+}

@@ -1,3 +1,4 @@
+import { Button } from '../../components/ui'
 import { AlertCircle, Clock3, RefreshCw, RotateCcw } from 'lucide-react'
 import type { useReadingProgress } from './useReadingProgress'
 import './progress.css'
@@ -23,11 +24,11 @@ export function ReadingProgressPanel({ progress, ready, playing, position, onSee
   const offer = saved && saved.positionSeconds > 0 && !saved.completed && !playing && (position === null || Math.abs(position - saved.positionSeconds) > .5)
   return <section className="reading-progress" data-playing={playing ? 'true' : undefined} aria-label="阅读进度">
     <div className="progress-header"><div className="progress-caption"><Clock3 size={15} aria-hidden="true" /><span>{headline}</span></div>{progress.saving && <span className="visually-hidden" role="status">正在保存当前位置…</span>}<div className="progress-controls">
-      {offer && <button className="text-button progress-resume" disabled={!ready || progress.loading || Boolean(progress.readError)} onClick={() => onSeek(saved.positionSeconds)}>继续到 {clock(saved.positionSeconds)}</button>}
-      {(offer || saved?.completed && !playing) && <button className="icon-button" aria-label="从头开始" title="从头开始" disabled={!ready || progress.loading || Boolean(progress.readError)} onClick={() => onSeek(0)}><RotateCcw size={15} aria-hidden="true" /></button>}
-      <button className="icon-button" aria-label="重新读取阅读进度" title={progress.saving ? '正在保存当前位置' : '重新读取阅读进度'} disabled={progress.loading || progress.saving} onClick={() => void progress.reload()}><RefreshCw size={15} className={progress.loading || progress.saving ? 'spin' : undefined} aria-hidden="true" /></button></div></div>
+      {offer && <Button variant="quiet" className="text-button progress-resume" disabled={!ready || progress.loading || Boolean(progress.readError)} onClick={() => onSeek(saved.positionSeconds)}>继续到 {clock(saved.positionSeconds)}</Button>}
+      {(offer || saved?.completed && !playing) && <Button variant="quiet" iconOnly className="icon-button" aria-label="从头开始" title="从头开始" disabled={!ready || progress.loading || Boolean(progress.readError)} onClick={() => onSeek(0)}><RotateCcw size={15} aria-hidden="true" /></Button>}
+      <Button variant="quiet" iconOnly className="icon-button" aria-label="重新读取阅读进度" title={progress.saving ? '正在保存当前位置' : '重新读取阅读进度'} disabled={progress.loading || progress.saving} onClick={() => void progress.reload()}><RefreshCw size={15} className={progress.loading || progress.saving ? 'spin' : undefined} aria-hidden="true" /></Button></div></div>
     {(saved || (livePosition !== null && liveDuration > 0)) && <progress value={liveDuration > 0 ? displayPosition : saved?.positionSeconds ?? 0} max={liveDuration > 0 ? liveDuration : saved?.durationSeconds ?? 1} aria-label={hasUnsavedPosition ? '当前位置' : '已保存阅读进度'} />}
     {progress.readError && <p className="progress-error" role="alert"><AlertCircle size={15} />{progress.readError} 当前播放不受影响，自动保存暂不可用。</p>}
-    {progress.writeError && <div className="progress-error" role="alert"><AlertCircle size={15} /><div><p>{progress.writeError} 上次成功记录仍保留。</p><button className="button button-secondary" disabled={progress.loading || progress.saving} onClick={() => void progress.retry()}>保存本页当前位置</button></div></div>}
+    {progress.writeError && <div className="progress-error" role="alert"><AlertCircle size={15} /><div><p>{progress.writeError} 上次成功记录仍保留。</p><Button variant="secondary" className="button button-secondary" disabled={progress.loading || progress.saving} onClick={() => void progress.retry()}>保存本页当前位置</Button></div></div>}
   </section>
 }

@@ -1,3 +1,4 @@
+import { Button } from '../../components/ui'
 import { ExternalLink, FileText } from 'lucide-react'
 import { useState } from 'react'
 import type { PaperMetadata } from '../../shared/api/types'
@@ -20,7 +21,7 @@ export function PaperInfoCard({ paper }: { paper: PaperMetadata }) {
     <div className="paper-info-links">
       {paper.hfUrl && <a href={paper.hfUrl} target="_blank" rel="noopener noreferrer">Hugging Face <ExternalLink size={13} aria-hidden="true"/></a>}
       {paper.githubUrl && <a href={paper.githubUrl} target="_blank" rel="noopener noreferrer">GitHub <ExternalLink size={13} aria-hidden="true"/></a>}
-      <button type="button" className="text-button" aria-expanded={abstractOpen} onClick={() => setAbstractOpen(value => !value)}>{abstractOpen ? '收起摘要' : '查看摘要'}</button>
+      <Button variant="quiet" type="button" className="text-button" aria-expanded={abstractOpen} onClick={() => setAbstractOpen(value => !value)}>{abstractOpen ? '收起摘要' : '查看摘要'}</Button>
     </div>
     {abstractOpen && <p className="paper-info-abstract">{paper.abstract || '暂无摘要。'}</p>}
   </section>

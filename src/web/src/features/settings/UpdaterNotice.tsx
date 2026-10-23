@@ -1,3 +1,4 @@
+import { Button } from '../../components/ui'
 import { Check, Download, RotateCcw, SkipForward, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useCapabilities } from '../../shared/api/desktop'
@@ -54,9 +55,9 @@ export function UpdaterNotice() {
     </div>
     {downloading && <div className="updater-notice-progress"><progress max="1" value={status.progress}/><span>{Math.round(status.progress * 100)}%</span></div>}
     <div className="updater-notice-actions">
-      {installed ? <button type="button" className="button button-primary" disabled={pending} onClick={() => void act('Updater.Relaunch')}><RotateCcw size={14}/>重启完成更新</button> : <button type="button" className="button button-primary" disabled={pending} onClick={() => void act('Updater.Install')}><Download size={14}/>{downloading ? '正在下载…' : '下载并安装'}</button>}
-      {!installed && <><button type="button" className="button button-secondary" disabled={pending} onClick={() => setHidden(true)}>稍后</button><button type="button" className="icon-button" title="跳过此版本" aria-label="跳过此版本" disabled={pending} onClick={() => void act('Updater.Skip', status.version)}><SkipForward size={15}/></button></>}
-      <button type="button" className="icon-button" title="关闭更新提示" aria-label="关闭更新提示" disabled={pending} onClick={() => setHidden(true)}><X size={15}/></button>
+      {installed ? <Button variant="primary" type="button" className="button button-primary" disabled={pending} onClick={() => void act('Updater.Relaunch')}><RotateCcw size={14}/>重启完成更新</Button> : <Button variant="primary" type="button" className="button button-primary" disabled={pending} onClick={() => void act('Updater.Install')}><Download size={14}/>{downloading ? '正在下载…' : '下载并安装'}</Button>}
+      {!installed && <><Button variant="secondary" type="button" className="button button-secondary" disabled={pending} onClick={() => setHidden(true)}>稍后</Button><Button variant="quiet" iconOnly type="button" className="icon-button" title="跳过此版本" aria-label="跳过此版本" disabled={pending} onClick={() => void act('Updater.Skip', status.version)}><SkipForward size={15}/></Button></>}
+      <Button variant="quiet" iconOnly type="button" className="icon-button" title="关闭更新提示" aria-label="关闭更新提示" disabled={pending} onClick={() => setHidden(true)}><X size={15}/></Button>
     </div>
   </aside>
 }

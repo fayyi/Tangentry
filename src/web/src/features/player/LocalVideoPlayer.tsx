@@ -1,3 +1,4 @@
+import { Button, Select } from '../../components/ui'
 import { AlertCircle, ArrowDownToLine, Film, LoaderCircle, RefreshCw } from 'lucide-react'
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
@@ -80,19 +81,19 @@ export const LocalVideoPlayer = forwardRef<LocalPlayerHandle, {
     if (node && engaged.current && node.readyState >= 1 && !node.error) onProgress?.(node.currentTime, node.duration, immediate)
   }
   return <section className="local-player" aria-labelledby="local-player-title">
-    <div className="player-heading"><h2 id="local-player-title"><Film size={18} aria-hidden="true" />本机视频</h2><div className="player-heading-actions">{source && <button className="icon-button" aria-label="查看下载" title="查看下载" onClick={onDownloads}><ArrowDownToLine size={16}/></button>}<button className="icon-button" aria-label="重新检查本地视频" title="重新检查本地视频" onClick={onRefresh} disabled={loading}><RefreshCw size={16} /></button></div></div>
+    <div className="player-heading"><h2 id="local-player-title"><Film size={18} aria-hidden="true" />本机视频</h2><div className="player-heading-actions">{source && <Button variant="quiet" iconOnly className="icon-button" aria-label="查看下载" title="查看下载" onClick={onDownloads}><ArrowDownToLine size={16}/></Button>}<Button variant="quiet" iconOnly className="icon-button" aria-label="重新检查本地视频" title="重新检查本地视频" onClick={onRefresh} disabled={loading}><RefreshCw size={16} /></Button></div></div>
     {error && <div className="player-error" role="alert"><AlertCircle size={16} /><p>{error} 已列出的本地视频可能不是最新记录。</p></div>}
     {loading && !source && <p className="player-hint" role="status"><LoaderCircle size={16} className="spin" />正在检查已下载视频…</p>}
     {source ? <>
-      {sources.length > 1 && <label className="player-source-label">本地文件<select aria-label="选择本地视频文件" value={source.id} onChange={event => setChosenID(event.target.value)}>{sources.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>}
+      {sources.length > 1 && <label className="player-source-label">本地文件<Select aria-label="选择本地视频文件" value={source.id} onChange={event => setChosenID(event.target.value)}>{sources.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</Select></label>}
       <div className="player-capture-stage">{overlay}
       <video key={`${source.id}:${attempt}`} ref={video} className="local-video" aria-label="本地视频播放器" controls playsInline preload="metadata" src={source.url} onLoadedMetadata={() => { setReady(true); onReady(true); report() }} onTimeUpdate={() => { report(); checkpoint() }} onSeeking={() => { engaged.current = true; report() }} onSeeked={() => { report(); checkpoint(true) }} onPlay={() => { engaged.current = true; onPlaying?.(true); checkpoint(true) }} onPause={() => { onPlaying?.(false); checkpoint(true) }} onEnded={() => { onPlaying?.(false); report(); checkpoint(true) }} onError={() => { setReady(false); onReady(false); onPosition(null); onPlaying?.(false); setPlaybackError(playbackFailure) }}>
         {captionURL && captions && <track key={captionURL} kind="captions" src={captionURL} srcLang={captions.language === 'ai-zh' ? 'zh' : captions.language} label={captions.label} default />}
         当前浏览器无法播放此视频，可在下载页取回文件。
       </video>
       </div>
-      {playbackError && <div className="player-error" role="alert"><AlertCircle size={16} /><div><p>{playbackError}</p><button className="button button-secondary" onClick={() => setAttempt(value => value + 1)}>重新加载文件</button></div></div>}
+      {playbackError && <div className="player-error" role="alert"><AlertCircle size={16} /><div><p>{playbackError}</p><Button variant="secondary" className="button button-secondary" onClick={() => setAttempt(value => value + 1)}>重新加载文件</Button></div></div>}
       {seekError && <p className="player-error" role="alert">{seekError}</p>}
-    </> : !loading && <div className="player-empty"><p>还没有这段视频的已完成下载。</p><p>原视频可以在线打开；需要本机播放时，请主动下载。进入阅读不会自动下载。</p><button className="button button-secondary" onClick={onDownloads}>查看下载</button></div>}
+    </> : !loading && <div className="player-empty"><p>还没有这段视频的已完成下载。</p><p>原视频可以在线打开；需要本机播放时，请主动下载。进入阅读不会自动下载。</p><Button variant="secondary" className="button button-secondary" onClick={onDownloads}>查看下载</Button></div>}
   </section>
 })

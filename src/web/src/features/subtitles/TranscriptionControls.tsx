@@ -1,3 +1,4 @@
+import { Button, Checkbox } from '../../components/ui'
 import { LoaderCircle, Mic, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { request } from '../../shared/api/client'
@@ -55,12 +56,12 @@ export function TranscriptionControls({ contentId, onComplete, video = false }: 
   const provider = activeBackend === 'groq' ? 'Groq' : activeBackend === 'siliconflow' ? '硅基流动' : activeBackend === 'mai' ? 'Microsoft Playground' : 'Cloudflare'
   const allowed = ready && (!cloud || uploadConsent)
   return <div className="transcription-controls" data-transcription-control>
-    <div className="podcast-transcription-tools"><span><Mic size={14}/>{cloud ? `${provider} 转录` : '本机转录'}</span>{busy ? <><p role="status"><LoaderCircle className="spin" size={14}/>{stageText(job!)}</p><button className="button button-secondary" disabled={pending} onClick={() => void cancel()}><X size={14}/>取消转写</button></> : <><button className="button button-secondary" disabled={!allowed || pending} onClick={() => void start(true)}>转写前 1 分钟</button><button className="button button-secondary" disabled={!allowed || pending} onClick={() => void start(false)}>{video || contentId.startsWith('bilibili:') || contentId.startsWith('youtube:') || contentId.startsWith('douyin:') || contentId.startsWith('xiaohongshu:') ? '开始转录视频' : '生成整集字幕'}</button></>}</div>
-    {cloud && !busy && <label className="field-hint transcription-upload-consent"><input type="checkbox" checked={uploadConsent} onChange={event=>setUploadConsent(event.target.checked)}/>允许将本次音频上传至 {provider} 转录；长音频逐段处理，可能消耗额度。</label>}
+    <div className="podcast-transcription-tools"><span><Mic size={14}/>{cloud ? `${provider} 转录` : '本机转录'}</span>{busy ? <><p role="status"><LoaderCircle className="spin" size={14}/>{stageText(job!)}</p><Button variant="secondary" className="button button-secondary" disabled={pending} onClick={() => void cancel()}><X size={14}/>取消转写</Button></> : <><Button variant="secondary" className="button button-secondary" disabled={!allowed || pending} onClick={() => void start(true)}>转写前 1 分钟</Button><Button variant="secondary" className="button button-secondary" disabled={!allowed || pending} onClick={() => void start(false)}>{video || contentId.startsWith('bilibili:') || contentId.startsWith('youtube:') || contentId.startsWith('douyin:') || contentId.startsWith('xiaohongshu:') ? '开始转录视频' : '生成整集字幕'}</Button></>}</div>
+    {cloud && !busy && <label className="field-hint transcription-upload-consent"><Checkbox type="checkbox" checked={uploadConsent} onChange={event=>setUploadConsent(event.target.checked)}/>允许将本次音频上传至 {provider} 转录；长音频逐段处理，可能消耗额度。</label>}
     {cloud && <p className="field-hint">已完成片段保存在本机，再次启动时优先复用。</p>}
     {activeBackend==='siliconflow' && <p className="field-hint">生成的是片段字幕，按切分范围跳转，时间并非逐句对齐；已有精确字幕会保留。</p>}
     {ready === false && <p className="field-hint">请先在<a href="/tools#transcription">字幕转录设置</a>配置转录引擎、模型或云端凭证。</p>}
     {job && finished(job) && <p className="field-hint" role="status">{job.state === 'failed' && job.failedStage && failureStages[job.failedStage] ? `${failureStages[job.failedStage]}：` : ''}{job.error || stages[job.state]}</p>}
-    {error && <p className="subtitle-error" role="alert">{error}<button className="button button-secondary" onClick={() => { setError(''); setAttempt(value => value + 1) }}>重试读取状态</button></p>}
+    {error && <p className="subtitle-error" role="alert">{error}<Button variant="secondary" className="button button-secondary" onClick={() => { setError(''); setAttempt(value => value + 1) }}>重试读取状态</Button></p>}
   </div>
 }

@@ -1,3 +1,4 @@
+import { Button } from '../../../components/ui'
 import { FileText } from 'lucide-react'
 import { GalleryCardFrame } from './GalleryCardFrame'
 import { GalleryCardTitle } from './GalleryCardText'
@@ -8,9 +9,9 @@ import { AuthorLink } from '../CardAuthor'
 export function PdfGalleryCard({ item, origin, discoveryReason, discoveryType, saved, pending, onRead, onSave, onCreator, status, excerpt, discovery = false, onFeedback }: GalleryCardContentProps) {
   return (
     <GalleryCardFrame item={item} origin={origin} discoveryReason={discoveryReason} className="card-pdf" onRead={onRead} status={status} onFeedback={discovery ? onFeedback : undefined}>
-      <button className="modern-card-thumbnail" onClick={() => onRead(item)} aria-label={`打开 PDF ${item.title}`}>
+      <Button variant="quiet" className="modern-card-thumbnail" onClick={() => onRead(item)} aria-label={`打开 PDF ${item.title}`}>
         <div className="thumbnail-placeholder" aria-hidden="true">PDF</div>
-      </button>
+      </Button>
       <div className="modern-card-content">
         <GalleryCardTitle item={item} onRead={onRead} />
         {excerpt}

@@ -1,3 +1,4 @@
+import { Button } from '../../../components/ui'
 import { GalleryCardFrame } from './GalleryCardFrame'
 import { GalleryCardTitle } from './GalleryCardText'
 import { SaveCardAction } from './GalleryCardActions'
@@ -11,9 +12,9 @@ export function ArticleGalleryCard({ item, origin, discoveryReason, discoveryTyp
   const { failed: coverFailed, setFailed: setCoverFailed } = useCardCover(item.thumbnailUrl)
   return (
     <GalleryCardFrame item={item} origin={origin} discoveryReason={discoveryReason} className="card-article" onRead={onRead} status={status} onFeedback={discovery ? onFeedback : undefined}>
-      {item.thumbnailUrl && !coverFailed && <button className="modern-card-thumbnail" onClick={() => onRead(item)} aria-label={`阅读文章 ${item.title}`}>
+      {item.thumbnailUrl && !coverFailed && <Button variant="quiet" className="modern-card-thumbnail" onClick={() => onRead(item)} aria-label={`阅读文章 ${item.title}`}>
         <img src={sourceImageURL(item, item.thumbnailUrl)} alt="" loading="lazy" referrerPolicy="no-referrer" onError={event => retryThroughProxy(event, item, item.thumbnailUrl) || setCoverFailed(true)} />
-      </button>}
+      </Button>}
       <div className="modern-card-content">
         <GalleryCardTitle item={item} onRead={onRead} />
         {excerpt}

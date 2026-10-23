@@ -1,3 +1,4 @@
+import { Button } from '../../components/ui'
 import { Play } from 'lucide-react'
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { BilibiliStreamPlayer } from './BilibiliStreamPlayer'
@@ -27,9 +28,9 @@ export const OnlineVideoPlayer = forwardRef<PlaybackHandle, {
     return true
   } }), [valid, started, platform])
   return <section className="online-player" aria-label="在线播放">
-    {started ? platform === 'youtube' ? <YouTubeEmbedPlayer ref={controlled} id={id} title={title} start={start} onPosition={onPosition} onReady={onReady} onProgress={onProgress} onPlaying={onPlaying}/> : <BilibiliStreamPlayer ref={controlled} id={id} title={title} start={start} captions={captions} onPosition={onPosition} onReady={onReady} onProgress={onProgress} onPlaying={onPlaying} overlay={overlay}/> : <button className="online-play" aria-label={'播放视频 ' + title} onClick={() => setStarted(true)}>
+    {started ? platform === 'youtube' ? <YouTubeEmbedPlayer ref={controlled} id={id} title={title} start={start} onPosition={onPosition} onReady={onReady} onProgress={onProgress} onPlaying={onPlaying}/> : <BilibiliStreamPlayer ref={controlled} id={id} title={title} start={start} captions={captions} onPosition={onPosition} onReady={onReady} onProgress={onProgress} onPlaying={onPlaying} overlay={overlay}/> : <Button variant="quiet" className="online-play" aria-label={'播放视频 ' + title} onClick={() => setStarted(true)}>
       {cover && <img src={cover} alt="" referrerPolicy="no-referrer" />}
       <span><Play size={24} fill="currentColor" />播放视频</span>
-    </button>}
+    </Button>}
   </section>
 })

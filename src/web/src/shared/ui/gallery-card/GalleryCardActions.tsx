@@ -1,3 +1,4 @@
+import { Button } from '../../../components/ui'
 import { Bookmark, Download } from 'lucide-react'
 import type { ContentItem } from '../../api/types'
 
@@ -14,7 +15,7 @@ interface DownloadProps {
 
 export function SaveCardAction({ item, saved, pending, onSave }: SaveProps) {
   return (
-    <button
+    <Button variant="quiet"
       className={`card-action-button ${saved ? 'active' : ''}`}
       onClick={() => onSave(item)}
       disabled={pending}
@@ -22,7 +23,7 @@ export function SaveCardAction({ item, saved, pending, onSave }: SaveProps) {
       title={saved ? '取消收藏' : '收藏'}
     >
       <Bookmark size={18} fill={saved ? 'currentColor' : 'none'} />
-    </button>
+    </Button>
   )
 }
 
@@ -31,9 +32,9 @@ export function VideoCardActions({ item, saved, pending, onSave, onDownload }: S
     <div className="modern-card-actions">
       <SaveCardAction item={item} saved={saved} pending={pending} onSave={onSave} />
       {onDownload && ['bilibili', 'youtube', 'douyin', 'xiaohongshu'].includes(item.platform) && (
-        <button className="card-action-button" onClick={() => onDownload(item)} aria-label="下载" title="下载">
+        <Button variant="quiet" className="card-action-button" onClick={() => onDownload(item)} aria-label="下载" title="下载">
           <Download size={17} />
-        </button>
+        </Button>
       )}
     </div>
   )
@@ -42,15 +43,15 @@ export function VideoCardActions({ item, saved, pending, onSave, onDownload }: S
 export function AudioCardActions({ item, saved, pending, onSave, onDownload }: SaveProps & DownloadProps) {
   return (
     <div className="modern-card-actions">
-      {onDownload && <button className="card-action-button" onClick={() => onDownload(item)} title="下载音频" aria-label={`下载音频 ${item.title}`}><Download size={16} /></button>}
-      <button
+      {onDownload && <Button variant="quiet" className="card-action-button" onClick={() => onDownload(item)} title="下载音频" aria-label={`下载音频 ${item.title}`}><Download size={16} /></Button>}
+      <Button variant="quiet"
         className={`card-action-button ${saved ? 'active' : ''}`}
         onClick={() => onSave(item)}
         disabled={pending}
         aria-label={`${saved ? '取消收藏' : '收藏'} ${item.title}`}
       >
         <Bookmark size={16} fill={saved ? 'currentColor' : 'none'} />
-      </button>
+      </Button>
     </div>
   )
 }

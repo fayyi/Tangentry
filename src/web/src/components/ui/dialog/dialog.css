@@ -1,0 +1,6 @@
+:where(.ui-dialog) { max-width: calc(100vw - 32px); max-height: calc(100dvh - 32px); border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--card); color: var(--ink); box-shadow: var(--shadow-lg); }
+:where(.ui-dialog)::backdrop { background: rgb(0 0 0 / .35); backdrop-filter: blur(3px); }
+:where(.ui-dialog-framed) { width: min(520px, calc(100vw - 32px)); padding: 0; }
+.ui-dialog-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 20px; border-bottom: 1px solid var(--line); }
+.ui-dialog-header h2 { margin: 0; font-size: 16px; }
+.ui-dialog-content { padding: 20px; }

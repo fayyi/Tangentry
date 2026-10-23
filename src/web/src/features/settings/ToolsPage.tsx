@@ -1,20 +1,19 @@
-import { ChevronRight, Eye, Languages, Mic, HardDrive, RotateCcw, UserRound, ShieldCheck } from 'lucide-react'
+import { Eye, Languages, Mic, HardDrive, RotateCcw, UserRound, ShieldCheck } from 'lucide-react'
 import { replacePath } from '../../shared/browser/historyStack'
-import { PageHeader } from '../../shared/ui/PageHeader'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { PlatformCookies } from './PlatformCookies'
-import { YouTubeRecommendations } from './YouTubeRecommendations'
-import { AISettings } from '../ai/AISettings'
-import { TranscriptionSettings } from './TranscriptionSettings'
+import { useEffect, useState } from 'react'
+import { SettingsShell, type SettingsNavItem } from './ui/SettingsShell'
+import './settings-system.css'
 import type { useDownloads } from '../downloads/useDownloads'
-import { GalleryLayoutSettings } from './GalleryLayoutSettings'
-import { FontSettings } from './FontSettings'
 import type { GalleryColumns } from './useGalleryLayout'
 import type { Feed } from '../../shared/api/types'
-import { StorageSettings } from './StorageSettings'
-import { DiscoveryFeedback } from './DiscoveryFeedback'
-import { UpdaterSettings } from './UpdaterSettings'
-import { BackupSettings } from './BackupSettings'
+import { DisplaySettingsPage } from './pages/DisplaySettingsPage'
+import { DiscoverySettingsPage } from './pages/DiscoverySettingsPage'
+import { AccountsSettingsPage } from './pages/AccountsSettingsPage'
+import { TranslationSettingsPage } from './pages/TranslationSettingsPage'
+import { TranscriptionSettingsPage } from './pages/TranscriptionSettingsPage'
+import { StorageSettingsPage } from './pages/StorageSettingsPage'
+import { BackupSettingsPage } from './pages/BackupSettingsPage'
+import { AboutSettingsPage } from './pages/AboutSettingsPage'
 
 type SettingsSection = 'display' | 'accounts' | 'discovery' | 'translation' | 'transcription' | 'storage' | 'backup' | 'about'
 function sectionFromURL(): SettingsSection {
@@ -22,7 +21,7 @@ function sectionFromURL(): SettingsSection {
   return ['display', 'accounts', 'discovery', 'translation', 'transcription', 'storage', 'backup', 'about'].includes(hash) ? hash as SettingsSection : 'display'
 }
 
-export function ToolsPage({ downloads, onCookieChanged, onYouTubeFeed, onDiscover }: {
+export function ToolsPage({ downloads, columns, onColumns, onCookieChanged, onYouTubeFeed, onDiscover }: {
   downloads: ReturnType<typeof useDownloads>
   columns: GalleryColumns
   onColumns: (columns: GalleryColumns) => void
@@ -30,21 +29,13 @@ export function ToolsPage({ downloads, onCookieChanged, onYouTubeFeed, onDiscove
   onYouTubeFeed: (feed: Feed) => void
   onDiscover: () => void
 }) {
+  void columns
+  void onColumns
   const [section, setSection] = useState<SettingsSection>(sectionFromURL)
   const [visited, setVisited] = useState(() => new Set<SettingsSection>([sectionFromURL()]))
-  const categories = useRef<HTMLElement>(null)
-  useLayoutEffect(() => {
-    const reveal = () => {
-      const node = categories.current, selected = node?.querySelector<HTMLElement>('[aria-current="page"]')
-      if (!node || !selected || !matchMedia('(max-width: 760px)').matches) return
-      const container = node.getBoundingClientRect(), target = selected.getBoundingClientRect()
-      if (target.left < container.left) node.scrollLeft -= container.left - target.left
-      else if (target.right > container.right) node.scrollLeft += target.right - container.right
-    }
-    reveal()
-    window.addEventListener('resize', reveal)
-    return () => window.removeEventListener('resize', reveal)
-  }, [section])
+  const [youtubeCookieRevision, setYouTubeCookieRevision] = useState(0)
+  const [modelRevision, setModelRevision] = useState(0)
+
   function selectSection(next: SettingsSection) {
     setSection(next)
     setVisited(current => new Set([...current, next]))
@@ -59,37 +50,29 @@ export function ToolsPage({ downloads, onCookieChanged, onYouTubeFeed, onDiscove
     window.addEventListener('hashchange', update)
     return () => window.removeEventListener('hashchange', update)
   }, [])
-  const [youtubeCookieRevision, setYouTubeCookieRevision] = useState(0)
-  const [modelRevision, setModelRevision] = useState(0)
   function cookiesChanged(platform: string) {
     if (platform === 'youtube') setYouTubeCookieRevision(revision => revision + 1)
     onCookieChanged(platform)
     void downloads.reload()
   }
-  const sections = [
-    { id: 'display' as const, label: '外观', hint: '布局、字体与字号', Icon: Eye },
-    { id: 'accounts' as const, label: '账号与来源', hint: '登录与内容推荐', Icon: UserRound },
-    { id: 'discovery' as const, label: '发现偏好', hint: '管理轻量反馈', Icon: UserRound },
-    { id: 'translation' as const, label: '翻译与摘要', hint: 'AI 翻译与文章摘要', Icon: Languages },
-    { id: 'transcription' as const, label: '字幕转录', hint: '本机或云端识别', Icon: Mic },
-    { id: 'storage' as const, label: '下载与存储', hint: '工具与文件位置', Icon: HardDrive },
-    { id: 'backup' as const, label: '备份与恢复', hint: '目标、快照与恢复', Icon: ShieldCheck },
-    { id: 'about' as const, label: '关于与更新', hint: '版本与自动更新', Icon: RotateCcw },
+  const sections: SettingsNavItem[] = [
+    { id: 'display', group: '体验', label: '外观', hint: '调整阅读方式', icon: <Eye size={16} /> },
+    { id: 'discovery', group: '体验', label: '发现', hint: '管理来源与反馈', icon: <UserRound size={16} /> },
+    { id: 'accounts', group: '连接', label: '账号', hint: '连接内容来源', icon: <UserRound size={16} /> },
+    { id: 'translation', group: '连接', label: '翻译与摘要', hint: '配置模型服务', icon: <Languages size={16} /> },
+    { id: 'transcription', group: '连接', label: '字幕转录', hint: '选择识别方式', icon: <Mic size={16} /> },
+    { id: 'storage', group: '本地数据', label: '下载与存储', hint: '选择文件位置', icon: <HardDrive size={16} /> },
+    { id: 'backup', group: '本地数据', label: '备份与恢复', hint: '执行数据操作', icon: <ShieldCheck size={16} /> },
+    { id: 'about', group: '系统', label: '关于与更新', hint: '检查应用更新', icon: <RotateCcw size={16} /> },
   ]
-  return <>
-    <PageHeader className="settings-page-heading" title="设置" summary="账号与推荐来源、翻译和转录服务、下载与文件位置。更改只保存在这台设备。"/>
-    <div className="settings-layout">
-      <nav ref={categories} className="settings-nav" aria-label="设置类别">{sections.map(({ id, label, hint, Icon }) => <button type="button" key={id} className={section === id ? 'active' : ''} aria-current={section === id ? 'page' : undefined} aria-controls={`settings-${id}`} onClick={() => selectSection(id)}><span className="settings-category-icon" data-category={id}><Icon size={17} strokeWidth={1.7} aria-hidden="true"/></span><span><strong>{label}</strong><small>{hint}</small></span><ChevronRight size={14} className="settings-nav-chevron" aria-hidden="true"/></button>)}</nav>
-      <div className="settings-workspace">
-      <div id="settings-display" className="settings-block" hidden={section !== 'display'}>{visited.has('display') && <><GalleryLayoutSettings/><FontSettings/></>}</div>
-      <div id="settings-storage" className="settings-block" hidden={section !== 'storage'}>{visited.has('storage') && <StorageSettings downloads={downloads} onModelDirectoryChanged={() => setModelRevision(value => value + 1)}/>}</div>
-      <div id="settings-accounts" className="settings-block settings-block-wide" hidden={section !== 'accounts'}>{visited.has('accounts') && <><PlatformCookies onChanged={cookiesChanged} /><YouTubeRecommendations key={youtubeCookieRevision} tools={downloads.tools} onFeed={onYouTubeFeed} onDiscover={onDiscover}/></>}</div>
-      <div id="settings-discovery" className="settings-block settings-block-wide" hidden={section !== 'discovery'}>{visited.has('discovery') && <DiscoveryFeedback/>}</div>
-      <div id="settings-translation" className="settings-block settings-block-wide" hidden={section !== 'translation'}>{visited.has('translation') && <AISettings/>}</div>
-      <div id="settings-transcription" className="settings-block settings-block-wide" hidden={section !== 'transcription'}>{visited.has('transcription') && <TranscriptionSettings key={modelRevision}/>}</div>
-      <div id="settings-backup" className="settings-block settings-block-wide" hidden={section !== 'backup'}>{visited.has('backup') && <BackupSettings/>}</div>
-      <div id="settings-about" className="settings-block settings-block-wide" hidden={section !== 'about'}>{visited.has('about') && <UpdaterSettings/>}</div>
-      </div>
-    </div>
-  </>
+  let content = <DisplaySettingsPage />
+  if (section === 'discovery') content = <DiscoverySettingsPage downloads={downloads} cookieRevision={youtubeCookieRevision} onFeed={onYouTubeFeed} onDiscover={onDiscover} />
+  if (section === 'accounts') content = <AccountsSettingsPage onChanged={cookiesChanged} />
+  if (section === 'translation') content = <TranslationSettingsPage />
+  if (section === 'transcription') content = <TranscriptionSettingsPage revision={modelRevision} />
+  if (section === 'storage') content = <StorageSettingsPage downloads={downloads} onModelDirectoryChanged={() => setModelRevision(value => value + 1)} />
+  if (section === 'backup') content = <BackupSettingsPage />
+  if (section === 'about') content = <AboutSettingsPage />
+
+  return <SettingsShell items={sections} activeId={section} onSelect={next => selectSection(next as SettingsSection)}>{visited.has(section) ? content : null}</SettingsShell>
 }

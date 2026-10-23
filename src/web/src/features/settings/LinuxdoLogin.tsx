@@ -1,3 +1,4 @@
+import { Button, Input } from '../../components/ui'
 import { useEffect, useRef, useState } from 'react'
 import { ExternalLink, LoaderCircle, LogIn, Upload } from 'lucide-react'
 import { request } from '../../shared/api/client'
@@ -71,13 +72,13 @@ export function LinuxdoLogin({ onSuccess, onImportCookie }: { onSuccess: () => v
   const messages: Record<string, string> = { waiting: '在原站登录并确认这次授权。', callback: '粘贴本次授权请求的返回结果。', success: '登录成功，已保存。', expired: '授权已过期，请重新发起。', denied: '授权已取消。', changed: '登录信息已更换，请重新发起。' }
   return <div className="linuxdo-login">
     <div className="linuxdo-login-methods">
-    <button type="button" className="text-button" onClick={importCookie} disabled={pending}><Upload size={14} aria-hidden="true"/>导入 Cookie</button>
-    <button type="button" className="text-button" onClick={() => void start()} disabled={pending}><LogIn size={14} aria-hidden="true"/>授权登录</button>
+    <Button variant="quiet" type="button" className="text-button" onClick={importCookie} disabled={pending}><Upload size={14} aria-hidden="true"/>导入 Cookie</Button>
+    <Button variant="quiet" type="button" className="text-button" onClick={() => void start()} disabled={pending}><LogIn size={14} aria-hidden="true"/>授权登录</Button>
     </div>
     <details className="settings-details linuxdo-login-alternative">
       <summary>其他方式</summary>
       <p>浏览器回调适合能读取原站请求的用户。</p>
-      <button type="button" className="text-button" onClick={() => void start('browser')} disabled={pending}><ExternalLink size={14} aria-hidden="true"/>浏览器回调</button>
+      <Button variant="quiet" type="button" className="text-button" onClick={() => void start('browser')} disabled={pending}><ExternalLink size={14} aria-hidden="true"/>浏览器回调</Button>
     </details>
     {open && <div className="cookie-editor">
       <p role="status">{pending ? '正在准备授权…' : session ? messages[session.status] ?? '' : ''}</p>
@@ -95,15 +96,15 @@ export function LinuxdoLogin({ onSuccess, onImportCookie }: { onSuccess: () => v
           <p>你发来的 linux.do/user-api-key/new 链接只是发起授权，不能直接完成登录。若请求被拒绝或没有返回结果，请改用 Cookie。</p>
         </details>
         <a className="button button-secondary" href={session.url} target="_blank" rel="noopener noreferrer"><ExternalLink size={14} aria-hidden="true"/>前往原站</a>
-        <label className="cookie-value-label">Linux.do 授权结果<input className="settings-input" type="password" autoComplete="off" spellCheck={false} value={callback} maxLength={8192} disabled={pending} placeholder="redirect_url 或完整 JSON" onChange={event => setCallback(event.target.value)}/></label>
+        <label className="cookie-value-label">Linux.do 授权结果<Input className="settings-input" type="password" autoComplete="off" spellCheck={false} value={callback} maxLength={8192} disabled={pending} placeholder="redirect_url 或完整 JSON" onChange={event => setCallback(event.target.value)}/></label>
         <p className="field-hint">仅用于本次登录，请勿分享给他人。</p>
-        <button className="button button-primary" disabled={pending || !callback.trim()}>完成登录</button>
+        <Button variant="primary" className="button button-primary" disabled={pending || !callback.trim()}>完成登录</Button>
       </form>}
       {pending && <LoaderCircle size={16} className="spin" aria-hidden="true"/>}
       {error && <p role="alert">{error}</p>}
-      {session?.status !== 'success' && <button type="button" className="text-button" onClick={importCookie} disabled={pending}><Upload size={14} aria-hidden="true"/>改用 Cookie</button>}
-      {session && ['expired', 'denied', 'blocked', 'changed'].includes(session.status) && <button type="button" className="text-button" onClick={() => void start(mode)}>重新授权</button>}
-      <button type="button" className="text-button" onClick={close}>关闭</button>
+      {session?.status !== 'success' && <Button variant="quiet" type="button" className="text-button" onClick={importCookie} disabled={pending}><Upload size={14} aria-hidden="true"/>改用 Cookie</Button>}
+      {session && ['expired', 'denied', 'blocked', 'changed'].includes(session.status) && <Button variant="quiet" type="button" className="text-button" onClick={() => void start(mode)}>重新授权</Button>}
+      <Button variant="quiet" type="button" className="text-button" onClick={close}>关闭</Button>
     </div>}
   </div>
 }
