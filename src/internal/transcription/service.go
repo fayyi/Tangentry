@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"tangentry/internal/subtitles"
 )
 
 var ErrInvalid = errors.New("invalid transcription input")
@@ -18,8 +19,10 @@ var ErrNotFound = errors.New("transcription not found")
 var ErrUploadConsent = fmt.Errorf("transcription provider upload consent: %w", ErrInvalid)
 
 type task struct {
-	job    Job
-	cancel context.CancelFunc
+	job      Job
+	cancel   context.CancelFunc
+	track    subtitles.Track
+	hasTrack bool
 }
 type Service struct {
 	mu      sync.Mutex
@@ -58,6 +61,25 @@ func NewWithStore(store ConfigStore, initial Config, engine Engine, resolve Sour
 }
 func (s *Service) Status() Status {
 	return s.status(s.Configuration())
+}
+
+// StreamingReady reports whether the current configured engine can accept the
+// short local PCM frames used by automatic subtitles. Only whisper.cpp has a
+// streaming adapter today; other local engines remain available through the
+// established batch transcription flow.
+func (s *Service) StreamingReady() bool {
+	s.mu.Lock()
+	if s.closed || s.config.Cloud() || s.config.Backend != "whisper.cpp" {
+		s.mu.Unlock()
+		return false
+	}
+	config := s.config
+	engine := s.engine
+	s.mu.Unlock()
+	if _, ok := engine.(StreamingEngine); !ok {
+		return false
+	}
+	return engine.Status(config).Ready
 }
 func (s *Service) status(c Config) Status {
 	result := s.engine.Status(c)

@@ -256,7 +256,7 @@ set -a; source .env; set +a
 | `TANGENTRY_FFMPEG_PATH` | PATH 中的 `ffmpeg` | 自定义 FFmpeg 路径 |
 | `TANGENTRY_TOOLS_DIR` | 空 | 设置后像桌面版一样在首次使用时下载并校验 yt-dlp / Deno |
 | `TANGENTRY_BILIBILI_COOKIE_FILE` | 空 | Netscape 格式的 B站 Cookie 文件（推荐改用应用内扫码登录） |
-| `TANGENTRY_WHISPER_PATH` / `TANGENTRY_WHISPER_MODEL` | 空 | whisper.cpp 可执行文件与模型 |
+| `TANGENTRY_WHISPER_PATH` / `TANGENTRY_WHISPER_SERVER_PATH` / `TANGENTRY_WHISPER_MODEL` | 空 | whisper.cpp CLI、常驻实时服务与模型 |
 | `TANGENTRY_FASTER_WHISPER_PYTHON` | 空 | 安装了 faster-whisper 的 Python 解释器 |
 | `TANGENTRY_WHISPER_MODELS_DIR` | 空 | 模型目录 |
 

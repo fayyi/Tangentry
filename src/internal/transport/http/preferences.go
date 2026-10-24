@@ -52,6 +52,10 @@ func (h *Handler) preferencePut(w http.ResponseWriter, r *http.Request) {
 		write(w, http.StatusBadRequest, apiError{"invalid_theme", "请选择浅色、深色或跟随系统。"})
 		return
 	}
+	if key == preferences.AutomaticSubtitlesKey && input.Value != "true" && input.Value != "false" {
+		write(w, http.StatusBadRequest, apiError{"invalid_preference", "自动字幕偏好值无效。"})
+		return
+	}
 	if input.Revision < 1 {
 		input.Revision = 1
 	}
@@ -67,6 +71,9 @@ func (h *Handler) preferenceValue(r *http.Request, key string) (string, bool, er
 		if key == preferences.ThemeKey {
 			return string(preferences.ThemeSystem), false, nil
 		}
+		if key == preferences.AutomaticSubtitlesKey {
+			return "true", false, nil
+		}
 		return "", false, nil
 	}
 	value, saved, err := h.preferences.Get(r.Context(), key)
@@ -79,6 +86,9 @@ func (h *Handler) preferenceValue(r *http.Request, key string) (string, bool, er
 			return string(theme), saved, nil
 		}
 		return string(preferences.ThemeSystem), false, nil
+	}
+	if key == preferences.AutomaticSubtitlesKey && value != "true" && value != "false" {
+		return "true", false, nil
 	}
 	return value, saved, nil
 }

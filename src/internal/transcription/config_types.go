@@ -85,6 +85,13 @@ type Engine interface {
 	Transcribe(context.Context, Config, Audio, int, func(string)) (subtitles.Track, error)
 }
 
+// StreamingEngine is an optional local-only extension used by automatic
+// subtitles. PCM chunks are short and already decoded; implementations must
+// never send them to a remote provider.
+type StreamingEngine interface {
+	RecognizePCM(context.Context, Config, []byte, float64) (subtitles.Track, error)
+}
+
 // SavedSubtitles is the persistence capability needed by a transcription job.
 // Keeping this port here prevents the job coordinator from depending on the
 // concrete subtitle service implementation.
@@ -102,6 +109,7 @@ type Job struct {
 	FailedStage string `json:"failedStage,omitempty"`
 	ErrorCode   string `json:"errorCode,omitempty"`
 	Backend     string `json:"backend,omitempty"`
+	Automatic   bool   `json:"automatic,omitempty"`
 	// Received and Total report a first-use model download.
 	Received int64 `json:"received,omitempty"`
 	Total    int64 `json:"total,omitempty"`

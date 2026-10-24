@@ -21,10 +21,11 @@ import (
 // developer-installed binaries and models usable without settings changes.
 func newTranscription(dataDir string, configuration config.Config, p *platforms, option Options, resolve func(context.Context, string) (transcription.Audio, error), saved *subtitles.SavedService) (*transcription.Service, *transcription.ModelDownloads, string, error) {
 	binary := envOr("TANGENTRY_WHISPER_PATH", "whisper-cli")
+	streamingBinary := envOr("TANGENTRY_WHISPER_SERVER_PATH", "whisper-server")
 	modelDir := envOr("TANGENTRY_WHISPER_MODELS_DIR", filepath.Join(dataDir, "models"))
 	model := envOr("TANGENTRY_WHISPER_MODEL", filepath.Join(modelDir, "ggml-base.bin"))
 	installer := &tools.ModelInstaller{Root: modelDir, BundledModel: os.Getenv("TANGENTRY_WHISPER_MODEL")}
-	var engine transcription.Engine = &tools.Transcriber{ModelDir: modelDir, FFmpeg: configuration.FFmpegPath, YTDLP: configuration.YTDLPPath, HTTP: p.network.public, CacheDir: filepath.Join(dataDir, "transcription-cache"), Models: installer, ResolveYTDLP: p.network.toolkit.YTDLP}
+	var engine transcription.Engine = &tools.Transcriber{ModelDir: modelDir, FFmpeg: configuration.FFmpegPath, YTDLP: configuration.YTDLPPath, StreamingBinary: streamingBinary, HTTP: p.network.public, CacheDir: filepath.Join(dataDir, "transcription-cache"), Models: installer, ResolveYTDLP: p.network.toolkit.YTDLP}
 	if option.TranscriptionEngine != nil {
 		engine = option.TranscriptionEngine
 	}

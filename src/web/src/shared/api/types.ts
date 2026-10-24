@@ -269,7 +269,7 @@ export interface SubtitleTrack {
   language: string
   label: string
   automatic: boolean
-  source?: 'cc' | 'ai' | 'yt-dlp' | 'youtube'
+  source?: 'cc' | 'ai' | 'yt-dlp' | 'youtube' | 'automatic'
   translated?: boolean
   sourceLanguage?: string
   mismatch?: boolean
@@ -280,7 +280,7 @@ export interface SubtitleLanguage {
   language: string
   label: string
   automatic: boolean
-  source?: 'cc' | 'ai' | 'yt-dlp' | 'youtube'
+  source?: 'cc' | 'ai' | 'yt-dlp' | 'youtube' | 'automatic'
   hasUrl?: boolean
   translated?: boolean
   sourceLanguage?: string

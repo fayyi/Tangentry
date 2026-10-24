@@ -10,6 +10,7 @@ import (
 	articleadapter "tangentry/internal/adapters/articles"
 	"tangentry/internal/ai"
 	"tangentry/internal/articles"
+	"tangentry/internal/automaticsubtitles"
 	"tangentry/internal/backup"
 	"tangentry/internal/config"
 	"tangentry/internal/content"
@@ -28,17 +29,18 @@ import (
 
 // apiBundle contains long-lived domain services, separate from external clients.
 type apiBundle struct {
-	content           *content.Service
-	articles          *articles.Service
-	recommendations   *recommender
-	discoveryBatch    *discovery.BatchService
-	discoveryFeedback *discovery.FeedbackService
-	sources           *subscriptions.Service
-	downloads         *downloads.Service
-	transcription     *transcription.Service
-	modelDownloads    *transcription.ModelDownloads
-	modelDir          string
-	api               apiServices
+	content            *content.Service
+	articles           *articles.Service
+	recommendations    *recommender
+	discoveryBatch     *discovery.BatchService
+	discoveryFeedback  *discovery.FeedbackService
+	sources            *subscriptions.Service
+	downloads          *downloads.Service
+	transcription      *transcription.Service
+	automaticSubtitles *automaticsubtitles.Service
+	modelDownloads     *transcription.ModelDownloads
+	modelDir           string
+	api                apiServices
 }
 
 type apiServices struct {
@@ -117,6 +119,14 @@ func wireFeatures(dataDir string, configuration config.Config, option Options, r
 	}
 	started.add(speech.Close)
 	started.add(modelDownloads.Close)
+	automatic := automaticsubtitles.New(speech, savedCaptions, store)
+	// Automatic subtitles are local-only. Do not advertise a streaming
+	// recognizer while the configured transcription backend would require a
+	// remote upload; the session then rejects the request before accepting PCM.
+	if !speech.Status().Config.Cloud() {
+		automatic.SetStreamingRecognizer(speech)
+	}
+	started.add(automatic.Close)
 
 	var favoriteRemote favoritesync.Remote = p.media.bilibili
 	if option.FavoritesRemote != nil {
@@ -170,7 +180,7 @@ func wireFeatures(dataDir string, configuration config.Config, option Options, r
 
 	return &apiBundle{
 		content: contentService, articles: articles.New(store, &articleadapter.Extractor{HTTP: p.network.public}), sources: sources,
-		recommendations: recommendations, discoveryBatch: discoveryBatch, discoveryFeedback: discoveryFeedback, downloads: processing, transcription: speech, modelDownloads: modelDownloads, modelDir: modelDir,
+		recommendations: recommendations, discoveryBatch: discoveryBatch, discoveryFeedback: discoveryFeedback, downloads: processing, transcription: speech, automaticSubtitles: automatic, modelDownloads: modelDownloads, modelDir: modelDir,
 		api: apiServices{
 			ai: languageAI, compatibility: compatibility, favorites: favorites,
 			groupService: subscriptions.NewGroupService(store), inbox: inboxService, savedViews: savedViews,

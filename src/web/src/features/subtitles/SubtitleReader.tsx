@@ -1,6 +1,6 @@
 import { Button, Checkbox, Input, Select } from '../../components/ui'
 import type { SubtitleAssistance } from '../../shared/ui/subtitleAssistance'
-import { ArrowDownToLine, Captions, ExternalLink, LoaderCircle, Search, X, HardDrive, Save, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, SlidersHorizontal, Repeat2, StickyNote, Quote } from 'lucide-react'
+import { ArrowDownToLine, Captions, ExternalLink, LoaderCircle, Search, X, HardDrive, Save, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, SlidersHorizontal, Repeat2, StickyNote, Quote, RefreshCw } from 'lucide-react'
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { ContentItem, SubtitleAvailability, SubtitleCue, SubtitleLanguage, SubtitleTrack, SubtitleReference } from '../../shared/api/types'
 import { selectedSubtitleAvailability, subtitleDocumentMessage, subtitlePartMessage } from './subtitleAvailability'
@@ -16,6 +16,7 @@ import { subtitleTrackHash } from '../../shared/media/subtitleSource'
 import { readExcerptRadius, rememberExcerptRadius, subtitleExcerpt, type ExcerptRadius } from './subtitleExcerpt'
 import { useSubtitleExport } from './useSubtitleExport'
 import { highlightMatch, timestamp } from './subtitlePresentation'
+import { useAutomaticSubtitles } from './useAutomaticSubtitles'
 
 const emptySubtitleLanguages: SubtitleLanguage[] = []
 
@@ -51,10 +52,10 @@ function nativePlatformSourceDescription(track: SubtitleTrack, platform: 'bilibi
   return `${platformSourceLabel(track, platform)}提供的${language}字幕`
 }
 
-export function SubtitleReader({ item, source = 'bilibili', position = null, onSeek, onTrackChange, onPlatformLanguagesChange, onAvailabilityChange, assistance, onNoteAt }: {
-  item: Pick<ContentItem, 'platformId' | 'url'> & Partial<Pick<ContentItem,'kind' | 'title' | 'author'>>; source?: 'bilibili' | 'youtube' | 'podcast' | 'local'; onNoteAt?: (position: number, reference?: SubtitleReference) => void
+export function SubtitleReader({ item, source = 'bilibili', position = null, ended = false, onSeek, onTrackChange, onPlatformLanguagesChange, onAvailabilityChange, assistance, onNoteAt, audioStream }: {
+  item: Pick<ContentItem, 'platformId' | 'url'> & Partial<Pick<ContentItem,'kind' | 'title' | 'author' | 'durationSeconds'>>; source?: 'bilibili' | 'youtube' | 'podcast' | 'local'; onNoteAt?: (position: number, reference?: SubtitleReference) => void
   assistance?: SubtitleAssistance
-  position?: number | null; onSeek?: (position: number) => void; onTrackChange?: (track: SubtitleTrack | null) => void; onPlatformLanguagesChange?: (languages: SubtitleLanguage[]) => void; onAvailabilityChange?: (status: SubtitleAvailability | 'available' | 'login_required' | null) => void
+  position?: number | null; ended?: boolean; onSeek?: (position: number) => void; onTrackChange?: (track: SubtitleTrack | null) => void; onPlatformLanguagesChange?: (languages: SubtitleLanguage[]) => void; onAvailabilityChange?: (status: SubtitleAvailability | 'available' | 'login_required' | null) => void; audioStream?: MediaStream | null
 }) {
   const subtitles = useSubtitles(item.platformId, source)
   const { playing } = useReaderPlayback()
@@ -83,6 +84,9 @@ export function SubtitleReader({ item, source = 'bilibili', position = null, onS
   const [hideText, setHideText] = useState(false)
   const [excerptRadius, setExcerptRadius] = useState<ExcerptRadius>(readExcerptRadius)
   const [excerptError, setExcerptError] = useState('')
+  const [automaticResetting, setAutomaticResetting] = useState(false)
+  const [automaticResetError, setAutomaticResetError] = useState('')
+  const [automaticResetConfirm, setAutomaticResetConfirm] = useState(false)
   const loopRequested = useRef(false)
   const list = useRef<HTMLOListElement>(null)
   const doc = subtitles.document
@@ -97,12 +101,49 @@ export function SubtitleReader({ item, source = 'bilibili', position = null, onS
     ? subtitles.saved.find(candidate => candidate.track.language === selectedLanguage)?.track
     : doc?.tracks.find(candidate => candidate.language === selectedLanguage)
   const sourceTrack = sourceTrackOverride ?? loadedSourceTrack ?? (!selectedLanguage ? doc?.tracks.reduce<SubtitleTrack | undefined>((best, candidate) => !best || subtitlePriority(candidate) < subtitlePriority(best) ? candidate : best, undefined) : undefined)
+  const automaticContentID = source === 'podcast' || source === 'local' ? item.platformId : `${source}:${item.platformId}`
+  const automatic = useAutomaticSubtitles({
+    contentId: automaticContentID,
+    enabled: (item.kind === 'audio' || item.kind === 'video') && !subtitles.loading,
+    hasFormalTrack: Boolean(sourceTrack?.cues.length || subtitles.saved.some(value => value.track.cues.length)),
+    playing,
+    ended,
+    position,
+    duration: item.kind === 'audio' || item.kind === 'video' ? item.durationSeconds : undefined,
+    audioStream,
+    onFinalized: () => { void subtitles.reloadSaved() },
+  })
+  const regenerateAutomatic = async () => {
+    if (!track?.automatic || track.source !== 'automatic' || automaticResetting) return
+    setAutomaticResetting(true)
+    setAutomaticResetError('')
+    try {
+      const savedAutomatic = subtitles.saved.find(value => value.track.language === track.language)
+      if (savedAutomatic && subtitles.origin === 'saved' && !await subtitles.remove(track.language)) return
+      await automatic.reset()
+      setSourceTrackOverride(null)
+      setManualSelection(false)
+      setLanguage('')
+      setVisibleCount(200)
+    } catch (cause) {
+      setAutomaticResetError(cause instanceof Error ? cause.message : '自动字幕未能重新生成。')
+    } finally {
+      setAutomaticResetting(false)
+    }
+  }
   const desiredNative = manualSelection ? undefined : targetCandidate
   const nativeRead = resolveNativeSubtitleTarget(desiredNative && subtitles.origin === 'platform' ? desiredNative : undefined, doc?.tracks ?? [], subtitles.languageRead, sourceTrack)
   const nativeLoaded = nativeRead.track
-  const track = nativeLoaded ?? (nativeRead.failed ? sourceTrack : doc?.tracks.find(candidate => candidate.language === displayLanguage) ?? sourceTrack)
+  // A running automatic session is the freshest source of captions. Keep it
+  // ahead of platform/saved tracks so an older local copy cannot hide new
+  // draft cues while recognition is still in progress. Once the session is
+  // terminal, the saved track becomes authoritative again after reloadSaved.
+  const automaticLive = automatic.session && ['preparing', 'streaming', 'finalizing'].includes(automatic.session.state)
+    ? automatic.track
+    : null
+  const track = automaticLive ?? nativeLoaded ?? (nativeRead.failed ? sourceTrack : doc?.tracks.find(candidate => candidate.language === displayLanguage) ?? sourceTrack) ?? automatic.track
   const nativeSingleLanguage = Boolean(nativeLoaded && desiredNative)
-  const visibleChoices = useMemo(() => availableSubtitleLanguages(choices, nativeRead.failed ? desiredNative?.language : undefined), [choices, nativeRead.failed, desiredNative?.language])
+  const visibleChoices = useMemo(() => availableSubtitleLanguages(choices as SubtitleLanguage[], nativeRead.failed ? desiredNative?.language : undefined), [choices, nativeRead.failed, desiredNative?.language])
   const trackHash = useMemo(() => track ? subtitleTrackHash(track) : '', [track])
   const sourceTrackHash = useMemo(() => sourceTrack ? subtitleTrackHash(sourceTrack) : '', [sourceTrack])
   useEffect(() => { (onPlatformLanguagesChange ?? assistance?.onPlatformLanguagesChange)?.(platformChoices, Boolean(doc), manualSelection) }, [platformChoices, onPlatformLanguagesChange, assistance?.onPlatformLanguagesChange, doc, manualSelection])
@@ -117,7 +158,7 @@ export function SubtitleReader({ item, source = 'bilibili', position = null, onS
     selectExportMode,
     exportSRT,
     exportDocument,
-  } = useSubtitleExport({ item, source, track, translated, hasTranslations, translationsComplete })
+  } = useSubtitleExport({ item, source, track: track ?? undefined, translated, hasTranslations, translationsComplete })
   const cueIndices = useMemo(() => new Map(track?.cues.map((cue, index) => [cue, index]) ?? []), [track])
   const atOriginal = (seconds: number) => source === 'podcast' || source === 'local' ? item.url : source === 'youtube' ? `https://www.youtube.com/watch?v=${encodeURIComponent(item.platformId)}&t=${Math.floor(seconds)}s` : `${item.url.split('?')[0]}?p=1&t=${Math.floor(seconds)}`
   const filter = query.trim().toLocaleLowerCase()
@@ -155,7 +196,12 @@ export function SubtitleReader({ item, source = 'bilibili', position = null, onS
     }
   }
 
-  useEffect(() => { onTrackChange?.(sourceTrack ?? null) }, [sourceTrack, onTrackChange])
+  useEffect(() => { onTrackChange?.(track ?? null) }, [track, onTrackChange])
+  useEffect(() => {
+    if (subtitles.origin !== 'platform' || !subtitles.localKnown || subtitles.pending || !sourceTrack?.cues.length) return
+    if (subtitles.saved.some(value => value.track.language === sourceTrack.language)) return
+    void subtitles.save(sourceTrack)
+  }, [sourceTrack, subtitles.origin, subtitles.localKnown, subtitles.pending, subtitles.saved, subtitles.save])
   const availability = selectedSubtitleAvailability(doc, sourceTrack, subtitles.origin)
   useEffect(() => { onAvailabilityChange?.(availability) }, [availability, onAvailabilityChange])
   useEffect(() => () => onTrackChange?.(null), [onTrackChange])
@@ -241,6 +287,8 @@ export function SubtitleReader({ item, source = 'bilibili', position = null, onS
         {subtitles.loading ? <Button variant="secondary" className="button button-secondary" onClick={subtitles.cancel}><X size={15} />取消获取</Button> : <Button variant="secondary" className="button button-secondary" disabled={subtitles.pending} onClick={() => { setConfirmSave(null); setDeleteLanguage(null); setVisibleCount(200); void subtitles.read() }}>{doc || subtitles.error ? '重新获取字幕' : '读取字幕'}</Button>}
         <div className="saved-subtitle-tools"><span><HardDrive size={14}/>{subtitles.localLoading ? '正在读取本机字幕' : !subtitles.localKnown ? '本机字幕状态未知' : subtitles.origin === 'saved' && subtitles.saved.length ? '正在阅读本机字幕' : `已保存 ${subtitles.saved.length} 种语言`}</span>{subtitles.origin !== 'saved' && subtitles.saved.length > 0 && <Button variant="secondary" className="button button-secondary" disabled={subtitles.pending} onClick={() => { setVisibleCount(200); subtitles.useSaved() }}>使用本机字幕</Button>}<Button variant="secondary" className="button button-secondary" disabled={subtitles.localLoading || subtitles.pending} onClick={() => { setConfirmSave(null); setDeleteLanguage(null); void subtitles.reloadSaved() }}>重新读取本机字幕</Button></div>
         {track && <div className="saved-subtitle-actions"><Button variant="secondary" className="button button-secondary" onClick={() => exportSRT()}><ArrowDownToLine size={15}/>导出 SRT</Button>{subtitles.origin === 'platform' ? <Button variant="secondary" className="button button-secondary" disabled={!subtitles.localKnown || subtitles.loading || subtitles.pending} onClick={() => { setDeleteLanguage(null); const existing = subtitles.saved.some(value => value.track.language === track.language); if (existing) setConfirmSave(track); else void subtitles.save(track) }}><Save size={15}/>{subtitles.pending ? '正在保存' : '保存此语言到本机'}</Button> : <Button variant="secondary" className="button button-secondary" disabled={!subtitles.localKnown || subtitles.pending || subtitles.localLoading} onClick={() => { setConfirmSave(null); setDeleteLanguage(track.language) }}>移除此语言的本机字幕</Button>}</div>}
+        {track?.automatic && track.source === 'automatic' && <div className="saved-subtitle-actions"><Button variant="secondary" className="button button-secondary" disabled={automaticResetting || subtitles.pending || subtitles.localLoading} onClick={() => setAutomaticResetConfirm(true)}><RefreshCw size={15}/>{automaticResetting ? '正在准备重新生成' : '重新生成自动字幕'}</Button><span className="field-hint">当前版本会保留在字幕历史中。</span></div>}
+        {automaticResetConfirm && <div className="saved-subtitle-confirm"><p>重新生成会移除当前显示版本，并在下一次播放时重新识别。原版本会留在字幕历史中。</p><Button variant="secondary" className="button button-secondary" disabled={automaticResetting} onClick={() => setAutomaticResetConfirm(false)}>暂不重新生成</Button><Button variant="primary" className="button button-primary" disabled={automaticResetting} onClick={() => { setAutomaticResetConfirm(false); void regenerateAutomatic() }}>确认重新生成</Button></div>}
         {track && hasTranslations && <div className="saved-subtitle-actions"><Button variant="secondary" className="button button-secondary" title="未翻译段落保留原文" onClick={() => exportSRT('bilingual')}><ArrowDownToLine size={15}/>导出双语 SRT</Button><Button variant="secondary" className="button button-secondary" disabled={!translationsComplete} title={translationsComplete ? '导出完整中文译文' : '全部段落翻译完成后可导出'} onClick={() => exportSRT('translated')}><ArrowDownToLine size={15}/>导出译文 SRT</Button></div>}
         {track && <div className="subtitle-document-export">
           <div className="subtitle-export-modes" role="group" aria-label="文稿内容">
@@ -272,6 +320,9 @@ export function SubtitleReader({ item, source = 'bilibili', position = null, onS
     {track?.mismatch && <div className="subtitle-empty subtitle-mismatch-note" role="status"><p>这条 AI 字幕与标题相关性较低，可能只是标题未在开头口播；字幕仍可查看和用于摘要。</p><Button variant="quiet" type="button" className="text-button" onClick={revealTranscription}>改用转录</Button></div>}
     </div>
     {!doc && !subtitles.loading && !subtitles.error && <p className="subtitle-note">{source==='local'?`读取已保存的本机字幕。当前${item.platformId.startsWith('xiaohongshu:')?'小红书':'抖音'}适配不读取平台原字幕，可主动转录。`:'读取平台已有字幕，视频和音频无需保存到本机。'}</p>}
+    {automatic.session?.state === 'preparing' || automatic.session?.state === 'streaming' || automatic.session?.state === 'finalizing' ? <p className="subtitle-note" role="status">正在自动生成字幕…{automatic.session.capability === 'batch-only' ? '当前播放器无法提供实时音频，将在识别完成后生成完整稿。' : automatic.session.state === 'finalizing' ? '正在整理完整稿。' : '播放会继续进行，字幕会随识别结果更新。'}</p> : null}
+    {automatic.error && <p className="subtitle-error" role="alert">{automatic.error} 可在字幕设置中改用手动转录。</p>}
+    {automaticResetError && <p className="subtitle-error" role="alert">{automaticResetError}</p>}
     {subtitles.loading && <p className="subtitle-note" role="status"><LoaderCircle size={16} className="spin" />{subtitles.localLoading ? '正在读取本机字幕…' : '正在获取已有字幕…'}</p>}
     {subtitles.localError && <p className="subtitle-error" role="alert">{subtitles.localError} {source==='local'?'请重试读取本机字幕。':'本机保存暂不可用，平台字幕仍可读取。'}</p>}
     {subtitles.writeError && <p className="subtitle-error" role="alert">{subtitles.writeError} 已确认记录仍保留，请先重新读取本机字幕。</p>}

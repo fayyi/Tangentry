@@ -17,8 +17,8 @@ export const LocalVideoPlayer = forwardRef<LocalPlayerHandle, {
   sources: LocalVideoSource[]; loading: boolean; error: string; captions: SubtitleTrack | null
   onPosition: (seconds: number | null) => void; onReady: (ready: boolean) => void
   onDownloads: () => void; onRefresh: () => void
-  onProgress?: (position: number, duration: number, immediate?: boolean) => void; onPlaying?: (playing: boolean) => void; overlay?: ReactNode
-}>(function LocalVideoPlayer({ sources, loading, error, captions, onPosition, onReady, onDownloads, onRefresh, onProgress, onPlaying, overlay }, ref) {
+  onProgress?: (position: number, duration: number, immediate?: boolean) => void; onPlaying?: (playing: boolean) => void; onEnded?: () => void; onAudioStreamChange?: (stream: MediaStream | null) => void; overlay?: ReactNode
+}>(function LocalVideoPlayer({ sources, loading, error, captions, onPosition, onReady, onDownloads, onRefresh, onProgress, onPlaying, onEnded, onAudioStreamChange, overlay }, ref) {
   const video = useRef<HTMLVideoElement>(null)
   const engaged = useRef(false)
   const [chosenID, setChosenID] = useState('')
@@ -43,15 +43,17 @@ export const LocalVideoPlayer = forwardRef<LocalPlayerHandle, {
       setReady(true)
       onReady(true)
       onPosition(node.currentTime)
+      try { onAudioStreamChange?.((node as HTMLVideoElement & { captureStream?: () => MediaStream }).captureStream?.() ?? null) } catch { onAudioStreamChange?.(null) }
     }
     if (node?.error && source) setPlaybackError(playbackFailure)
     return () => {
       if (node && engaged.current && node.readyState >= 1 && !node.error) onProgress?.(node.currentTime, node.duration, true)
       node?.pause()
       if (node) { node.removeAttribute('src'); node.load() }
+      onAudioStreamChange?.(null)
       onReady(false); onPosition(null)
     }
-  }, [source?.id, attempt, onPosition, onReady, onProgress, onPlaying])
+  }, [source?.id, attempt, onPosition, onReady, onProgress, onPlaying, onAudioStreamChange])
 
   useEffect(() => {
     if (!captions) { setCaptionURL(''); return }
@@ -60,7 +62,10 @@ export const LocalVideoPlayer = forwardRef<LocalPlayerHandle, {
     return () => URL.revokeObjectURL(url)
   }, [captions])
 
-  useImperativeHandle(ref, () => ({ getSourceID: () => source?.id ?? null, captureFrame: () => captureVideoFrame(ready ? video.current : null), getPosition: () => { const node = video.current; return node && ready && !node.error ? node.currentTime : null }, seek: seconds => {
+  useImperativeHandle(ref, () => ({ getSourceID: () => source?.id ?? null, getAudioStream: () => {
+    const node = video.current as (HTMLVideoElement & { captureStream?: () => MediaStream }) | null
+    try { return node?.captureStream?.() ?? null } catch { return null }
+  }, captureFrame: () => captureVideoFrame(ready ? video.current : null), getPosition: () => { const node = video.current; return node && ready && !node.error ? node.currentTime : null }, seek: seconds => {
     const node = video.current
     if (!node || !ready || !Number.isFinite(seconds) || seconds < 0) return false
     if (Number.isFinite(node.duration) && seconds > node.duration) {
@@ -87,7 +92,7 @@ export const LocalVideoPlayer = forwardRef<LocalPlayerHandle, {
     {source ? <>
       {sources.length > 1 && <label className="player-source-label">本地文件<Select aria-label="选择本地视频文件" value={source.id} onChange={event => setChosenID(event.target.value)}>{sources.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</Select></label>}
       <div className="player-capture-stage">{overlay}
-      <video key={`${source.id}:${attempt}`} ref={video} className="local-video" aria-label="本地视频播放器" controls playsInline preload="metadata" src={source.url} onLoadedMetadata={() => { setReady(true); onReady(true); report() }} onTimeUpdate={() => { report(); checkpoint() }} onSeeking={() => { engaged.current = true; report() }} onSeeked={() => { report(); checkpoint(true) }} onPlay={() => { engaged.current = true; onPlaying?.(true); checkpoint(true) }} onPause={() => { onPlaying?.(false); checkpoint(true) }} onEnded={() => { onPlaying?.(false); report(); checkpoint(true) }} onError={() => { setReady(false); onReady(false); onPosition(null); onPlaying?.(false); setPlaybackError(playbackFailure) }}>
+      <video key={`${source.id}:${attempt}`} ref={video} className="local-video" aria-label="本地视频播放器" controls playsInline preload="metadata" src={source.url} onLoadedMetadata={() => { setReady(true); onReady(true); report(); try { onAudioStreamChange?.((video.current as (HTMLVideoElement & { captureStream?: () => MediaStream }) | null)?.captureStream?.() ?? null) } catch { onAudioStreamChange?.(null) } }} onTimeUpdate={() => { report(); checkpoint() }} onSeeking={() => { engaged.current = true; report() }} onSeeked={() => { report(); checkpoint(true) }} onPlay={() => { engaged.current = true; onPlaying?.(true); checkpoint(true) }} onPause={() => { onPlaying?.(false); checkpoint(true) }} onEnded={() => { onPlaying?.(false); report(); checkpoint(true); onEnded?.() }} onError={() => { setReady(false); onReady(false); onPosition(null); onPlaying?.(false); onAudioStreamChange?.(null); setPlaybackError(playbackFailure) }}>
         {captionURL && captions && <track key={captionURL} kind="captions" src={captionURL} srcLang={captions.language === 'ai-zh' ? 'zh' : captions.language} label={captions.label} default />}
         当前浏览器无法播放此视频，可在下载页取回文件。
       </video>

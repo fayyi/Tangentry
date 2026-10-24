@@ -32,7 +32,8 @@ func (s *Service) fetchCandidate(ctx context.Context, method, raw, byteRange, pl
 		req.Header.Set("Range", byteRange)
 	}
 	// Bound connection / response-header stalls, without placing a short deadline
-	// on a healthy long video body. Four candidates + one refresh stay bounded.
+	// on a healthy long video body. The fallback candidate is intentionally
+	// quick so a dead CDN edge does not hold the whole player hostage.
 	headerDone := make(chan struct{})
 	timer := time.AfterFunc(3*time.Second, func() { cancel(); close(headerDone) })
 	client := *s.http

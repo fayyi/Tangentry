@@ -18,11 +18,11 @@ function SubtitlePlayer({ children }: { children: ReactNode }) {
   return <>{children}</>
 }
 
-export function SubtitlePage({ query, initialItem, onItem, onReturn, notes, insights, onNoteAt, player, position, onSeek, onTrackChange, onPlatformLanguagesChange, onAvailabilityChange, assistance }: {
+export function SubtitlePage({ query, initialItem, onItem, onReturn, notes, insights, onNoteAt, player, position, ended = false, onSeek, onTrackChange, onPlatformLanguagesChange, onAvailabilityChange, assistance, audioStream }: {
   query: string; initialItem?: ContentItem; onReturn: () => void; notes?: ReactNode; insights?: ReactNode; onNoteAt?: (position: number, reference?: SubtitleReference) => void
   onItem?: (item: ContentItem) => void
   assistance?: SubtitleAssistance
-  player?: ReactNode; position?: number | null; onSeek?: (position: number) => void; onTrackChange?: (track: SubtitleTrack | null) => void; onPlatformLanguagesChange?: (languages: SubtitleLanguage[]) => void; onAvailabilityChange?: (status: SubtitleAvailability | 'available' | 'login_required' | null) => void
+  player?: ReactNode; position?: number | null; ended?: boolean; onSeek?: (position: number) => void; onTrackChange?: (track: SubtitleTrack | null) => void; onPlatformLanguagesChange?: (languages: SubtitleLanguage[]) => void; onAvailabilityChange?: (status: SubtitleAvailability | 'available' | 'login_required' | null) => void; audioStream?: MediaStream | null
 }) {
   const [item, setItem] = useState<ContentItem | null>(initialItem ?? null)
   const [error, setError] = useState('')
@@ -51,7 +51,7 @@ export function SubtitlePage({ query, initialItem, onItem, onReturn, notes, insi
         <div className="watch-details">{item ? <BilingualTitle heading contentId={item.id} text={item.title}/> : <h1 className="reading-video-title">{query}</h1>}
         {item && <p className="reading-meta">{item.author || '未知作者'} · {formatDate(item.publishedAt)}{item.durationSeconds > 0 && ` · ${formatDuration(item.durationSeconds)}`}</p>}
         {item?.description && <ReaderDescription key={item.id} item={item} onSeek={onSeek} className="watch-description"/>}</div><SubtitlePlayer>{player}</SubtitlePlayer>
-        {error ? <div className="subtitle-error" role="alert"><p>{error}</p><Button variant="secondary" className="button button-secondary" onClick={() => setAttempt(value => value + 1)}>重新获取视频信息</Button></div> : !item && <p className="subtitle-note" role="status"><LoaderCircle size={16} className="spin" />正在获取视频信息…</p>}<SubtitleReader key={query} item={item ?? { platformId: query, url: `https://www.bilibili.com/video/${query}/` }} onNoteAt={onNoteAt} position={position} onSeek={onSeek} onTrackChange={onTrackChange} onPlatformLanguagesChange={onPlatformLanguagesChange} onAvailabilityChange={onAvailabilityChange} assistance={assistance} /></div><aside className="reading-notes">{notes}</aside></ReadingNotebook>
+        {error ? <div className="subtitle-error" role="alert"><p>{error}</p><Button variant="secondary" className="button button-secondary" onClick={() => setAttempt(value => value + 1)}>重新获取视频信息</Button></div> : !item && <p className="subtitle-note" role="status"><LoaderCircle size={16} className="spin" />正在获取视频信息…</p>}<SubtitleReader key={query} item={item ?? { platformId: query, url: `https://www.bilibili.com/video/${query}/` }} onNoteAt={onNoteAt} position={position} ended={ended} onSeek={onSeek} onTrackChange={onTrackChange} onPlatformLanguagesChange={onPlatformLanguagesChange} onAvailabilityChange={onAvailabilityChange} assistance={assistance} audioStream={audioStream} /></div><aside className="reading-notes">{notes}</aside></ReadingNotebook>
     </>}
   </section>
 }

@@ -5,6 +5,7 @@ import { listOrEmpty } from '../../shared/api/list'
 import { WhisperModels } from './WhisperModels'
 import { PathInput } from './PathInput'
 import { SettingsTask } from './ui/SettingsActionPage'
+import { getInterfacePreference, setInterfacePreference } from '../../shared/preferences/interfacePreferences'
 
 type Backend = 'whisper.cpp' | 'faster-whisper' | 'qwen3-asr' | 'groq' | 'cloudflare' | 'siliconflow' | 'mai'
 const engineGroups: { label: string; hint: string; options: { value: Backend; label: string }[] }[] = [
@@ -43,6 +44,7 @@ export function TranscriptionSettings() {
   const [clearGroq, setClearGroq] = useState(false), [clearCloudflare, setClearCloudflare] = useState(false)
   const [siliconflowKey, setSiliconflowKey] = useState(''), [clearSiliconflow, setClearSiliconflow] = useState(false)
   const [maiCookie, setMAICookie] = useState(''), [clearMAI, setClearMAI] = useState(false)
+  const [automaticSubtitles, setAutomaticSubtitles] = useState(true)
   const cloud = config.backend === 'groq' || config.backend === 'cloudflare' || config.backend === 'siliconflow' || config.backend === 'mai'
   useEffect(() => {
     const controller = new AbortController()
@@ -55,6 +57,9 @@ export function TranscriptionSettings() {
     }).finally(()=>{if (!controller.signal.aborted) setLoading(false)})
     return ()=>controller.abort()
   }, [loadRevision])
+  useEffect(() => {
+    void getInterfacePreference('automatic_subtitles').then(value => setAutomaticSubtitles(value.value !== 'false')).catch(() => {})
+  }, [])
   async function save() {
     setPending(true); setError(''); setNotice('')
     try { const response = await request<Status>('/transcription/settings', { method:'PUT',body:JSON.stringify({...config, ...(clearGroq || groqKey.trim() ? {groqApiKey:clearGroq ? '' : groqKey.trim()} : {}), ...(clearCloudflare || cloudflareToken.trim() ? {cloudflareApiToken:clearCloudflare ? '' : cloudflareToken.trim()} : {}), ...(clearSiliconflow || siliconflowKey.trim() ? {siliconflowApiKey:clearSiliconflow ? '' : siliconflowKey.trim()} : {}), ...(clearMAI || maiCookie.trim() ? {maiCookie:clearMAI ? '' : maiCookie.trim()} : {})}) }); const value=normalizedStatus(response); setStatus(value); setConfig(value.config); setGroqKey(''); setCloudflareToken(''); setSiliconflowKey(''); setMAICookie(''); setClearMAI(false); setClearGroq(false); setClearCloudflare(false); setClearSiliconflow(false); setNotice('转录配置已保存，下一次转录立即生效。') }
@@ -78,6 +83,7 @@ export function TranscriptionSettings() {
     setNotice('引擎已切换，保存后生效。')
   }
   return <SettingsTask title={cloud ? '云端转录' : '本机转录'} description={cloud ? '确认后上传，额度以服务商为准。' : '音频留在本机，已有字幕优先。'} actions={<span className="settings-inline-status">{dirty ? '未保存更改' : status?.ready ? '已就绪' : '尚未就绪'}</span>}>
+    <label className="transcription-automatic-toggle"><input type="checkbox" checked={automaticSubtitles} onChange={event => { const value = event.target.checked; setAutomaticSubtitles(value); void setInterfacePreference('automatic_subtitles', String(value)).catch(() => setAutomaticSubtitles(!value)) }} /><span><strong>播放时自动生成字幕</strong><small>没有有效平台字幕时启动本机转录；不会自动上传音频。</small></span></label>
     {!status && (loading ? <p className="field-hint" role="status">正在读取转录设置…</p> : <button type="button" className="text-button" onClick={()=>setLoadRevision(value=>value+1)}><RefreshCw size={14}/>重试</button>)}
     <form className="transcription-config" onSubmit={event=>{event.preventDefault();void save()}}><fieldset disabled={!status || pending} style={{display:'contents'}}>
       <fieldset className="settings-form-section transcription-engines" aria-label="转录引擎"><legend>识别方式</legend>

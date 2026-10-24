@@ -27,7 +27,7 @@ func packagedFixture(t *testing.T) string {
 func TestRuntimePathsSurviveMovingTheBundle(t *testing.T) {
 	for _, name := range []string{
 		"PATH", "TANGENTRY_FFMPEG_PATH", "TANGENTRY_YTDLP_PATH", "TANGENTRY_WHISPER_PATH",
-		"TANGENTRY_WHISPER_MODEL", "TANGENTRY_WHISPER_MODELS_DIR", "TANGENTRY_TOOLS_DIR",
+		"TANGENTRY_WHISPER_SERVER_PATH", "TANGENTRY_WHISPER_MODEL", "TANGENTRY_WHISPER_MODELS_DIR", "TANGENTRY_TOOLS_DIR",
 	} {
 		t.Setenv(name, os.Getenv(name))
 	}

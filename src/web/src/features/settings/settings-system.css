@@ -1,6 +1,6 @@
 /* Functional settings workspace. Business components keep their behavior; this file owns the new page composition. */
 .settings-system { --settings-workspace: 1180px; min-height:calc(100dvh - var(--header-height) - 40px); color:var(--ink); }
-.settings-system-header { display:flex; align-items:center; min-width:0; }
+.settings-system-header { display:flex; align-items:center; width:100%; min-width:0; }
 .settings-system-brand { display:flex; align-items:center; gap:10px; min-width:0; }
 .settings-system-brand > div { display:grid; gap:1px; }
 .settings-system-brand h1 { margin:0; font-size:16px; font-weight:650; letter-spacing:-.02em; }
@@ -12,15 +12,15 @@
 .settings-local-mark { display:inline-block; width:6px; height:6px; margin-right:6px; border-radius:50%; background:var(--accent); }
 .settings-system-body { width:100%; padding:0 0 24px; }
 .settings-system-sidebar { display:none; }
-.settings-system-top-nav { display:flex; align-items:stretch; flex:1 1 auto; width:100%; min-width:0; padding:0; }
+.settings-system-top-nav { display:flex; align-items:stretch; flex:1 1 auto; width:100%; min-width:0; padding:0; border:0; }
 .settings-system-top-nav button { gap:6px; padding-inline:8px; }
-.settings-system-top-nav button.active { color:var(--ink); border-bottom-color:var(--accent); }
 .settings-system-top-nav-group { display:flex; align-items:center; gap:8px; flex:0 0 auto; }
 .settings-system-top-nav .settings-system-nav-label { color:var(--faint); font:650 9px/1.2 var(--font-display); letter-spacing:.1em; text-transform:uppercase; }
 .settings-system-top-nav-group > div { display:flex; align-items:stretch; gap:2px; }
-.settings-system-top-nav button { display:inline-flex; align-items:center; justify-content:center; flex:1 1 0; gap:5px; min-height:48px; padding:0 6px; border:0; color:var(--muted); font-size:11px; white-space:nowrap; }
-.settings-system-top-nav button:hover { color:var(--ink); }
-.settings-system-top-nav button.active { color:var(--ink); background:var(--selected); font-weight:650; }
+.settings-system-top-nav button { display:inline-flex; align-items:center; justify-content:center; flex:1 1 0; min-width:0; gap:5px; min-height:48px; padding:0 6px; border:0 !important; border-bottom:0 !important; border-radius:0; box-shadow:none !important; color:var(--muted); background:transparent; font-size:11px; white-space:nowrap; }
+.settings-system-top-nav button::before,.settings-system-top-nav button::after { display:none !important; content:none !important; }
+.settings-system-top-nav button:hover { color:var(--ink); background:transparent; }
+.settings-system-top-nav button.active { color:var(--accent-ink); background:transparent; font-weight:650; }
 .settings-system-nav-icon { display:inline-flex; color:var(--faint); }
 .settings-system-top-nav button.active .settings-system-nav-icon { color:var(--accent-ink); }
 .settings-system-nav-copy,.settings-system-nav-arrow,.settings-system-sidebar-footer { display:none; }
@@ -193,7 +193,7 @@
 
 /* Settings share the application canvas, with one directory above the content. */
 @media (min-width:761px) {
-  .experience[data-view='tools'] .content-container { max-width:1440px; padding:16px 32px; }
+  .experience[data-view='tools'] .content-container { max-width:none; width:100%; padding:16px clamp(20px,3vw,48px); }
   .settings-system-main { padding:22px 0 0; }
   .settings-system-top-nav button { font-size:12px; }
   .settings-action-head { min-height:0; align-items:center; padding:0 0 14px; gap:12px; }
