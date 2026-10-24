@@ -8,8 +8,8 @@ import { captureDisplayedElement } from './captureFrame'
 // shared with notes and subtitles; failed/blocked API reads remain null.
 export const YouTubeEmbedPlayer = forwardRef<PlaybackHandle, {
   id: string; title: string; start?: number; autoplay?: boolean; onPosition?: (seconds: number | null) => void; onReady?: (ready: boolean) => void
-  onProgress?: (position: number, duration: number, immediate?: boolean) => void; onPlaying?: (playing: boolean) => void
-}>(function YouTubeEmbedPlayer({ id, title, start = 0, autoplay = true, onPosition, onReady, onProgress, onPlaying }, ref) {
+  onProgress?: (position: number, duration: number, immediate?: boolean) => void; onPlaying?: (playing: boolean) => void; onEnded?: () => void
+}>(function YouTubeEmbedPlayer({ id, title, start = 0, autoplay = true, onPosition, onReady, onProgress, onPlaying, onEnded }, ref) {
   const container = useRef<HTMLDivElement>(null), player = useRef<YouTubePlayer | null>(null), ready = useRef(false)
   const [unavailable, setUnavailable] = useState(false)
   const [target, setTarget] = useState({ seconds: Math.max(0, Math.floor(start)), revision: 0 })
@@ -119,6 +119,7 @@ export const YouTubeEmbedPlayer = forwardRef<PlaybackHandle, {
         onStateChange: event => {
           if (!active || !ready.current || fallback.current) return
           if (event.data === 1) engaged.current = true
+          if (event.data === 0) onEnded?.()
           report(event.data === 0 || event.data === 2)
         },
       } })
@@ -132,6 +133,6 @@ export const YouTubeEmbedPlayer = forwardRef<PlaybackHandle, {
       onPlaying?.(false)
       onReady?.(false); onPosition?.(null)
     }
-  }, [id, title, autoplay, target, onReady, onPosition, onProgress, onPlaying])
+  }, [id, title, autoplay, target, onReady, onPosition, onProgress, onPlaying, onEnded])
   return <div className="youtube-embed"><div ref={container}/>{unavailable && <p className="field-hint" role="status">YouTube 播放时间暂不可用，笔记不自动关联时间；仍可点击字幕跳转。<a href={`https://www.youtube.com/watch?v=${id}&t=${target.seconds}s`} target="_blank" rel="noreferrer">打开原视频</a></p>}</div>
 })

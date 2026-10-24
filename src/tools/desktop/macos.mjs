@@ -78,7 +78,7 @@ export async function bundleMacTools({ bin, lib, licenses }) {
     return destination
   }
 
-  for (const name of ['ffmpeg', 'ffprobe', 'whisper-cli']) {
+  for (const name of ['ffmpeg', 'ffprobe', 'whisper-cli', 'whisper-server']) {
     const source = locate(name)
     console.log(`Bundling ${name} and its native dependencies`)
     await bundleMachO(source, path.join(bin, name), source)

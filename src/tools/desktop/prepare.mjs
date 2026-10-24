@@ -69,7 +69,7 @@ function selfTest(runtime, exe) {
   const env = process.platform === 'win32'
     ? { PATH: bin, SystemRoot: process.env.SystemRoot, USERPROFILE: process.env.USERPROFILE }
     : { PATH: `${bin}:/usr/bin:/bin`, HOME: process.env.HOME, GGML_METAL_PATH_RESOURCES: path.join(runtime, 'lib') }
-  const tools = [['whisper-cli', ['--help']]]
+  const tools = [['whisper-cli', ['--help']], ['whisper-server', ['--help']]]
   if (process.platform !== 'linux') tools.push(['ffmpeg', ['-version']], ['ffprobe', ['-version']])
   for (const [name, args] of tools) execFileSync(path.join(bin, name + exe), args, { env, stdio: 'pipe' })
 }

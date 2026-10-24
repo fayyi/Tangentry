@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"tangentry/internal/subtitles"
@@ -14,16 +15,20 @@ import (
 // Transcriber is the adapter boundary for local and cloud speech engines.
 // Command-line, Python and HTTP details are implemented in adjacent files.
 type Transcriber struct {
-	ModelDir  string
-	FFmpeg    string
-	YTDLP     string
-	HTTP      *http.Client
-	CloudHTTP *http.Client // Separate client; source-media requests never receive cloud credentials.
-	CacheDir  string
+	ModelDir        string
+	FFmpeg          string
+	YTDLP           string
+	StreamingBinary string
+	HTTP            *http.Client
+	CloudHTTP       *http.Client // Separate client; source-media requests never receive cloud credentials.
+	CacheDir        string
 	// Models downloads a missing catalog whisper.cpp model on first use.
 	Models *ModelInstaller
 	// ResolveYTDLP, when set, supplies the managed yt-dlp instead of YTDLP.
 	ResolveYTDLP func(context.Context) (string, error)
+	streamingMu  sync.Mutex
+	streaming    *residentStreamingServer
+	streamingKey string
 }
 
 // Transcribe owns the request lifecycle and stage ordering. Engine-specific

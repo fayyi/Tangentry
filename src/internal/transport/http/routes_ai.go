@@ -24,4 +24,13 @@ func (h *Handler) registerAIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/transcription/jobs", h.transcription.transcriptionCurrent)
 	mux.HandleFunc("GET /api/transcription/jobs/{id}", h.transcription.transcriptionGet)
 	mux.HandleFunc("POST /api/transcription/jobs/{id}/cancel", h.transcription.transcriptionCancel)
+	mux.HandleFunc("GET /api/transcription/automatic", h.transcription.automaticCurrent)
+	mux.HandleFunc("POST /api/transcription/automatic", h.transcription.automaticStart)
+	mux.HandleFunc("GET /api/transcription/automatic/{id}", h.transcription.automaticGet)
+	mux.HandleFunc("GET /api/transcription/automatic/{id}/draft", h.transcription.automaticDraft)
+	mux.HandleFunc("PATCH /api/transcription/automatic/{id}/playback", h.transcription.automaticPlayback)
+	mux.HandleFunc("POST /api/transcription/automatic/{id}/audio", h.transcription.automaticAudio)
+	mux.HandleFunc("POST /api/transcription/automatic/{id}/finalize", h.transcription.automaticFinalize)
+	mux.HandleFunc("POST /api/transcription/automatic/{id}/pause", h.transcription.automaticPause)
+	mux.HandleFunc("POST /api/transcription/automatic/{id}/cancel", h.transcription.automaticCancel)
 }

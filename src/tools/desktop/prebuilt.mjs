@@ -64,11 +64,14 @@ export async function installPrebuiltTools(target, { bin, licenses, cache }) {
       path.join(cache, `${whisperRelease}-${whisperName}`), whisperSHA)
     const whisper = await extract(whisperArchive)
     extracted.push(whisper)
-    const cli = await find(whisper, 'whisper-cli' + exe)
-    await install(cli, path.join(bin, 'whisper-cli' + exe), windows)
-    for (const name of await readdir(path.dirname(cli))) {
+    for (const name of ['whisper-cli', 'whisper-server']) {
+      const executable = await find(whisper, name + exe)
+      await install(executable, path.join(bin, name + exe), windows)
+    }
+    const whisperBin = path.dirname(await find(whisper, 'whisper-cli' + exe))
+    for (const name of await readdir(whisperBin)) {
       if (windows ? name.endsWith('.dll') && name !== 'SDL2.dll' : /^lib.+\.so(\.\d+)*$/.test(name)) {
-        await install(path.join(path.dirname(cli), name), path.join(bin, name), windows)
+        await install(path.join(whisperBin, name), path.join(bin, name), windows)
       }
     }
     await writeFile(path.join(licenses, 'whisper.cpp-LICENSE'),

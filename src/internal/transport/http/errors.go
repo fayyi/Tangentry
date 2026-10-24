@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"tangentry/internal/articles"
+	"tangentry/internal/automaticsubtitles"
 	"tangentry/internal/content"
 	"tangentry/internal/credentials"
 	"tangentry/internal/discovery"
@@ -146,6 +147,9 @@ var errorResponses = []errorResponse{
 	{err: transcription.ErrBusy, status: http.StatusConflict, code: "transcription_busy", message: "已有转写正在进行，请等待完成或取消后再试。"},
 	{err: transcription.ErrNotFound, status: http.StatusNotFound, code: "transcription_not_found", message: "转写任务已不存在；已保存字幕仍可读取。"},
 	{err: transcription.ErrUnavailable, status: http.StatusBadGateway, code: "transcription_unavailable", message: "转写暂不可用，请检查配置与数据目录。"},
+	{err: automaticsubtitles.ErrInvalid, status: http.StatusBadRequest, code: "invalid_automatic_subtitle", message: "请检查视频、字幕语言和自动字幕设置。"},
+	{err: automaticsubtitles.ErrBusy, status: http.StatusConflict, code: "automatic_subtitle_busy", message: "自动字幕正在处理，或已有本机字幕可用。"},
+	{err: automaticsubtitles.ErrNotFound, status: http.StatusNotFound, code: "automatic_subtitle_not_found", message: "自动字幕会话已不存在，请重新播放内容。"},
 	{err: playback.ErrInvalid, status: http.StatusBadRequest, code: "invalid_playback", message: "视频标识或播放范围无效。"},
 	{err: playback.ErrUnavailable, status: http.StatusBadGateway, code: "playback_unavailable", message: "未能取得可播放的视频流，请检查登录配置与网络，或打开原视频。"},
 	{err: playback.ErrExpired, status: http.StatusGone, code: "playback_expired", message: "播放连接已失效，请重新连接视频。"},

@@ -19,7 +19,7 @@ function validDocument(value: unknown): value is SubtitleDocument {
   const validLanguage = (value: { language: string; label: string; automatic?: boolean; source?: string; hasUrl?: boolean; translated?: boolean; sourceLanguage?: string }) =>
     value && typeof value.language === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value.language) &&
     typeof value.label === 'string' && value.label.length <= 200 && (value.automatic === undefined || typeof value.automatic === 'boolean') &&
-    (value.source === undefined || value.source === 'cc' || value.source === 'ai' || value.source === 'yt-dlp' || value.source === 'youtube') && (value.hasUrl === undefined || typeof value.hasUrl === 'boolean') && (value.translated === undefined || typeof value.translated === 'boolean') && (value.sourceLanguage === undefined || typeof value.sourceLanguage === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value.sourceLanguage))
+    (value.source === undefined || value.source === 'cc' || value.source === 'ai' || value.source === 'yt-dlp' || value.source === 'youtube' || value.source === 'automatic') && (value.hasUrl === undefined || typeof value.hasUrl === 'boolean') && (value.translated === undefined || typeof value.translated === 'boolean') && (value.sourceLanguage === undefined || typeof value.sourceLanguage === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value.sourceLanguage))
   const validTrack = (track: SubtitleDocument['tracks'][number], requireCues: boolean) => {
     if (!validLanguage(track) || (track.mismatch !== undefined && typeof track.mismatch !== 'boolean') || !Array.isArray(track.cues) || requireCues && !track.cues.length) return false
     let previous = -1
@@ -105,7 +105,7 @@ export function cacheSubtitles(key: string, document: SubtitleDocument) {
   if (!validDocument(document)) return
   if (document.status === 'rate_limited' || document.parts?.some(part => part.status === 'rate_limited')) return
   // Store only the public caption contract, never arbitrary response fields.
-  const language = (value: { language: string; label: string; automatic?: boolean; source?: 'cc' | 'ai' | 'yt-dlp' | 'youtube'; hasUrl?: boolean; translated?: boolean; sourceLanguage?: string }) =>
+  const language = (value: { language: string; label: string; automatic?: boolean; source?: 'cc' | 'ai' | 'yt-dlp' | 'youtube' | 'automatic'; hasUrl?: boolean; translated?: boolean; sourceLanguage?: string }) =>
     ({ language: value.language, label: value.label, automatic: value.automatic ?? false, ...(value.source ? { source: value.source } : {}), ...(value.hasUrl !== undefined ? { hasUrl: value.hasUrl } : {}), ...(value.translated ? { translated: true } : {}), ...(value.sourceLanguage ? { sourceLanguage: value.sourceLanguage } : {}) })
   const metadataTrack = (value: SubtitleDocument['tracks'][number]) => ({ ...language(value), ...(value.mismatch !== undefined ? { mismatch: value.mismatch } : {}), cues: [] })
   const clean: SubtitleDocument = {

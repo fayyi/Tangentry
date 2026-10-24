@@ -16,7 +16,38 @@ func (s *Service) Start(ctx context.Context, id string, preview bool) (Job, erro
 	return s.StartWithUploadConsent(ctx, id, preview, false, "")
 }
 
+// StartAutomatic is a local-only entry point for the automatic subtitle
+// coordinator. It shares the existing resolver and ASR engine without using
+// cloud credentials or changing the explicit transcription API.
+func (s *Service) StartAutomatic(ctx context.Context, id, language string) (Job, error) {
+	return s.start(ctx, id, false, false, "", true, language)
+}
+
+// RecognizePCM delegates a short decoded chunk to a local streaming engine.
+// Cloud backends are explicitly rejected even if configured for manual jobs.
+func (s *Service) RecognizePCM(ctx context.Context, language string, pcm []byte, offset float64) (subtitles.Track, error) {
+	s.mu.Lock()
+	if s.closed || s.config.Cloud() {
+		s.mu.Unlock()
+		return subtitles.Track{}, ErrUploadConsent
+	}
+	config := s.config
+	engine, ok := s.engine.(StreamingEngine)
+	s.mu.Unlock()
+	if !ok {
+		return subtitles.Track{}, ErrUnavailable
+	}
+	if language != "" {
+		config.Language = language
+	}
+	return engine.RecognizePCM(ctx, config, pcm, offset)
+}
+
 func (s *Service) StartWithUploadConsent(ctx context.Context, id string, preview, upload bool, backend string) (Job, error) {
+	return s.start(ctx, id, preview, upload, backend, false, "")
+}
+
+func (s *Service) start(ctx context.Context, id string, preview, upload bool, backend string, automatic bool, languageOverride string) (Job, error) {
 	if !content.SpeechID(id) {
 		return Job{}, ErrInvalid
 	}
@@ -25,12 +56,12 @@ func (s *Service) StartWithUploadConsent(ctx context.Context, id string, preview
 	if s.closed {
 		return Job{}, ErrUnavailable
 	}
-	if (backend != "" && backend != s.config.Backend) || (s.config.Cloud() && (!upload || backend != s.config.Backend)) {
+	if (automatic && s.config.Cloud()) || (backend != "" && backend != s.config.Backend) || (s.config.Cloud() && (!upload || backend != s.config.Backend)) {
 		return Job{}, ErrUploadConsent
 	}
 	if s.active != "" {
 		current := s.jobs[s.active].job
-		if current.ContentID == id && current.Preview == preview {
+		if current.ContentID == id && current.Preview == preview && current.Automatic == automatic {
 			return current, nil
 		}
 		return Job{}, ErrBusy
@@ -39,11 +70,14 @@ func (s *Service) StartWithUploadConsent(ctx context.Context, id string, preview
 		return Job{}, ErrNotReady
 	}
 	// Capture revisions before work begins. Never overwrite a concurrent edit.
+	language := jobLanguage(s.config, preview)
+	if automatic && languageOverride != "" {
+		language = languageOverride
+	}
 	tracks, err := s.saved.List(ctx, id)
 	if err != nil {
 		return Job{}, err
 	}
-	language := jobLanguage(s.config, preview)
 	var revision int64
 	for _, track := range tracks {
 		if track.Track.Language == language {
@@ -55,7 +89,7 @@ func (s *Service) StartWithUploadConsent(ctx context.Context, id string, preview
 		return Job{}, ErrUnavailable
 	}
 	token := hex.EncodeToString(rawID[:])
-	job := Job{ID: token, ContentID: id, State: "resolving", Preview: preview, Backend: s.config.Backend}
+	job := Job{ID: token, ContentID: id, State: "resolving", Preview: preview, Backend: s.config.Backend, Automatic: automatic}
 	work, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
 	s.jobs[token] = &task{job: job, cancel: cancel}
 	s.active = token
@@ -66,7 +100,7 @@ func (s *Service) StartWithUploadConsent(ctx context.Context, id string, preview
 	}
 	cfg := s.config
 	s.wait.Add(1)
-	go s.run(work, token, cfg, revision, language)
+	go s.run(work, token, cfg, revision, language, automatic)
 	return job, nil
 }
 
@@ -96,7 +130,7 @@ func (s *Service) update(id, state, message string) {
 	}
 }
 
-func (s *Service) run(ctx context.Context, id string, cfg Config, revision int64, language string) {
+func (s *Service) run(ctx context.Context, id string, cfg Config, revision int64, language string, automatic bool) {
 	defer s.wait.Done()
 	s.mu.Lock()
 	current := s.jobs[id]
@@ -133,9 +167,17 @@ func (s *Service) run(ctx context.Context, id string, cfg Config, revision int64
 		track, err = s.engine.Transcribe(ctx, cfg, audio, limit, func(stage string) { s.update(id, stage, "") })
 	}
 	if err == nil && ctx.Err() == nil {
-		s.update(id, "saving", "")
 		track.Language = language
-		_, err = s.saved.Save(ctx, job.ContentID, track, revision)
+		if automatic {
+			track.Automatic = true
+			track.Source = "automatic"
+			s.mu.Lock()
+			current.track, current.hasTrack = track, true
+			s.mu.Unlock()
+		} else {
+			s.update(id, "saving", "")
+			_, err = s.saved.Save(ctx, job.ContentID, track, revision)
+		}
 	}
 	if ctx.Err() != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -176,6 +218,18 @@ func (s *Service) run(ctx context.Context, id string, cfg Config, revision int64
 		return
 	}
 	s.update(id, "completed", "")
+}
+
+// Result returns an automatic job's in-memory result. Explicit jobs continue
+// to expose their formal result through the saved subtitle store.
+func (s *Service) Result(id string) (subtitles.Track, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	value := s.jobs[id]
+	if value == nil || !value.hasTrack {
+		return subtitles.Track{}, false
+	}
+	return value.track, true
 }
 
 func (s *Service) Get(id string) (Job, error) {
@@ -219,4 +273,7 @@ func (s *Service) Close() {
 	}
 	s.mu.Unlock()
 	s.wait.Wait()
+	if closer, ok := s.engine.(interface{ Close() error }); ok {
+		_ = closer.Close()
+	}
 }

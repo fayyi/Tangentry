@@ -34,6 +34,7 @@ type Options struct {
 	Favorites               FavoriteService
 	ModelDownloads          ModelDownloadService
 	Transcription           TranscriptionService
+	Automatic               AutomaticSubtitleService
 	Playback                PlaybackService
 	Compatibility           CompatibilityService
 	Recommendations         func(context.Context, string) (discovery.Feed, error)
@@ -129,6 +130,7 @@ type AIDependencies struct {
 	AI             AIService
 	Transcription  TranscriptionService
 	ModelDownloads ModelDownloadService
+	Automatic      AutomaticSubtitleService
 }
 
 type MediaDependencies struct {

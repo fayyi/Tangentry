@@ -92,7 +92,7 @@ function useDouyinPlayback(identity: string, id: string) {
   return { source, error, diagnostics, active: attempt > 0, start: () => { automaticRetries.current = 0; readyReported.current = false; setDiagnostics([]); setError(''); setSource(''); setSession(''); setAttempt(value => value + 1) }, fail, ready }
 }
 
-export function MediaReader({ id, initialItem, jobs, jobsLoading = false, video, reading, notes, insights, mediaRef, playbackRef, onReady, onPosition, onSeek, onItem, onDiscussionChange, onQuote, annotations = [], textFocus, onOpenNotes, onUnresolved, onPDFQuote, onCreator, onReturn }: { id: string; initialItem?: ContentItem; jobs: DownloadJob[]; jobsLoading?: boolean; video?: ReactNode; reading?: ReactNode; notes?: ReactNode; insights?: ReactNode; mediaRef?:RefObject<HTMLMediaElement|null>; playbackRef?:RefObject<PlaybackHandle|null>; onReady?:(ready:boolean)=>void; onPosition?:(seconds:number|null)=>void; onSeek?:(seconds:number)=>void; onItem?:(item:ContentItem)=>void; onDiscussionChange?:(discussion:Discussion)=>void; onQuote?:(text:string,anchor?:TextAnchor)=>void; annotations?:ReadingNote[]; textFocus?:{id:string;token:number;allowReturn?:boolean}|null; onOpenNotes?:(ids:string[])=>void; onUnresolved?:(ids:string[])=>void; onPDFQuote?:(text:string,anchor:PDFAnchor)=>void; onCreator?:(platform:string, authorID:string)=>void; onReturn: () => void }) {
+export function MediaReader({ id, initialItem, jobs, jobsLoading = false, video, reading, notes, insights, mediaRef, playbackRef, onReady, onPosition, onSeek, onItem, onDiscussionChange, onQuote, annotations = [], textFocus, onOpenNotes, onUnresolved, onPDFQuote, onCreator, onAudioStreamChange, onReturn }: { id: string; initialItem?: ContentItem; jobs: DownloadJob[]; jobsLoading?: boolean; video?: ReactNode; reading?: ReactNode; notes?: ReactNode; insights?: ReactNode; mediaRef?:RefObject<HTMLMediaElement|null>; playbackRef?:RefObject<PlaybackHandle|null>; onReady?:(ready:boolean)=>void; onPosition?:(seconds:number|null)=>void; onSeek?:(seconds:number)=>void; onItem?:(item:ContentItem)=>void; onDiscussionChange?:(discussion:Discussion)=>void; onQuote?:(text:string,anchor?:TextAnchor)=>void; annotations?:ReadingNote[]; textFocus?:{id:string;token:number;allowReturn?:boolean}|null; onOpenNotes?:(ids:string[])=>void; onUnresolved?:(ids:string[])=>void; onPDFQuote?:(text:string,anchor:PDFAnchor)=>void; onCreator?:(platform:string, authorID:string)=>void; onAudioStreamChange?:(stream:MediaStream|null)=>void; onReturn: () => void }) {
   const [quote,setQuote]=useState('')
   const { item, error, errorRequiresVerification, localReadFailed, retryLocalRead, social, localSocial, refreshDetails, detailError, detailRequiresVerification, detailLoading, detailRead, sourceEditing, setSourceEditing, onSourceUpdated } = useReaderContent({ id, initialItem, jobs, jobsLoading, onItem })
   const itemRef = useRef<ContentItem | null>(null)
@@ -163,8 +163,12 @@ export function MediaReader({ id, initialItem, jobs, jobsLoading = false, video,
     onPosition?.(seconds)
   })
   const lastMedia = useRef<HTMLMediaElement|null>(null)
-  const bindMedia=(node:HTMLMediaElement|null)=>{native.current=node;if(node)lastMedia.current=node;if(mediaRef)mediaRef.current=node}
-  useEffect(()=>{return()=>{const node=lastMedia.current;node?.pause();if(node){node.removeAttribute('src');node.load()}onReady?.(false);onPosition?.(null)}},[id,onReady,onPosition])
+  const captureAudioStream = (node: HTMLMediaElement | null) => {
+    const capture = (node as (HTMLMediaElement & { captureStream?: () => MediaStream }) | null)?.captureStream
+    try { onAudioStreamChange?.(capture ? capture.call(node) : null) } catch { onAudioStreamChange?.(null) }
+  }
+  const bindMedia=(node:HTMLMediaElement|null)=>{native.current=node;if(node)lastMedia.current=node;if(mediaRef)mediaRef.current=node;if(node)captureAudioStream(node);else onAudioStreamChange?.(null)}
+  useEffect(()=>{return()=>{const node=lastMedia.current;node?.pause();if(node){node.removeAttribute('src');node.load()}onAudioStreamChange?.(null);onReady?.(false);onPosition?.(null)}},[id,onReady,onPosition,onAudioStreamChange])
   const captureQuote=()=>{
     if (item?.kind==='article'||item?.kind==='image'||item?.kind==='pdf') { setQuote(''); return }
     const selection=window.getSelection()
@@ -209,6 +213,7 @@ export function MediaReader({ id, initialItem, jobs, jobsLoading = false, video,
       try { node.currentTime = resume } catch { /* The saved-progress control remains available. */ }
     }
     onReady?.(true)
+    captureAudioStream(native.current)
     report()
   }
   function onlineVideoPlaying() {
@@ -227,6 +232,7 @@ export function MediaReader({ id, initialItem, jobs, jobsLoading = false, video,
       try { node.currentTime = resume } catch { /* Native controls remain usable if the source cannot seek. */ }
     }
     onReady?.(true)
+    captureAudioStream(native.current)
     report()
   }
   function reconnectAudio() {

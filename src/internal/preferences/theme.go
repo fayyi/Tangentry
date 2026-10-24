@@ -6,9 +6,10 @@ import (
 )
 
 const (
-	ThemeKey     = "theme"
-	MaxKeyLength = 64
-	MaxValueSize = 256
+	ThemeKey              = "theme"
+	AutomaticSubtitlesKey = "automatic_subtitles"
+	MaxKeyLength          = 64
+	MaxValueSize          = 256
 )
 
 // Store is the stable application-level preference port. Implementations must
@@ -19,7 +20,7 @@ type Store interface {
 }
 
 func ValidateKey(key string) error {
-	if key != ThemeKey || len(key) > MaxKeyLength {
+	if (key != ThemeKey && key != AutomaticSubtitlesKey) || len(key) > MaxKeyLength {
 		return fmt.Errorf("unsupported preference key %q", key)
 	}
 	return nil

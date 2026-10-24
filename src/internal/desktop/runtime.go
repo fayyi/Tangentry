@@ -8,7 +8,9 @@ import (
 	"runtime"
 )
 
-// runtimeTools are the packaged programs, by base name; Windows adds ".exe".
+// runtimeTools are the packaged programs required by every desktop runtime,
+// by base name; Windows adds ".exe". The resident server is optional so an
+// older bundle can still launch and transparently use the CLI fallback.
 // Linux packages depend on the distribution's FFmpeg instead. yt-dlp, its
 // JavaScript runtime and the Whisper model are not packaged: the app downloads
 // verified copies into the data directory on first use.
@@ -48,6 +50,11 @@ func ConfigureRuntime(resources, dataDir string) error {
 		"TANGENTRY_WHISPER_PATH":       toolPath(link, "whisper-cli"),
 		"TANGENTRY_WHISPER_MODELS_DIR": filepath.Join(dataDir, "models"),
 		"TANGENTRY_TOOLS_DIR":          filepath.Join(dataDir, "tools"),
+	}
+	if _, err := os.Stat(toolPath(runtimeDir, "whisper-server")); err == nil {
+		defaults["TANGENTRY_WHISPER_SERVER_PATH"] = toolPath(link, "whisper-server")
+	} else {
+		os.Unsetenv("TANGENTRY_WHISPER_SERVER_PATH")
 	}
 	if runtime.GOOS != "linux" {
 		defaults["TANGENTRY_FFMPEG_PATH"] = toolPath(link, "ffmpeg")

@@ -4,6 +4,8 @@ import (
 	"context"
 
 	"tangentry/internal/ai"
+	"tangentry/internal/automaticsubtitles"
+	"tangentry/internal/subtitles"
 	"tangentry/internal/transcription"
 )
 
@@ -29,6 +31,18 @@ type TranscriptionService interface {
 	StartWithUploadConsent(context.Context, string, bool, bool, string) (transcription.Job, error)
 	Current(string) *transcription.Job
 	Get(string) (transcription.Job, error)
+	Cancel(string) error
+}
+
+type AutomaticSubtitleService interface {
+	Start(context.Context, string, string, string, float64, float64) (automaticsubtitles.Session, error)
+	Current(string) *automaticsubtitles.Session
+	Get(string) (automaticsubtitles.Session, error)
+	Draft(string) (automaticsubtitles.Draft, error)
+	Playback(string, automaticsubtitles.Playback) (automaticsubtitles.Session, error)
+	AppendAudio(string, automaticsubtitles.AudioChunk) (automaticsubtitles.Session, error)
+	Finalize(context.Context, string) (subtitles.SavedTrack, error)
+	Pause(string) (automaticsubtitles.Session, error)
 	Cancel(string) error
 }
 
