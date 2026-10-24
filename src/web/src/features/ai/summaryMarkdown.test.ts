@@ -99,3 +99,34 @@ test('summary export refuses incomplete summaries and missing, duplicate or inva
     saved({ citations: [{ index: 0, start: NaN, end: Infinity, quote: '无效时间' }] }),
   ]) expect(() => summaryMarkdown(result, source, readerURL)).toThrow()
 })
+
+test('summary Markdown exports the TextFold content tree with all levels and source locations', () => {
+  const result = saved({
+    document: {
+      formatVersion: 1,
+      topic: '系统化阅读 · 章节地图',
+      levels: ['Topic', 'Takeaway', 'Key', 'Brief', 'Full'],
+      sections: [{
+        sectionId: 'section-1', title: '章节一', start: 12.5, end: 18.25,
+        topic: '系统化阅读', takeaway: '先建立地图再深入。',
+        evidence: [{ id: 'e1', quote: '章节证据', start: 12.5, end: 18.25 }],
+        units: [{
+          unitId: 'unit-1', topic: '地图', takeaway: '先建立地图。', key: '地图降低搜索成本。',
+          briefSentenceIds: ['sentence-1'],
+          sentences: [{ id: 'sentence-1', text: '原文关键句。', evidence: [{ id: 'e2', quote: '原文关键句。', start: 13, end: 14 }] }],
+          full: '原文关键句。\n原文补充句。',
+        }],
+      }],
+    },
+  })
+  const output = summaryMarkdown(result, { contentId: videoId, title: '内容树', url: videoURL }, readerURL)
+  expect(output).toContain('系统化阅读 · 章节地图')
+  expect(output).toContain('### 章节一')
+  expect(output).toContain('**Takeaway**：先建立地图。')
+  expect(output).toContain('**Key**：地图降低搜索成本。')
+  expect(output).toContain('**Brief**：原文关键句。')
+  expect(output).toContain('**Full**：原文关键句。')
+  expect(output).toContain('12.5–18.25 秒')
+  expect(output).toContain('https://www.bilibili.com/video/BVstream0000/?p=1&t=12')
+  expect(output).toContain('章节证据')
+})

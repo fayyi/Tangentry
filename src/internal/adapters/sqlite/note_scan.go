@@ -17,11 +17,12 @@ func scanNote(row interface{ Scan(...any) error }) (notes.Note, error) {
 	var position sql.NullFloat64
 	var anchor sql.NullString
 	var pdfAnchor sql.NullString
+	var summaryAnchor sql.NullString
 	var tags sql.NullString
 	var references sql.NullString
 	var frame sql.NullString
 	note.Tags = []string{}
-	err := row.Scan(&note.ID, &note.ContentID, &note.Body, &position, &note.CreatedAt, &note.UpdatedAt, &anchor, &pdfAnchor, &tags, &note.Pinned, &references, &frame)
+	err := row.Scan(&note.ID, &note.ContentID, &note.Body, &position, &note.CreatedAt, &note.UpdatedAt, &anchor, &pdfAnchor, &summaryAnchor, &tags, &note.Pinned, &references, &frame)
 	if errors.Is(err, sql.ErrNoRows) {
 		return notes.Note{}, notes.ErrNotFound
 	}
@@ -33,6 +34,12 @@ func scanNote(row interface{ Scan(...any) error }) (notes.Note, error) {
 	}
 	if err == nil && pdfAnchor.Valid {
 		err = json.Unmarshal([]byte(pdfAnchor.String), &note.PDFAnchor)
+	}
+	if err == nil && summaryAnchor.Valid {
+		err = json.Unmarshal([]byte(summaryAnchor.String), &note.SummaryAnchor)
+		if err == nil {
+			err = notes.ValidateSummaryAnchor(note.SummaryAnchor)
+		}
 	}
 	if err == nil && tags.Valid {
 		err = json.Unmarshal([]byte(tags.String), &note.Tags)

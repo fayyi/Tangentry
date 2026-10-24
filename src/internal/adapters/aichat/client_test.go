@@ -683,6 +683,36 @@ func TestDedicatedTranslationModelSummaryRequiresSeparateModel(t *testing.T) {
 		t.Fatal(err, result, calls)
 	}
 }
+
+func TestSummaryProviderParsesContentTreeDocument(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, completion(`{"overview":"总览","points":[{"text":"结论","indices":[0]}],"outline":[{"title":"章节","level":0,"indices":[0]}],"document":{"formatVersion":1,"levels":["Topic","Takeaway","Key","Brief","Full"],"sections":[{"sectionId":"model-section","title":"章节","takeaway":"结论","source":[{"index":0,"quote":"原文","start":1,"end":2}],"units":[{"unitId":"model-unit","takeaway":"单元结论","key":"理由","full":"原文","sentences":[{"id":"s0","text":"原文","evidence":[{"index":0,"quote":"原文","start":1,"end":2}]}],"briefSentenceIds":["s0"]}]}]}}`, "stop"))
+	}))
+	defer server.Close()
+	draft, err := New().Summarize(context.Background(), ai.Config{BaseURL: server.URL, Model: "fixture"}, ai.SummaryRequest{Mode: "leaf", Segments: []ai.SummarySegment{{Index: 0, Start: 1, End: 2, Text: "原文"}}})
+	if err != nil || draft.Document == nil || len(draft.Document.Sections) != 1 || draft.Document.Sections[0].Units[0].BriefSentenceIDs[0] != "s0" {
+		t.Fatalf("content tree document was not parsed: %#v %v", draft, err)
+	}
+}
+
+func TestSummaryDocumentModeSendsSegmentsAndRequiresTreePrompt(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Messages []struct{ Content string } `json:"messages"`
+			Mode     string                     `json:"mode"`
+		}
+		if json.NewDecoder(r.Body).Decode(&body) != nil || len(body.Messages) != 2 || !strings.Contains(body.Messages[0].Content, "当前任务是 document") || !strings.Contains(body.Messages[1].Content, "原文") {
+			t.Error("document mode request missing tree instructions or source segments")
+		}
+		io.WriteString(w, completion(`{"overview":"总览","points":[{"text":"结论","indices":[0]}],"document":{"formatVersion":2,"levels":["Topic","Takeaway","Key","Brief","Full"],"sections":[]}}`, "stop"))
+	}))
+	defer server.Close()
+	_, err := New().Summarize(context.Background(), ai.Config{BaseURL: server.URL, Model: "fixture"}, ai.SummaryRequest{Mode: "document", Segments: []ai.SummarySegment{{Index: 0, Text: "原文"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestMalformedRefusedTruncatedMissingIndicesAndOversizeOutputs(t *testing.T) {
 	for _, body := range []string{
 		completion(`{"translations":[{"text":"missing index"}]}`, "stop"),

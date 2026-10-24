@@ -14,6 +14,7 @@ export function readNoteOrder(): NoteOrder {
 
 function location(note: ReadingNote, unresolvedAnchorIds: string[]): { kind: number; source: string; coordinates: number[] } {
   if (!unresolvedAnchorIds.includes(note.id)) {
+    if (note.summaryAnchor) return { kind: 0, source: note.summaryAnchor.nodeId, coordinates: [note.summaryAnchor.level] }
     if (note.textAnchor) return { kind: 0, source: note.textAnchor.sourceHash, coordinates: [note.textAnchor.start, note.textAnchor.end] }
     if (note.pdfAnchor) {
       const first = [...note.pdfAnchor.rects].sort((a, b) => a.y - b.y || a.x - b.x)[0]
@@ -26,14 +27,14 @@ function location(note: ReadingNote, unresolvedAnchorIds: string[]): { kind: num
 }
 
 export function linkedNote(note: ReadingNote): boolean {
-  return Boolean(note.textAnchor || note.pdfAnchor || note.subtitleReferences?.length || note.positionSeconds !== null)
+  return Boolean(note.summaryAnchor || note.textAnchor || note.pdfAnchor || note.subtitleReferences?.length || note.positionSeconds !== null)
 }
 
 export function filterNotes(notes: ReadingNote[], query: string, filter: 'all' | 'linked' | 'free', tag: string, order: NoteOrder, unresolvedAnchorIds: string[]): ReadingNote[] {
   const search = query.trim().toLocaleLowerCase()
   const result = notes.filter(note => {
     const linked = linkedNote(note)
-    const searchable = [note.body, note.textAnchor?.quote, note.pdfAnchor?.quote, ...(note.subtitleReferences ?? []).map(reference => reference.text), ...(note.tags ?? []), note.positionSeconds === null ? '' : formatPosition(note.positionSeconds)]
+    const searchable = [note.body, note.summaryAnchor?.quote, note.summaryAnchor?.shown, note.textAnchor?.quote, note.pdfAnchor?.quote, ...(note.subtitleReferences ?? []).map(reference => reference.text), ...(note.tags ?? []), note.positionSeconds === null ? '' : formatPosition(note.positionSeconds)]
     return matchesNoteTag(note.tags, tag) && (filter === 'all' || (filter === 'linked' ? linked : !linked)) && (!search || searchable.filter(Boolean).join('\n').toLocaleLowerCase().includes(search))
   })
   if (order === 'latest') return result

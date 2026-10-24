@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { request } from '../../shared/api/client'
 import { APIError } from '../../shared/api/client'
-import type { ReadingNote, TextAnchor, PDFAnchor, SubtitleReference } from '../../shared/api/types'
+import type { ReadingNote, TextAnchor, PDFAnchor, SubtitleReference, SummaryAnchor } from '../../shared/api/types'
 import { notifyNotesChanged, subscribeNotesChanged } from './changes'
 import { changeTaskState } from './taskList'
 
@@ -64,7 +64,7 @@ export function useNotes(contentId: string) {
     finally { publishing.current = false }
   }
 
-  async function save(body: string, positionSeconds: number | null, editingId: string | null, textAnchor?: TextAnchor | null, pdfAnchor?: PDFAnchor | null, tags?: string[], expectedUpdatedAt?: number, operation: 'save' | 'task' = 'save', subtitleReferences?: SubtitleReference[], creation?: { createId: string; frame?: { downloadId: string; positionSeconds: number }; image?: { data: string; positionSeconds: number }; images?: { data: string; positionSeconds: number }[] }): Promise<ReadingNote | null> {
+  async function save(body: string, positionSeconds: number | null, editingId: string | null, textAnchor?: TextAnchor | null, pdfAnchor?: PDFAnchor | null, tags?: string[], expectedUpdatedAt?: number, operation: 'save' | 'task' = 'save', subtitleReferences?: SubtitleReference[], creation?: { createId: string; frame?: { downloadId: string; positionSeconds: number }; image?: { data: string; positionSeconds: number }; images?: { data: string; positionSeconds: number }[] }, summaryAnchor?: SummaryAnchor | null): Promise<ReadingNote | null> {
     if (mutation.current || listRequest.current || loading || readError) return null
     const controller = new AbortController()
     mutation.current = controller
@@ -73,10 +73,10 @@ export function useNotes(contentId: string) {
     setWriteError('')
     setWriteErrorCode('')
     try {
-      const input = { contentId, body, positionSeconds, textAnchor, pdfAnchor, tags, subtitleReferences, createId: creation?.createId }
+      const input = { contentId, body, positionSeconds, textAnchor, pdfAnchor, summaryAnchor, tags, subtitleReferences, createId: creation?.createId }
       const note = await request<ReadingNote>(editingId ? `/notes/${encodeURIComponent(editingId)}` : creation?.images?.length ? '/notes/with-image' : creation?.image ? '/notes/with-image' : creation?.frame ? '/notes/with-frame' : '/notes', {
         method: editingId ? 'PATCH' : 'POST',
-        body: JSON.stringify(editingId ? { body, positionSeconds, textAnchor, pdfAnchor, tags, expectedUpdatedAt, subtitleReferences } : creation?.images?.length ? { note: input, images: creation.images } : creation?.image ? { note: input, image: creation.image } : creation?.frame ? { note: input, capture: creation.frame } : input),
+        body: JSON.stringify(editingId ? { body, positionSeconds, textAnchor, pdfAnchor, summaryAnchor, tags, expectedUpdatedAt, subtitleReferences } : creation?.images?.length ? { note: input, images: creation.images } : creation?.image ? { note: input, image: creation.image } : creation?.frame ? { note: input, capture: creation.frame } : input),
         signal: controller.signal,
       })
       if (controller.signal.aborted) return null

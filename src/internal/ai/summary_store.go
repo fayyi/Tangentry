@@ -71,27 +71,7 @@ func (r *summaryStore) load(ctx context.Context, key string, in SummaryInput, se
 		}
 		return cache, err
 	}
-	rows, err := r.results.AIResults(ctx, kindLegacySummary, legacyTarget(in.ContentID, in.Source))
-	if err != nil {
-		return summaryCache{}, ErrStorage
-	}
-	for _, row := range rows {
-		legacy, err := decodeSummary(row.Value, row.SourceHash)
-		if err != nil {
-			continue
-		}
-		model := Config{BaseURL: legacy.Result.BaseURL, Model: legacy.Result.Model}
-		revised := in
-		revised.Revision = c.Revision
-		if summaryIdentity(in, segments, model) != row.SourceHash && legacySummaryIdentity(revised, segments, model) != row.SourceHash {
-			continue
-		}
-		legacy.Result.Key = key
-		if err := r.write(ctx, legacy); err != nil {
-			return summaryCache{}, err
-		}
-		_ = r.results.DeleteAIResult(ctx, row.Kind, row.SourceHash, row.Target)
-		return legacy, nil
-	}
+	// Legacy summary rows intentionally are not promoted: overview/points/outline
+	// cannot be converted without inventing the new five-level evidence tree.
 	return summaryCache{}, ErrNotFound
 }

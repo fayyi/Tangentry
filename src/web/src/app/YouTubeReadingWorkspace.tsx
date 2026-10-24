@@ -42,7 +42,8 @@ export function YouTubeReadingWorkspace({ id, linkedNoteId, initialItem, jobs, l
   })), [jobs, url])
   const seek = useCallback((seconds: number) => player.current?.seek(seconds) ?? false, [])
   const assistance = useSubtitleAssistance(id, captions, ready ? seek : undefined, { contentId: id, title: initialItem?.title, url })
-  const textSummary = useSummary(id, 'content', undefined, ready ? seek : undefined, captions?.cues.length ? undefined : exportItem?.description)
+  const trustedCaptions = captions?.mismatch ? undefined : captions ?? undefined
+  const textSummary = useSummary(id, 'content', trustedCaptions, ready ? seek : undefined, captions?.cues.length ? undefined : exportItem?.description)
   const activeSummary = assistance?.summary ?? textSummary
   const insights = <AIInsights summary={activeSummary} onSeek={ready ? seek : undefined} contentId={id} context={exportItem?.description ?? ''} revision={activeSummary.inspection?.settings.revision ?? 0}/>
   const toolbarSummary = !assistance ? <ReaderActions><SummaryControl summary={textSummary} source={{contentId: id, title: exportItem?.title, url}}/></ReaderActions> : null

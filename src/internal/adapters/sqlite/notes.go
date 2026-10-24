@@ -6,7 +6,7 @@ import (
 	"tangentry/internal/notes"
 )
 
-const noteColumns = `id, content_id, body, position_seconds, created_at, updated_at, text_anchor, pdf_anchor, tags, pinned, subtitle_references, frame`
+const noteColumns = `id, content_id, body, position_seconds, created_at, updated_at, text_anchor, pdf_anchor, summary_anchor, tags, pinned, subtitle_references, frame`
 
 func (s *Store) ListNotes(ctx context.Context, contentID string) ([]notes.Note, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT `+noteColumns+` FROM notes WHERE content_id=? ORDER BY created_at DESC, rowid DESC`, contentID)

@@ -6,7 +6,7 @@ import type { ArticleBlock, ReadingNote, TextAnchor } from '../../shared/api/typ
 import { anchorRange, hashArticle, highlightSegments, resolveTextAnchor } from '../../shared/text/textAnchors'
 import { TextTranslationControl, useTextTranslation } from '../ai/TextTranslation'
 import { articleTranslationParts } from './articleTranslation'
-import { useSummary } from '../ai/useSummary'
+import { useSummary, type SummaryBlockInput } from '../ai/useSummary'
 import { SummaryControl } from '../ai/SummaryControl'
 import { useArticlePosition } from './useArticlePosition'
 import { ArticleReflowGuard } from './ArticleReflowGuard'
@@ -73,7 +73,16 @@ export function ArticleReader({ ref: externalRef, contentId = '', text, blocks, 
   }, [blocks, annotationText])
   const { pieces, ranges } = useMemo(() => articleTranslationParts(paragraphs), [paragraphs])
   const translation = useTextTranslation(contentId, pieces, 'article')
-  const summary = useSummary(contentId, summarySource ?? '', undefined, undefined, contentId && summarySource ? text : undefined)
+  const summaryBlocks = useMemo<SummaryBlockInput[] | undefined>(() => {
+    if (!blocks?.length) return undefined
+    const result = blocks.filter(block => block.kind !== 'image' && block.kind !== 'emoji' && block.text?.trim()).map(block => ({
+      kind: block.kind,
+      heading: block.kind === 'heading' ? block.text.trim() : undefined,
+      text: block.text.trim(),
+    }))
+    return result.length ? result : undefined
+  }, [blocks])
+  const summary = useSummary(contentId, summarySource ?? '', undefined, undefined, contentId && summarySource ? text : undefined, undefined, summaryBlocks)
   const translatedParagraphs = ranges.map(({ start, end }) => translation.inspection?.result.texts.slice(start, end).join(''))
   useEffect(() => { setTextExpanded(false) }, [contentId, text])
   useEffect(() => {

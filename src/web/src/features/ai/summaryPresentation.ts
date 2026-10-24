@@ -45,7 +45,7 @@ export function summaryControlPresentation(availability: SummaryAvailability): {
   switch (availability) {
     case 'loading': return { label: 'AI 摘要 · 读取中', title: '正在读取摘要状态，请稍候', disabled: true, action: 'none' }
     case 'generating': return { label: 'AI 摘要 · 生成中', title: '摘要正在生成，请稍候', disabled: true, action: 'none' }
-    case 'saved': return { label: 'AI 摘要 · 已保存', title: '这份摘要已经保存', disabled: true, action: 'none' }
+    case 'saved': return { label: 'AI 摘要 · 重新生成', title: '使用当前摘要模型重新生成', disabled: false, action: 'generate' }
     case 'needs-generation': return { label: 'AI 摘要 · 补生成大纲', title: '旧摘要没有大纲，点击重新生成', disabled: false, action: 'generate' }
     case 'ready': return { label: 'AI 摘要', disabled: false, action: 'generate' }
     case 'missing-input': return { label: 'AI 摘要 · 需先转录', title: '当前没有字幕或可用文字，请先转录再摘要', disabled: false, action: 'transcribe' }
@@ -90,22 +90,22 @@ export function summaryAvailability({ input, inspection, loading, pending, error
   if (!inspection) return 'error'
   if (!(inspection.settings.summaryReady ?? inspection.settings.ready)) return 'ai-not-configured'
   if (inspection.active || inspection.settings.translating) return 'busy'
-  if (inspection.result.complete && inspection.result.outline?.length) return 'saved'
-  if (inspection.result.complete && !inspection.result.outline?.length) return 'needs-generation'
+  if (inspection.result.complete && (inspection.result.document?.sections?.length || inspection.result.outline?.length)) return 'saved'
+  if (inspection.result.complete && !inspection.result.document?.sections?.length && !inspection.result.outline?.length) return 'needs-generation'
   return 'ready'
 }
 
 export function summaryButtonState(result: SummaryResult | undefined, loading: boolean, pending: boolean): SummaryButtonState {
   if (loading) return 'loading'
   if (pending) return 'generating'
-  if (result?.complete && result.outline?.length) return 'saved'
-  if (result?.complete && !result.outline?.length) return 'needs-generation'
+  if (result?.complete && (result.document?.sections?.length || result.outline?.length)) return 'saved'
+  if (result?.complete && !result.document?.sections?.length && !result.outline?.length) return 'needs-generation'
   if (result) return 'ready'
   return 'loading'
 }
 
 export function summaryNeedsOutlineRegeneration(result: SummaryResult | undefined): boolean {
-  return Boolean(result?.complete && !result.outline?.length)
+  return Boolean(result?.complete && !result?.document?.sections?.length && !result?.outline?.length)
 }
 
 export function shouldRenderInlineSummary(feed: boolean, toolbarOwnsSummary: boolean): boolean {

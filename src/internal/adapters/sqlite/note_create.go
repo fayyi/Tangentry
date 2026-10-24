@@ -57,6 +57,10 @@ func (s *Store) createNote(ctx context.Context, note notes.Note, frameDataList [
 	if err != nil {
 		return notes.Note{}, err
 	}
+	summaryAnchor, err := marshalNullable(note.SummaryAnchor)
+	if err != nil {
+		return notes.Note{}, err
+	}
 	tags, err := json.Marshal(note.Tags)
 	if err != nil {
 		return notes.Note{}, err
@@ -91,7 +95,7 @@ func (s *Store) createNote(ctx context.Context, note notes.Note, frameDataList [
 			return notes.Note{}, err
 		}
 	}
-	saved, err := scanNote(tx.QueryRowContext(ctx, `INSERT INTO notes (`+noteColumns+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) RETURNING `+noteColumns, note.ID, note.ContentID, note.Body, note.PositionSeconds, note.CreatedAt, note.UpdatedAt, anchor, pdfAnchor, string(tags), note.Pinned, string(references), frame))
+	saved, err := scanNote(tx.QueryRowContext(ctx, `INSERT INTO notes (`+noteColumns+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING `+noteColumns, note.ID, note.ContentID, note.Body, note.PositionSeconds, note.CreatedAt, note.UpdatedAt, anchor, pdfAnchor, summaryAnchor, string(tags), note.Pinned, string(references), frame))
 	if err != nil {
 		return notes.Note{}, err
 	}

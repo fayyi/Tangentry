@@ -309,6 +309,37 @@ func TestAISummaryHTTPIsExplicitAndReturnsValidatedCitations(t *testing.T) {
 	}
 }
 
+func TestAISummaryTitleOverridesHTTPRoundTrip(t *testing.T) {
+	service, err := ai.New(filepath.Join(t.TempDir(), "ai"), ai.NewMemoryResults(), aiTranslatorFunc(func(context.Context, ai.Config, []ai.Segment) ([]ai.Segment, error) {
+		return nil, ai.ErrProvider
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Close()
+	secret := "title-override-test-key"
+	status, err := service.Configure(ai.ConfigureInput{BaseURL: "https://ai-fixture.example/v1", Model: "fixture", Key: &secret, Revision: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := New(nil, nil, nil, Options{AI: service})
+	key := strings.Repeat("a", 64)
+	path := "/api/ai/summaries/" + key + "/titles"
+	response := storageRequest(h, "PUT", path, `{"nodeId":"section-1","title":"自定义章节"}`, "application/json")
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "自定义章节") {
+		t.Fatalf("put title override: %d %s", response.Code, response.Body.String())
+	}
+	response = storageRequest(h, "GET", path, "", "")
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"nodeId":"section-1"`) {
+		t.Fatalf("get title override: %d %s", response.Code, response.Body.String())
+	}
+	response = storageRequest(h, "DELETE", path+"/section-1", "", "")
+	if response.Code != http.StatusOK || strings.Contains(response.Body.String(), `"nodeId":"section-1"`) {
+		t.Fatalf("delete title override: %d %s", response.Code, response.Body.String())
+	}
+	_ = status
+}
+
 func TestAIConnectionCheckIsExplicitPrivateRevisionBoundAndUncached(t *testing.T) {
 	var calls atomic.Int64
 	root := filepath.Join(t.TempDir(), "ai")

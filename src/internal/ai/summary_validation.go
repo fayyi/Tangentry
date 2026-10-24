@@ -14,7 +14,7 @@ func normalizeSummaryInput(in SummaryInput) ([]SummarySegment, error) {
 	if !contentIDValid(in.ContentID) || len(in.Source) < 2 || len(in.Source) > 80 || strings.ContainsAny(in.Source, "\r\n\x00") || in.Revision < 0 {
 		return nil, ErrInvalid
 	}
-	if len(in.Segments) > 0 && in.Text != "" || len(in.Segments) == 0 && strings.TrimSpace(in.Text) == "" {
+	if len(in.Segments) > 0 && (in.Text != "" || len(in.Blocks) > 0) || len(in.Blocks) > 0 && (in.Text != "" || len(in.Segments) > 0) || len(in.Segments) == 0 && len(in.Blocks) == 0 && strings.TrimSpace(in.Text) == "" {
 		return nil, ErrInvalid
 	}
 	if len(in.Segments) > 0 {
@@ -27,6 +27,15 @@ func normalizeSummaryInput(in SummaryInput) ([]SummarySegment, error) {
 			if segment.Index != index || segment.Page < 0 || math.IsNaN(segment.Start) || math.IsNaN(segment.End) || math.IsInf(segment.Start, 0) || math.IsInf(segment.End, 0) || segment.Start < 0 || segment.End < segment.Start || segment.End > 7*24*3600 || !utf8.ValidString(segment.Text) || strings.TrimSpace(segment.Text) == "" || len(segment.Text) > 8000 {
 				return nil, ErrInvalid
 			}
+			if len(segment.CueIDs) > 0 {
+				seenCueIDs := make(map[string]bool, len(segment.CueIDs))
+				for _, cueID := range segment.CueIDs {
+					if !utf8.ValidString(cueID) || strings.TrimSpace(cueID) == "" || len(cueID) > 200 || seenCueIDs[cueID] {
+						return nil, ErrInvalid
+					}
+					seenCueIDs[cueID] = true
+				}
+			}
 			if index > 0 && segment.Page == 0 && out[index-1].Page == 0 && segment.Start < out[index-1].Start {
 				return nil, ErrInvalid
 			}
@@ -36,6 +45,42 @@ func normalizeSummaryInput(in SummaryInput) ([]SummarySegment, error) {
 			return nil, ErrInvalid
 		}
 		return out, nil
+	}
+	if len(in.Blocks) > 0 {
+		segments := make([]SummarySegment, 0, len(in.Blocks))
+		globalIndexes := make(map[int]bool)
+		lastSourceIndex := -1
+		for _, block := range in.Blocks {
+			if !utf8.ValidString(block.Kind) || len(block.Kind) > 40 || strings.ContainsAny(block.Kind, "\r\n\x00") || !utf8.ValidString(block.Heading) || !utf8.ValidString(block.Text) || strings.TrimSpace(block.Text) == "" || len(block.Text) > 8000 || block.Page < 0 {
+				return nil, ErrInvalid
+			}
+			text := strings.TrimSpace(block.Text)
+			if strings.TrimSpace(block.Heading) != "" && strings.TrimSpace(block.Heading) != text {
+				text = strings.TrimSpace(block.Heading) + "\n" + text
+			}
+			indexes := append([]int(nil), block.SegmentIndexes...)
+			if len(indexes) == 0 {
+				nextIndex := len(segments)
+				if lastSourceIndex >= 0 {
+					nextIndex = lastSourceIndex + 1
+				}
+				indexes = []int{nextIndex}
+			}
+			seenIndexes := make(map[int]bool, len(indexes))
+			for _, value := range indexes {
+				if value < 0 || seenIndexes[value] || globalIndexes[value] || (lastSourceIndex >= 0 && value < lastSourceIndex) {
+					return nil, ErrInvalid
+				}
+				seenIndexes[value] = true
+				globalIndexes[value] = true
+				lastSourceIndex = value
+			}
+			segments = append(segments, SummarySegment{Index: len(segments), Page: block.Page, Kind: block.Kind, Heading: block.Heading, SegmentIndexes: indexes, Text: text})
+		}
+		if len(segments) == 0 {
+			return nil, ErrInvalid
+		}
+		return segments, nil
 	}
 	if len(in.Text) > maxSummaryTextBytes || !utf8.ValidString(in.Text) {
 		return nil, ErrInvalid
@@ -158,6 +203,22 @@ func summaryPlan(segments []SummarySegment, budgets ...int) ([][]SummarySegment,
 	return groups, calls
 }
 
+// summarySectionCount provides a deterministic progress denominator before the
+// model has produced the final outline. Structured blocks and subtitle cues
+// already have source-derived chapter boundaries; plain prose falls back to
+// the resumable leaf batches until the reducer can publish the final count.
+func summarySectionCount(segments []SummarySegment, source string, groups [][]SummarySegment) int {
+	if chapterGroups := structuredSectionGroups(segments, source); len(chapterGroups) > 0 {
+		return len(chapterGroups)
+	}
+	if isSubtitleSource(source) {
+		if chapters := subtitleChapterIndices(segments); len(chapters) > 0 {
+			return len(chapters)
+		}
+	}
+	return len(groups)
+}
+
 func validateDraft(draft SummaryDraft, allowed map[int]bool) bool {
 	if !utf8.ValidString(draft.Overview) || strings.TrimSpace(draft.Overview) == "" || len(draft.Overview) > 1200 || len(draft.Points) == 0 || len(draft.Points) > 5 {
 		return false
@@ -245,6 +306,92 @@ func validCachedSummary(result SummaryResult, segments []SummarySegment) bool {
 		if citation != result.Citations[i] {
 			return false
 		}
+	}
+	if result.Document != nil && !validSummaryDocument(result.Document, segments) {
+		return false
+	}
+	return true
+}
+
+func validSummaryDocument(document *SummaryDocument, segments []SummarySegment) bool {
+	if document == nil || document.FormatVersion != summaryFormatVersion || len(document.Levels) != len(summaryLevels) {
+		return false
+	}
+	for index, level := range summaryLevels {
+		if document.Levels[index] != level {
+			return false
+		}
+	}
+	allowed := make(map[int]SummarySegment, len(segments))
+	for _, segment := range segments {
+		allowed[segment.Index] = segment
+	}
+	seenSections := make(map[string]bool)
+	seenUnits := make(map[string]bool)
+	var walk func([]SummarySection) bool
+	walk = func(sections []SummarySection) bool {
+		if len(sections) > 256 {
+			return false
+		}
+		for _, section := range sections {
+			if strings.TrimSpace(section.SectionID) == "" || seenSections[section.SectionID] || strings.TrimSpace(section.Title) == "" || section.Level < 0 || section.Level > 8 {
+				return false
+			}
+			seenSections[section.SectionID] = true
+			for _, evidence := range append(append([]SummaryEvidence{}, section.Source...), section.Evidence...) {
+				if !validSummaryEvidence(evidence, allowed) {
+					return false
+				}
+			}
+			for _, unit := range section.Units {
+				if strings.TrimSpace(unit.UnitID) == "" || seenUnits[unit.UnitID] || strings.TrimSpace(unit.Full) == "" {
+					return false
+				}
+				seenUnits[unit.UnitID] = true
+				for _, evidence := range append(append([]SummaryEvidence{}, unit.Source...), unit.Evidence...) {
+					if !validSummaryEvidence(evidence, allowed) {
+						return false
+					}
+				}
+				for _, sentence := range unit.Sentences {
+					if strings.TrimSpace(sentence.ID) == "" || strings.TrimSpace(sentence.Text) == "" || !strings.Contains(unit.Full, sentence.Text) {
+						return false
+					}
+					for _, evidence := range sentence.Evidence {
+						if !validSummaryEvidence(evidence, allowed) {
+							return false
+						}
+					}
+				}
+				for _, id := range unit.BriefSentenceIDs {
+					found := false
+					for _, sentence := range unit.Sentences {
+						if sentence.ID == id {
+							found = true
+							break
+						}
+					}
+					if !found {
+						return false
+					}
+				}
+			}
+			if !walk(section.Children) {
+				return false
+			}
+		}
+		return true
+	}
+	return walk(document.Sections)
+}
+
+func validSummaryEvidence(evidence SummaryEvidence, allowed map[int]SummarySegment) bool {
+	segment, ok := allowed[evidence.Index]
+	if !ok || strings.TrimSpace(evidence.Quote) == "" || evidence.Quote != segment.Text {
+		return false
+	}
+	if evidence.Start != segment.Start || evidence.End != segment.End || evidence.Page != segment.Page {
+		return false
 	}
 	return true
 }

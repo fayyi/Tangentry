@@ -24,6 +24,10 @@ func (s *Store) EditNote(ctx context.Context, id string, input notes.Edit, updat
 	if len(input.PDFAnchor) > 0 && string(input.PDFAnchor) != "null" {
 		pdfAnchor = string(input.PDFAnchor)
 	}
+	var summaryAnchor any
+	if len(input.SummaryAnchor) > 0 && string(input.SummaryAnchor) != "null" {
+		summaryAnchor = string(input.SummaryAnchor)
+	}
 	var tags any
 	var references any
 	if len(input.SubtitleReferences) > 0 {
@@ -41,7 +45,7 @@ func (s *Store) EditNote(ctx context.Context, id string, input notes.Edit, updat
 		return notes.Note{}, err
 	}
 	defer tx.Rollback()
-	note, err := scanNote(tx.QueryRowContext(ctx, `UPDATE notes SET body=?, position_seconds=?, updated_at=MAX(?, updated_at+1), text_anchor=CASE WHEN ? THEN ? ELSE text_anchor END, pdf_anchor=CASE WHEN ? THEN ? ELSE pdf_anchor END, tags=CASE WHEN ? THEN ? ELSE tags END, subtitle_references=CASE WHEN ? THEN ? ELSE subtitle_references END WHERE id=? AND (? IS NULL OR updated_at=?) RETURNING `+noteColumns, input.Body, input.PositionSeconds, updatedAt, len(input.TextAnchor) > 0, anchor, len(input.PDFAnchor) > 0, pdfAnchor, input.Tags != nil, tags, len(input.SubtitleReferences) > 0, references, id, input.ExpectedUpdatedAt, input.ExpectedUpdatedAt))
+	note, err := scanNote(tx.QueryRowContext(ctx, `UPDATE notes SET body=?, position_seconds=?, updated_at=MAX(?, updated_at+1), text_anchor=CASE WHEN ? THEN ? ELSE text_anchor END, pdf_anchor=CASE WHEN ? THEN ? ELSE pdf_anchor END, summary_anchor=CASE WHEN ? THEN ? ELSE summary_anchor END, tags=CASE WHEN ? THEN ? ELSE tags END, subtitle_references=CASE WHEN ? THEN ? ELSE subtitle_references END WHERE id=? AND (? IS NULL OR updated_at=?) RETURNING `+noteColumns, input.Body, input.PositionSeconds, updatedAt, len(input.TextAnchor) > 0, anchor, len(input.PDFAnchor) > 0, pdfAnchor, len(input.SummaryAnchor) > 0, summaryAnchor, input.Tags != nil, tags, len(input.SubtitleReferences) > 0, references, id, input.ExpectedUpdatedAt, input.ExpectedUpdatedAt))
 	if errors.Is(err, notes.ErrNotFound) && input.ExpectedUpdatedAt != nil {
 		var exists int
 		if lookup := tx.QueryRowContext(ctx, `SELECT 1 FROM notes WHERE id=?`, id).Scan(&exists); lookup == nil {
@@ -59,7 +63,7 @@ func (s *Store) EditNote(ctx context.Context, id string, input notes.Edit, updat
 	if len(note.SubtitleReferences) > 0 && (note.TextAnchor != nil || note.PDFAnchor != nil) {
 		return notes.Note{}, notes.ErrInvalid
 	}
-	if strings.HasPrefix(note.ContentID, "memo:") && (note.PositionSeconds != nil || note.TextAnchor != nil || note.PDFAnchor != nil || len(note.SubtitleReferences) > 0) {
+	if strings.HasPrefix(note.ContentID, "memo:") && (note.PositionSeconds != nil || note.TextAnchor != nil || note.PDFAnchor != nil || note.SummaryAnchor != nil || len(note.SubtitleReferences) > 0) {
 		return notes.Note{}, notes.ErrInvalid
 	}
 	if err := tx.Commit(); err != nil {

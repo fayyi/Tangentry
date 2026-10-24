@@ -61,6 +61,54 @@ func (h *aiHandler) aiSummaryCached(w http.ResponseWriter, r *http.Request) {
 	write(w, 200, result)
 }
 
+func (h *aiHandler) aiSummaryTitles(w http.ResponseWriter, r *http.Request) {
+	if !h.aiReady(w) {
+		return
+	}
+	if len(r.URL.Query()) != 0 {
+		summaryFail(w, ai.ErrInvalid)
+		return
+	}
+	result, err := h.ai.AI.SummaryTitleOverrides(r.Context(), r.PathValue("key"))
+	if err != nil {
+		summaryFail(w, err)
+		return
+	}
+	write(w, http.StatusOK, result)
+}
+
+func (h *aiHandler) aiSummaryTitlePut(w http.ResponseWriter, r *http.Request) {
+	if !h.aiReady(w) {
+		return
+	}
+	var input ai.SummaryTitleOverride
+	if !decodeAIRequest(w, r, &input, 32<<10) {
+		return
+	}
+	result, err := h.ai.AI.PutSummaryTitleOverride(r.Context(), r.PathValue("key"), input)
+	if err != nil {
+		summaryFail(w, err)
+		return
+	}
+	write(w, http.StatusOK, result)
+}
+
+func (h *aiHandler) aiSummaryTitleDelete(w http.ResponseWriter, r *http.Request) {
+	if !h.aiReady(w) {
+		return
+	}
+	if len(r.URL.Query()) != 0 {
+		summaryFail(w, ai.ErrInvalid)
+		return
+	}
+	result, err := h.ai.AI.DeleteSummaryTitleOverride(r.Context(), r.PathValue("key"), r.PathValue("nodeID"))
+	if err != nil {
+		summaryFail(w, err)
+		return
+	}
+	write(w, http.StatusOK, result)
+}
+
 func (h *aiHandler) aiChat(w http.ResponseWriter, r *http.Request) {
 	if !h.aiReady(w) {
 		return

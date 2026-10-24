@@ -51,7 +51,7 @@ test('summary availability explains every blocked state', () => {
 test('summary control presentation exposes next steps for every state', () => {
   expect(summaryControlPresentation('loading')).toMatchObject({ label: 'AI 摘要 · 读取中', title: '正在读取摘要状态，请稍候', disabled: true, action: 'none' })
   expect(summaryControlPresentation('generating')).toMatchObject({ label: 'AI 摘要 · 生成中', title: '摘要正在生成，请稍候', disabled: true, action: 'none' })
-  expect(summaryControlPresentation('saved')).toMatchObject({ label: 'AI 摘要 · 已保存', disabled: true, action: 'none' })
+  expect(summaryControlPresentation('saved')).toMatchObject({ label: 'AI 摘要 · 重新生成', disabled: false, action: 'generate' })
   expect(summaryControlPresentation('needs-generation')).toMatchObject({ disabled: false, action: 'generate' })
   expect(summaryControlPresentation('ready')).toMatchObject({ label: 'AI 摘要', disabled: false, action: 'generate' })
   expect(summaryControlPresentation('ai-not-configured')).toMatchObject({ label: 'AI 摘要 · 去设置', disabled: false, action: 'settings' })
@@ -93,7 +93,7 @@ test('summary control state maps content and inspection to the toolbar action', 
   expect(summaryControlState({ ...busyBase, track: automaticTrack, inspection: inspection({ summaryReady: false }) })).toMatchObject({ availability: 'ai-not-configured', label: 'AI 摘要 · 去设置', disabled: false, action: 'settings' })
   expect(summaryControlState({ ...busyBase, track: automaticTrack, inspection: inspection({ active: true }) })).toMatchObject({ availability: 'busy', label: 'AI 摘要 · 其他任务占用', disabled: true })
   expect(summaryControlState({ ...busyBase, track: automaticTrack, inspection: null, error: '状态读取失败' })).toMatchObject({ availability: 'error', label: 'AI 摘要 · 重试', disabled: false, action: 'retry' })
-  expect(summaryControlState({ ...busyBase, track: automaticTrack, inspection: { ...inspection(), result: result() } })).toMatchObject({ availability: 'saved', label: 'AI 摘要 · 已保存', disabled: true })
+  expect(summaryControlState({ ...busyBase, track: automaticTrack, inspection: { ...inspection(), result: result() } })).toMatchObject({ availability: 'saved', label: 'AI 摘要 · 重新生成', disabled: false, action: 'generate' })
   expect(summaryControlState({ ...busyBase, track: automaticTrack, inspection: { ...inspection(), result: result({ outline: [] }) } })).toMatchObject({ availability: 'needs-generation', label: 'AI 摘要 · 补生成大纲', disabled: false, action: 'generate' })
 })
 

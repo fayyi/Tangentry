@@ -339,12 +339,22 @@ export interface ReadingNote {
   positionSeconds: number | null
   textAnchor?: TextAnchor | null
   pdfAnchor?: PDFAnchor | null
+  summaryAnchor?: SummaryAnchor | null
   subtitleReferences?: SubtitleReference[]
   /** Saved screenshots associated with this note. `frame` is kept for older servers. */
   frames?: NoteFrame[]
   frame?: NoteFrame | null
   createdAt: number
   updatedAt: number
+}
+
+export interface SummaryAnchor {
+  nodeId: string
+  unitId: string
+  level: number
+  sentenceIds?: string[]
+  quote: string
+  shown: string
 }
 
 export interface SubtitleReference { start: number; end: number; text: string; language: string; trackHash?: string }

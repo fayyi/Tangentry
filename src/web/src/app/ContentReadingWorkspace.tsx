@@ -64,7 +64,8 @@ export function ContentReadingWorkspace({ id, linkedNoteId, initialItem, jobs, j
   const discussionText = item?.discussion?.posts?.length ? discussionSummary(item.discussion, discussionRepliesLoaded) : ''
   const summaryText = discussionText || item?.description?.trim() || item?.articleBlocks?.map(block => `${block.text ?? ''}${block.alt ? `\n${block.alt}` : ''}`).join('\n').trim() || item?.images?.map(image => image.alt).filter(Boolean).join('\n').trim() || ''
   const summaryInputText = summaryText || (item?.kind === 'image' ? item.title : '')
-  const textSummary = useSummary(id, 'content', captions ?? undefined, ready ? seek : undefined, captions?.cues.length ? undefined : summaryInputText)
+  const trustedCaptions = captions?.mismatch ? undefined : captions ?? undefined
+  const textSummary = useSummary(id, 'content', trustedCaptions, ready ? seek : undefined, captions?.cues.length ? undefined : summaryInputText)
   const activeSummary = assistance?.summary ?? textSummary
   const contextText = [summaryText, captions?.cues.map(cue => cue.text).join('\n')].filter(Boolean).join('\n')
   const locateQuote = useCallback((quote: string) => {

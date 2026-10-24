@@ -128,14 +128,12 @@ func wireFeatures(dataDir string, configuration config.Config, option Options, r
 	languageAI := newLanguageAI(dataDir, store, option)
 	if languageAI != nil {
 		languageAI.SetSummaryNoteWriter(func(ctx context.Context, result ai.SummaryResult) error {
-			body := fmt.Sprintf("# AI 摘要\n\n%s\n\n## 要点\n\n%s", result.Overview, strings.Join(summaryNotePoints(result.Points), "\n"))
-			if len(result.Outline) > 0 {
-				body += "\n\n## 大纲\n\n" + strings.Join(summaryNoteOutline(result.Outline, 0), "\n")
-			}
+			body := summaryNoteBody(result)
 			createID := summaryNoteID(result.ContentID)
 			saved, err := noteService.Create(ctx, notes.Input{CreateID: createID, ContentID: result.ContentID, Body: body, Tags: []string{"AI摘要"}})
 			if err == nil || err == notes.ErrCreationConflict {
 				if err == nil && saved.Body == body {
+					_ = removeLegacySummaryNotes(ctx, noteService, result.ContentID, createID)
 					return nil
 				}
 				items, listErr := noteService.List(ctx, result.ContentID)
@@ -144,9 +142,20 @@ func wireFeatures(dataDir string, configuration config.Config, option Options, r
 				}
 				for _, note := range items {
 					if note.ID == createID || containsTag(note.Tags, "AI摘要") {
-						_, editErr := noteService.Edit(ctx, note.ID, notes.Edit{Body: body, Tags: &[]string{"AI摘要"}, ExpectedUpdatedAt: &note.UpdatedAt})
-						return editErr
+						if note.ID == createID {
+							_, editErr := noteService.Edit(ctx, note.ID, notes.Edit{Body: body, Tags: &[]string{"AI摘要"}, ExpectedUpdatedAt: &note.UpdatedAt})
+							if editErr != nil {
+								return editErr
+							}
+							return removeLegacySummaryNotes(ctx, noteService, result.ContentID, createID)
+						}
 					}
+				}
+				// A pre-canonical auto note may have a random ID. Preserve its
+				// content only when it is clearly generated, then let the stable
+				// note created above be the sole automatic summary.
+				if err := removeLegacySummaryNotes(ctx, noteService, result.ContentID, createID); err != nil {
+					return err
 				}
 			}
 			return err
@@ -171,6 +180,27 @@ func wireFeatures(dataDir string, configuration config.Config, option Options, r
 			preferences: discovery.NewPreferences(store), savedSubtitles: savedCaptions, subtitles: captions,
 		},
 	}, nil
+}
+
+func removeLegacySummaryNotes(ctx context.Context, service *notes.Service, contentID, keepID string) error {
+	items, err := service.List(ctx, contentID)
+	if err != nil {
+		return err
+	}
+	for _, note := range items {
+		if note.ID == keepID || !containsTag(note.Tags, "AI摘要") || !isGeneratedSummaryNote(note.Body) {
+			continue
+		}
+		if err := service.Delete(ctx, note.ID, note.UpdatedAt); err != nil && !errors.Is(err, notes.ErrNotFound) {
+			return err
+		}
+	}
+	return nil
+}
+
+func isGeneratedSummaryNote(body string) bool {
+	trimmed := strings.TrimSpace(body)
+	return strings.HasPrefix(trimmed, "# AI 摘要") || strings.HasPrefix(trimmed, "# AI 主题地图")
 }
 
 func resolveDouyinPlayback(ctx context.Context, id string, pageResolve, ytdlpResolve func(context.Context, string) (playback.Source, error)) (playback.Source, error) {
@@ -227,6 +257,137 @@ func summaryNotePoints(points []ai.SummaryPoint) []string {
 		result = append(result, fmt.Sprintf("%d. %s", index+1, point.Text))
 	}
 	return result
+}
+
+// summaryNoteBody keeps the generated note useful outside the AI panel. New
+// content-tree summaries preserve all five reading levels and their evidence;
+// legacy summaries retain the previous format until they are regenerated.
+func summaryNoteBody(result ai.SummaryResult) string {
+	if result.Document != nil && len(result.Document.Sections) > 0 {
+		return summaryNoteDocument(result.Document)
+	}
+	body := fmt.Sprintf("# AI 摘要\n\n%s\n\n## 要点\n\n%s", result.Overview, strings.Join(summaryNotePoints(result.Points), "\n"))
+	if len(result.Outline) > 0 {
+		body += "\n\n## 大纲\n\n" + strings.Join(summaryNoteOutline(result.Outline, 0), "\n")
+	}
+	return body
+}
+
+func summaryNoteDocument(document *ai.SummaryDocument) string {
+	lines := []string{"# AI 主题地图", ""}
+	if strings.TrimSpace(document.Topic) != "" {
+		lines = append(lines, "## Topic", "", document.Topic, "")
+	}
+	for _, section := range document.Sections {
+		summaryNoteSection(&lines, section, 2)
+	}
+	return strings.TrimRight(strings.Join(lines, "\n"), "\n")
+}
+
+func summaryNoteSection(lines *[]string, section ai.SummarySection, headingLevel int) {
+	if strings.TrimSpace(section.Title) != "" {
+		level := headingLevel
+		if level < 2 {
+			level = 2
+		}
+		if level > 6 {
+			level = 6
+		}
+		*lines = append(*lines, strings.Repeat("#", level)+" "+section.Title, "")
+	}
+	if strings.TrimSpace(section.Topic) != "" {
+		*lines = append(*lines, "**Topic:** "+section.Topic, "")
+	}
+	if strings.TrimSpace(section.Takeaway) != "" {
+		*lines = append(*lines, "**Takeaway:** "+section.Takeaway, "")
+	}
+	if section.End > section.Start {
+		*lines = append(*lines, fmt.Sprintf("时间：%.3f–%.3f 秒", section.Start, section.End), "")
+	} else if section.Page > 0 {
+		*lines = append(*lines, fmt.Sprintf("页码：第 %d 页", section.Page), "")
+	}
+	if evidence := summaryNoteEvidence(section.Evidence, section.Source); len(evidence) > 0 {
+		*lines = append(*lines, "**证据：**")
+		*lines = append(*lines, evidence...)
+		*lines = append(*lines, "")
+	}
+	for _, unit := range section.Units {
+		summaryNoteUnit(lines, unit)
+	}
+	for _, child := range section.Children {
+		summaryNoteSection(lines, child, headingLevel+1)
+	}
+}
+
+func summaryNoteUnit(lines *[]string, unit ai.SummaryUnit) {
+	title := strings.TrimSpace(unit.Topic)
+	if title == "" {
+		title = strings.TrimSpace(unit.Takeaway)
+	}
+	if title == "" {
+		title = "内容单元"
+	}
+	*lines = append(*lines, "### "+title, "")
+	if strings.TrimSpace(unit.Takeaway) != "" {
+		*lines = append(*lines, "**Takeaway:** "+unit.Takeaway, "")
+	}
+	if strings.TrimSpace(unit.Key) != "" {
+		*lines = append(*lines, "**Key:** "+unit.Key, "")
+	}
+	if strings.TrimSpace(unit.Reason) != "" {
+		*lines = append(*lines, "**Reason:** "+unit.Reason, "")
+	}
+	if len(unit.BriefSentenceIDs) > 0 && len(unit.Sentences) > 0 {
+		briefIDs := make(map[string]bool, len(unit.BriefSentenceIDs))
+		for _, id := range unit.BriefSentenceIDs {
+			briefIDs[id] = true
+		}
+		*lines = append(*lines, "**Brief:**", "")
+		for _, sentence := range unit.Sentences {
+			if briefIDs[sentence.ID] && strings.TrimSpace(sentence.Text) != "" {
+				*lines = append(*lines, "> "+sentence.Text)
+			}
+		}
+		*lines = append(*lines, "")
+	}
+	if strings.TrimSpace(unit.Full) != "" {
+		*lines = append(*lines, "**Full:**", "", unit.Full, "")
+	}
+	sentenceEvidence := make([][]ai.SummaryEvidence, 0, len(unit.Sentences))
+	for _, sentence := range unit.Sentences {
+		sentenceEvidence = append(sentenceEvidence, sentence.Evidence)
+	}
+	if evidence := summaryNoteEvidence(append([][]ai.SummaryEvidence{unit.Evidence, unit.Source}, sentenceEvidence...)...); len(evidence) > 0 {
+		*lines = append(*lines, "**证据：**")
+		*lines = append(*lines, evidence...)
+		*lines = append(*lines, "")
+	}
+}
+
+func summaryNoteEvidence(groups ...[]ai.SummaryEvidence) []string {
+	seen := map[string]bool{}
+	lines := make([]string, 0)
+	for _, entries := range groups {
+		for _, evidence := range entries {
+			quote := strings.TrimSpace(evidence.Quote)
+			if quote == "" {
+				continue
+			}
+			key := fmt.Sprintf("%s\x00%d\x00%s\x00%.9f\x00%.9f\x00%d\x00%s", evidence.ID, evidence.Index, quote, evidence.Start, evidence.End, evidence.Page, strings.Join(evidence.CueIDs, ","))
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			location := ""
+			if evidence.End > evidence.Start {
+				location = fmt.Sprintf(" · %.3f–%.3f 秒", evidence.Start, evidence.End)
+			} else if evidence.Page > 0 {
+				location = fmt.Sprintf(" · 第 %d 页", evidence.Page)
+			}
+			lines = append(lines, fmt.Sprintf("- %s%s", quote, location))
+		}
+	}
+	return lines
 }
 
 func summaryNoteOutline(nodes []ai.SummaryOutline, depth int) []string {

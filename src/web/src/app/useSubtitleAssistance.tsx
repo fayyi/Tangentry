@@ -15,9 +15,12 @@ export function useSubtitleAssistance(contentId: string, track: SubtitleTrack | 
   const availableLanguages = platformStateCurrent ? platformState.languages : []
   const platformLanguagesReady = platformStateCurrent ? platformState.ready : !contentId.startsWith('bilibili:') && !contentId.startsWith('youtube:')
   const usableTrack = track?.cues.length ? track : null
+  // A platform AI track marked as mismatched may still be useful for manual
+  // reading, but it must never become the source of a summary or translation.
+  const trustedTrack = usableTrack && !usableTrack.mismatch ? usableTrack : null
   const nativeTarget = preferredSubtitleLanguage(availableLanguages, selectedTarget)
-  const translation = useSubtitleTranslation(contentId, usableTrack ?? undefined, undefined, selectedTarget, availableLanguages, platformLanguagesReady)
-  const summary = useSummary(contentId, 'subtitle', usableTrack ?? undefined, onSeek)
+  const translation = useSubtitleTranslation(contentId, trustedTrack ?? undefined, undefined, selectedTarget, availableLanguages, platformLanguagesReady)
+  const summary = useSummary(contentId, 'subtitle', trustedTrack ?? undefined, onSeek)
   const updatePlatformLanguages = useCallback((languages: SubtitleLanguage[], ready: boolean, manualSelection = false) => {
     const available = manualSelection ? [] : languages
     setPlatformState(previous => {
@@ -26,5 +29,5 @@ export function useSubtitleAssistance(contentId: string, track: SubtitleTrack | 
     })
   }, [contentId])
   if (!usableTrack && !nativeTarget && availableLanguages.length === 0) return undefined
-  return { track: usableTrack ?? undefined, nativeTarget, targetLanguage: selectedTarget, onTargetLanguageChange: setSelectedTarget, onPlatformLanguagesChange: updatePlatformLanguages, controls: <><SubtitleTranslation translation={translation} targetLabel={subtitleTargetLabel(selectedTarget)} nativeTarget={nativeTarget} targetLanguage={selectedTarget} onTargetLanguageChange={setSelectedTarget} hasSourceTrack={Boolean(usableTrack)} />{usableTrack && showSummary && <ReaderActions><SummaryControl summary={summary} source={source}/></ReaderActions>}</>, texts: translation.show ? translation.inspection?.result.texts : undefined, summary }
+  return { track: usableTrack ?? undefined, nativeTarget, targetLanguage: selectedTarget, onTargetLanguageChange: setSelectedTarget, onPlatformLanguagesChange: updatePlatformLanguages, controls: <><SubtitleTranslation translation={translation} targetLabel={subtitleTargetLabel(selectedTarget)} nativeTarget={nativeTarget} targetLanguage={selectedTarget} onTargetLanguageChange={setSelectedTarget} hasSourceTrack={Boolean(trustedTrack)} />{trustedTrack && showSummary && <ReaderActions><SummaryControl summary={summary} source={source}/></ReaderActions>}</>, texts: translation.show ? translation.inspection?.result.texts : undefined, summary }
 }

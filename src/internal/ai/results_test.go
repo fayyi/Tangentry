@@ -45,7 +45,7 @@ func TestSummaryInspectionRejectsMismatchedPlanAndReusesOtherMetadata(t *testing
 	}
 }
 
-func TestLegacyJSONCachesImportOnceAndPromoteAcrossModelChanges(t *testing.T) {
+func TestLegacyJSONCachesImportTranslationsAndDiscardOldSummaries(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "ai")
 	in := source(3)
 	summaryIn := SummaryInput{ContentID: "rss:article-example", Source: "article:feed", Text: "Original paragraph", Revision: 1}
@@ -80,15 +80,14 @@ func TestLegacyJSONCachesImportOnceAndPromoteAcrossModelChanges(t *testing.T) {
 		}
 		return translations(segments), nil
 	}), summaryProviderFunc(func(context.Context, Config, SummaryRequest) (SummaryDraft, error) {
-		t.Fatal("legacy completed summary invoked provider")
-		return SummaryDraft{}, nil
+		return SummaryDraft{Overview: "新摘要", Points: []SummaryPoint{{Text: "新要点", Indices: []int{0}}}}, nil
 	}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if store.Count() != 2 {
-		t.Fatal("legacy caches not imported", store.Count())
+	if store.Count() != 1 {
+		t.Fatal("only translation cache should be imported", store.Count())
 	}
 	for _, dir := range []string{"translations", "summaries"} {
 		if _, err := os.Stat(filepath.Join(root, dir)); !errors.Is(err, os.ErrNotExist) {
@@ -114,8 +113,8 @@ func TestLegacyJSONCachesImportOnceAndPromoteAcrossModelChanges(t *testing.T) {
 	}
 	summaryIn.Revision = status.Revision
 	summaryResult, err := s.SummaryGenerate(context.Background(), summaryIn)
-	if err != nil || summaryResult.Key != summaryKey(summaryIn, segments) || summaryResult.Overview != "已有摘要" {
-		t.Fatal("legacy summary not adopted", err)
+	if err != nil || summaryResult.Key != summaryKey(summaryIn, segments) || summaryResult.Overview != "新摘要" {
+		t.Fatal("legacy summary was not regenerated", err, summaryResult)
 	}
 	if rows, _ := store.AIResults(context.Background(), kindLegacyTranslation, legacyTarget(in.ContentID, in.Track.Language)); len(rows) != 0 {
 		t.Fatal("promoted legacy row kept")

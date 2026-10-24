@@ -14,6 +14,7 @@ const (
 	kindTranslation       = "translation"
 	kindTitle             = "title"
 	kindSummary           = "summary"
+	kindSummaryTitle      = "summary-title"
 	kindLegacyTranslation = "legacy-translation"
 	kindLegacySummary     = "legacy-summary"
 	targetChinese         = "zh-Hans"

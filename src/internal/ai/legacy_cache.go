@@ -22,6 +22,26 @@ func importLegacyCache(root string, results ResultStore) {
 		if err != nil {
 			continue
 		}
+		if legacy.kind == kindLegacySummary {
+			// Summary shape changed incompatibly. Remove legacy summary payloads
+			// instead of guessing old overview/points/outline into the new tree.
+			failed := false
+			for _, entry := range entries {
+				if strings.HasSuffix(entry.Name(), ".json") && entry.Type().IsRegular() {
+					if err := os.Remove(filepath.Join(dir, entry.Name())); err != nil {
+						failed = true
+					}
+				}
+			}
+			if failed {
+				slog.Warn("legacy summary cache cleanup incomplete; it will be retried on next start", "directory", legacy.dir)
+				continue
+			}
+			if err := os.Rename(dir, dir+".imported"); err != nil {
+				slog.Warn("legacy summary cache removed but its directory could not be renamed", "directory", legacy.dir)
+			}
+			continue
+		}
 		failed := false
 		for _, entry := range entries {
 			key, ok := strings.CutSuffix(entry.Name(), ".json")

@@ -19,6 +19,39 @@ func (f summaryProviderFunc) Summarize(ctx context.Context, c Config, r SummaryR
 
 type combinedAIProvider struct{ summaryProviderFunc }
 
+type documentSummaryProvider struct {
+	calls int
+}
+
+func (p *documentSummaryProvider) Translate(context.Context, Config, []Segment) ([]Segment, error) {
+	return nil, ErrProvider
+}
+func (p *documentSummaryProvider) SupportsSummaryDocument(Config) bool { return true }
+func (p *documentSummaryProvider) Summarize(_ context.Context, _ Config, request SummaryRequest) (SummaryDraft, error) {
+	p.calls++
+	if request.Mode != "document" {
+		return SummaryDraft{}, ErrFormat
+	}
+	return SummaryDraft{Overview: "一次完成", Points: []SummaryPoint{{Text: "关键点", Indices: []int{0}}}, Document: &SummaryDocument{Sections: []SummarySection{{Title: "章节", Source: []SummaryEvidence{{Index: 0, Quote: request.Segments[0].Text}}, Units: []SummaryUnit{{Takeaway: "关键点", Full: request.Segments[0].Text, Sentences: []SummarySentence{{Text: request.Segments[0].Text, Evidence: []SummaryEvidence{{Index: 0, Quote: request.Segments[0].Text}}}}, BriefSentenceIDs: []string{"sentence"}}}}}}}, nil
+}
+
+func TestShortSummaryUsesSingleDocumentCallWhenProviderSupportsIt(t *testing.T) {
+	provider := &documentSummaryProvider{}
+	service, err := New(filepath.Join(t.TempDir(), "ai"), NewMemoryResults(), provider, provider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Close()
+	status, err := service.Configure(ConfigureInput{BaseURL: "https://summary-fixture.example/v1", Model: "fixture", Revision: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.SummaryGenerate(context.Background(), SummaryInput{ContentID: "rss:document-mode", Source: "article:original", Text: "原文", Revision: status.Revision})
+	if err != nil || !result.Complete || result.CompletedCalls != 1 || result.Document == nil || provider.calls != 1 {
+		t.Fatalf("document mode was not used: %#v calls=%d err=%v", result, provider.calls, err)
+	}
+}
+
 func TestSummaryKeepsMoreThanEightValidCitationsAndReusesSavedResult(t *testing.T) {
 	calls := 0
 	provider := combinedAIProvider{summaryProviderFunc(func(_ context.Context, _ Config, request SummaryRequest) (SummaryDraft, error) {
@@ -459,6 +492,9 @@ func TestSummaryUsesExplicitCallsResumeAndBuildsTimedCitations(t *testing.T) {
 	if err != nil || partial.Result.CompletedCalls != 1 || partial.Result.Complete {
 		t.Fatalf("partial: %#v %v", partial, err)
 	}
+	if partial.Result.Progress.CurrentCall != 0 || partial.Result.Progress.Phase != "error" || partial.Result.Progress.Error == "" {
+		t.Fatalf("failed call did not leave resumable progress: %#v", partial.Result.Progress)
+	}
 	result, err := service.SummaryGenerate(context.Background(), input)
 	if err != nil {
 		t.Fatal(err)
@@ -468,6 +504,43 @@ func TestSummaryUsesExplicitCallsResumeAndBuildsTimedCitations(t *testing.T) {
 	}
 	if _, err := service.SummaryGenerate(context.Background(), input); err != nil || calls != 4 {
 		t.Fatalf("cached summary invoked provider: %v calls=%d", err, calls)
+	}
+}
+
+func TestSummaryFinalReductionTimeoutResumesWithVerifiedDrafts(t *testing.T) {
+	calls := 0
+	provider := combinedAIProvider{summaryProviderFunc(func(_ context.Context, _ Config, request SummaryRequest) (SummaryDraft, error) {
+		calls++
+		if request.Mode == "reduce" && len(request.Drafts) == 3 {
+			return SummaryDraft{}, context.DeadlineExceeded
+		}
+		if request.Mode == "leaf" {
+			return SummaryDraft{Overview: "章节摘要", Points: []SummaryPoint{{Text: "章节要点", Indices: []int{request.Segments[0].Index}}}, Outline: []SummaryOutline{{Title: "章节", Level: 0, Indices: []int{request.Segments[0].Index}}}}, nil
+		}
+		return SummaryDraft{Overview: "合并摘要", Points: []SummaryPoint{{Text: "合并要点", Indices: []int{request.Drafts[0].Points[0].Indices[0]}}}, Outline: []SummaryOutline{{Title: "合并", Level: 0, Indices: []int{request.Drafts[0].Points[0].Indices[0]}}}}, nil
+	})}
+	service, err := New(filepath.Join(t.TempDir(), "ai"), NewMemoryResults(), provider, provider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Close()
+	status, err := service.Configure(ConfigureInput{BaseURL: "https://ai-fixture.example/v1", Model: "fixture", Revision: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	segments := make([]SummarySegment, 36)
+	for i := range segments {
+		segments[i] = SummarySegment{Index: i, Text: strings.Repeat("cue ", 700)}
+	}
+	input := SummaryInput{ContentID: "youtube:final-reduction", Source: "subtitle", Revision: status.Revision, Segments: segments}
+	result, err := service.SummaryGenerate(context.Background(), input)
+	if err != nil || !result.Complete || result.CompletedCalls != result.TotalCalls {
+		t.Fatalf("final reduction did not recover locally: complete=%v calls=%d/%d err=%v", result.Complete, result.CompletedCalls, result.TotalCalls, err)
+	}
+	beforeRetry := calls
+	cached, err := service.SummaryGenerate(context.Background(), input)
+	if err != nil || !cached.Complete || calls != beforeRetry {
+		t.Fatalf("recovered summary was regenerated: calls=%d before=%d err=%v", calls, beforeRetry, err)
 	}
 }
 
@@ -573,5 +646,42 @@ func TestSummaryInputValidationBoundariesAndAutomaticCueShape(t *testing.T) {
 		if _, err := normalizeSummaryInput(invalid); !errors.Is(err, ErrInvalid) {
 			t.Fatalf("invalid cue accepted: %#v", invalid)
 		}
+	}
+}
+
+func TestSummaryDocumentUsesStructuredHeadingsAsStableSections(t *testing.T) {
+	segments, err := normalizeSummaryInput(SummaryInput{ContentID: "rss:structured", Source: "article:feed", Blocks: []SummaryBlock{
+		{Kind: "heading", Text: "第一章"},
+		{Kind: "paragraph", Text: "第一段"},
+		{Kind: "heading", Text: "第二章"},
+		{Kind: "paragraph", Text: "第二段"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := SummaryResult{ContentID: "rss:structured", Source: "article:feed"}
+	document := buildSummaryDocument(result, SummaryDraft{Overview: "总览", Points: []SummaryPoint{{Text: "第一点", Indices: []int{1}}, {Text: "第二点", Indices: []int{3}}}}, segments)
+	if len(document.Sections) != 2 || document.Sections[0].Title != "第一章" || document.Sections[1].Title != "第二章" {
+		t.Fatalf("structured headings not preserved: %#v", document.Sections)
+	}
+	if document.Sections[0].SectionID == document.Sections[1].SectionID || len(document.Sections[0].Units) != 1 || len(document.Sections[1].Units) != 1 {
+		t.Fatalf("section identities or units are unstable: %#v", document.Sections)
+	}
+}
+
+func TestSummaryBlocksRejectOverlappingSourceRanges(t *testing.T) {
+	_, err := normalizeSummaryInput(SummaryInput{ContentID: "pdf:structured", Source: "pdf:document", Blocks: []SummaryBlock{
+		{Kind: "heading", Text: "第一章", SegmentIndexes: []int{10}},
+		{Kind: "paragraph", Text: "重复来源", SegmentIndexes: []int{10}},
+	}})
+	if !errors.Is(err, ErrInvalid) {
+		t.Fatalf("overlapping block source indexes accepted: %v", err)
+	}
+	_, err = normalizeSummaryInput(SummaryInput{ContentID: "pdf:structured", Source: "pdf:document", Blocks: []SummaryBlock{
+		{Kind: "heading", Text: "第一章", SegmentIndexes: []int{10}},
+		{Kind: "paragraph", Text: "倒序来源", SegmentIndexes: []int{9}},
+	}})
+	if !errors.Is(err, ErrInvalid) {
+		t.Fatalf("out-of-order block source indexes accepted: %v", err)
 	}
 }

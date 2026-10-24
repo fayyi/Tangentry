@@ -5,7 +5,7 @@ import { APIError, request } from '../../shared/api/client'
 import type { ArticleDocument, ContentItem, ReadingNote, TextAnchor } from '../../shared/api/types'
 import { ArticleReader, type ArticleReaderHandle } from './ArticleReader'
 import { hashArticle, resolveTextAnchor } from '../../shared/text/textAnchors'
-import { useSummary } from '../ai/useSummary'
+import { useSummary, type SummaryBlockInput } from '../ai/useSummary'
 import { SummaryControl } from '../ai/SummaryControl'
 import { cardDescription } from '../../shared/ui/cardDescription'
 import { articleSource, rememberArticleSource } from './articleSource'
@@ -105,7 +105,17 @@ export function FullTextArticle({ item, notes, focus, onQuote, onOpenNotes, onUn
   }
   const hash = feedHash.text === feedAnchorText ? feedHash.hash : ''
   const summaryText = source === 'original' && doc ? doc.text : description
-  const summary = useSummary(item.id, `article:${source}`, undefined, undefined, summaryText)
+  const summaryBlocks = useMemo<SummaryBlockInput[] | undefined>(() => {
+    const blocks = source === 'original' && doc ? doc.blocks : feedBlocks
+    if (!blocks?.length) return undefined
+    const result = blocks.filter(block => block.kind !== 'image' && block.kind !== 'emoji' && block.text?.trim()).map(block => ({
+      kind: block.kind,
+      heading: block.kind === 'heading' ? block.text.trim() : undefined,
+      text: block.text.trim(),
+    }))
+    return result.length ? result : undefined
+  }, [doc, feedBlocks, source])
+  const summary = useSummary(item.id, `article:${source}`, undefined, undefined, summaryText, undefined, summaryBlocks)
   const missing = useMemo(() => notes.filter(note => note.textAnchor && !resolveTextAnchor(feedAnchorText, hash, note.textAnchor) && (!doc || !resolveTextAnchor(doc.text, doc.sourceHash, note.textAnchor))).map(note => note.id), [notes, feedAnchorText, hash, doc])
   useEffect(() => { if (hash && known) onUnresolved?.(missing) }, [missing, hash, known, onUnresolved])
   useEffect(() => {

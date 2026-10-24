@@ -7,7 +7,8 @@ import { usePageVisibility } from '../../shared/hooks/usePageVisibility'
 import { notifyNotesChanged } from '../notes/changes'
 
 export interface SummarySegmentInput { index: number; start?: number; end?: number; page?: number; text: string }
-export interface SummaryInput { contentId: string; source: string; revision: number; text?: string; segments?: SummarySegmentInput[] }
+export interface SummaryBlockInput { kind: string; heading?: string; text: string; page?: number; segmentIndexes?: number[] }
+export interface SummaryInput { contentId: string; source: string; revision: number; text?: string; segments?: SummarySegmentInput[]; blocks?: SummaryBlockInput[] }
 
 export function summaryInputFromTrack(contentId: string, source: string, track: SubtitleTrack): SummaryInput | null {
   if (!track.cues.length) return null
@@ -18,12 +19,12 @@ export function summaryInputFromText(contentId: string, source: string, text?: s
   return text?.trim() ? { contentId, source, text, revision: 0 } : null
 }
 
-export function useSummary(contentId: string, source: string, track?: SubtitleTrack, onSeek?: (seconds: number) => void, text?: string, segments?: SummarySegmentInput[]) {
+export function useSummary(contentId: string, source: string, track?: SubtitleTrack, onSeek?: (seconds: number) => void, text?: string, segments?: SummarySegmentInput[], blocks?: SummaryBlockInput[]) {
   const visible = usePageVisibility()
   const input = useMemo(() => {
     const trackInput = track ? summaryInputFromTrack(contentId, source, track) : null
-    return trackInput ?? (segments?.length ? { contentId, source, segments, revision: 0 } : summaryInputFromText(contentId, source, text))
-  }, [contentId, source, track, text, segments])
+    return trackInput ?? (segments?.length ? { contentId, source, segments, revision: 0 } : blocks?.length ? { contentId, source, blocks, revision: 0 } : summaryInputFromText(contentId, source, text))
+  }, [contentId, source, track, text, segments, blocks])
   const scope = useMemo(() => input ? JSON.stringify(input) : '', [input])
   const liveScope = useRef(scope); liveScope.current = scope
   const [inspection, setInspection] = useState<SummaryInspection | null>(null)

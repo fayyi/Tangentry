@@ -30,6 +30,7 @@ type Note struct {
 	PositionSeconds    *float64            `json:"positionSeconds"`
 	TextAnchor         *TextAnchor         `json:"textAnchor"`
 	PDFAnchor          *PDFAnchor          `json:"pdfAnchor"`
+	SummaryAnchor      *SummaryAnchor      `json:"summaryAnchor,omitempty"`
 	SubtitleReferences []SubtitleReference `json:"subtitleReferences,omitempty"`
 	// Frames contains every captured still in creation order. Frame is retained
 	// as a compatibility alias for clients that only understand one screenshot.
@@ -49,6 +50,7 @@ type Input struct {
 	PositionSeconds    *float64            `json:"positionSeconds"`
 	TextAnchor         *TextAnchor         `json:"textAnchor"`
 	PDFAnchor          *PDFAnchor          `json:"pdfAnchor"`
+	SummaryAnchor      *SummaryAnchor      `json:"summaryAnchor"`
 	SubtitleReferences []SubtitleReference `json:"subtitleReferences"`
 	Tags               []string            `json:"tags"`
 }
@@ -60,6 +62,7 @@ type Edit struct {
 	// Omission preserves the existing anchor; explicit null detaches it.
 	TextAnchor         json.RawMessage `json:"textAnchor"`
 	PDFAnchor          json.RawMessage `json:"pdfAnchor"`
+	SummaryAnchor      json.RawMessage `json:"summaryAnchor"`
 	SubtitleReferences json.RawMessage `json:"subtitleReferences"`
 	// Omission preserves tags; an explicit empty array removes them.
 	Tags *[]string `json:"tags"`
@@ -135,6 +138,9 @@ func prepareNote(input Input) (Note, error) {
 	if err := validatePDFAnchor(input.PDFAnchor); err != nil {
 		return Note{}, err
 	}
+	if err := validateSummaryAnchor(input.SummaryAnchor); err != nil {
+		return Note{}, err
+	}
 	if input.TextAnchor != nil && input.PDFAnchor != nil {
 		return Note{}, ErrInvalid
 	}
@@ -144,7 +150,7 @@ func prepareNote(input Input) (Note, error) {
 	if len(input.SubtitleReferences) > 0 && (input.TextAnchor != nil || input.PDFAnchor != nil) {
 		return Note{}, ErrInvalid
 	}
-	if (input.ContentID == "" || strings.HasPrefix(input.ContentID, "memo:")) && (input.PositionSeconds != nil || input.TextAnchor != nil || input.PDFAnchor != nil || len(input.SubtitleReferences) > 0) {
+	if (input.ContentID == "" || strings.HasPrefix(input.ContentID, "memo:")) && (input.PositionSeconds != nil || input.TextAnchor != nil || input.PDFAnchor != nil || input.SummaryAnchor != nil || len(input.SubtitleReferences) > 0) {
 		return Note{}, ErrInvalid
 	}
 	tags, err := normalizeTags(input.Tags)
@@ -171,7 +177,7 @@ func prepareNote(input Input) (Note, error) {
 	if input.ContentID == "" {
 		input.ContentID = "memo:" + id
 	}
-	return Note{CreationHash: hash, ID: id, ContentID: input.ContentID, Body: input.Body, PositionSeconds: input.PositionSeconds, TextAnchor: input.TextAnchor, PDFAnchor: input.PDFAnchor, SubtitleReferences: input.SubtitleReferences, Tags: tags, CreatedAt: now, UpdatedAt: now}, nil
+	return Note{CreationHash: hash, ID: id, ContentID: input.ContentID, Body: input.Body, PositionSeconds: input.PositionSeconds, TextAnchor: input.TextAnchor, PDFAnchor: input.PDFAnchor, SummaryAnchor: input.SummaryAnchor, SubtitleReferences: input.SubtitleReferences, Tags: tags, CreatedAt: now, UpdatedAt: now}, nil
 }
 
 func (s *Service) Edit(ctx context.Context, id string, input Edit) (Note, error) {
@@ -208,6 +214,16 @@ func (s *Service) Edit(ctx context.Context, id string, input Edit) (Note, error)
 			return Note{}, err
 		}
 		input.PDFAnchor, err = json.Marshal(anchor)
+		if err != nil {
+			return Note{}, err
+		}
+	}
+	if len(input.SummaryAnchor) > 0 {
+		anchor, err := decodeSummaryAnchor(input.SummaryAnchor)
+		if err != nil {
+			return Note{}, err
+		}
+		input.SummaryAnchor, err = json.Marshal(anchor)
 		if err != nil {
 			return Note{}, err
 		}
