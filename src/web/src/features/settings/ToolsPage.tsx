@@ -1,4 +1,4 @@
-import { Eye, Languages, Mic, HardDrive, RotateCcw, UserRound, ShieldCheck } from 'lucide-react'
+import { Eye, Languages, Mic, HardDrive, RotateCcw, UserRound, ShieldCheck, Bot } from 'lucide-react'
 import { replacePath } from '../../shared/browser/historyStack'
 import { useEffect, useState } from 'react'
 import { SettingsShell, type SettingsNavItem } from './ui/SettingsShell'
@@ -13,12 +13,13 @@ import { TranscriptionSettingsPage } from './pages/TranscriptionSettingsPage'
 import { StorageSettingsPage } from './pages/StorageSettingsPage'
 import { BackupSettingsPage } from './pages/BackupSettingsPage'
 import { AboutSettingsPage } from './pages/AboutSettingsPage'
+import { AgentSettingsPage } from './pages/AgentSettingsPage'
 
-type SettingsSection = 'display' | 'accounts' | 'translation' | 'transcription' | 'storage' | 'backup' | 'about'
+type SettingsSection = 'display' | 'accounts' | 'translation' | 'transcription' | 'storage' | 'backup' | 'agent' | 'about'
 function sectionFromURL(): SettingsSection {
   const hash = window.location.hash.slice(1)
   if (hash === 'discovery') return 'accounts'
-  return ['display', 'accounts', 'translation', 'transcription', 'storage', 'backup', 'about'].includes(hash) ? hash as SettingsSection : 'display'
+  return ['display', 'accounts', 'translation', 'transcription', 'storage', 'backup', 'agent', 'about'].includes(hash) ? hash as SettingsSection : 'display'
 }
 
 export function ToolsPage({ downloads, columns, onColumns, onCookieChanged, onYouTubeFeed, onDiscover }: {
@@ -62,6 +63,7 @@ export function ToolsPage({ downloads, columns, onColumns, onCookieChanged, onYo
     { id: 'transcription', group: '连接', label: '字幕转录', hint: '选择识别方式', icon: <Mic size={16} /> },
     { id: 'storage', group: '本地数据', label: '下载与存储', hint: '选择文件位置', icon: <HardDrive size={16} /> },
     { id: 'backup', group: '本地数据', label: '备份与恢复', hint: '执行数据操作', icon: <ShieldCheck size={16} /> },
+    { id: 'agent', group: '系统', label: 'Agent 接入', hint: '配置本机 MCP', icon: <Bot size={16} /> },
     { id: 'about', group: '系统', label: '关于与更新', hint: '检查应用更新', icon: <RotateCcw size={16} /> },
   ]
   let content = <DisplaySettingsPage />
@@ -70,6 +72,7 @@ export function ToolsPage({ downloads, columns, onColumns, onCookieChanged, onYo
   if (section === 'transcription') content = <TranscriptionSettingsPage revision={modelRevision} />
   if (section === 'storage') content = <StorageSettingsPage downloads={downloads} onModelDirectoryChanged={() => setModelRevision(value => value + 1)} />
   if (section === 'backup') content = <BackupSettingsPage />
+  if (section === 'agent') content = <AgentSettingsPage />
   if (section === 'about') content = <AboutSettingsPage />
 
   return <SettingsShell items={sections} activeId={section} onSelect={next => selectSection(next as SettingsSection)}>{visited.has(section) ? content : null}</SettingsShell>

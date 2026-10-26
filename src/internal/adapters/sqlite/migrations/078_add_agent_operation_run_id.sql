@@ -1,0 +1,1 @@
+ALTER TABLE agent_operations ADD COLUMN run_id TEXT NOT NULL DEFAULT '';

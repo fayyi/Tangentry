@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 
+	"tangentry/internal/agent"
 	"tangentry/internal/credentials"
 	"tangentry/internal/jobs"
 )
@@ -151,4 +152,13 @@ func (a *Application) PlatformCredentialsPort() PlatformCredentialsPort {
 		return PlatformCredentialsPort{}
 	}
 	return PlatformCredentialsPort{store: a.runtime.cookies}
+}
+
+// AgentPort exposes only the restricted agent service; credentials and the
+// ordinary browser API remain outside this boundary.
+func (a *Application) AgentPort() *agent.Service {
+	if a == nil {
+		return nil
+	}
+	return a.agent
 }
